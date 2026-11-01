@@ -15,7 +15,13 @@ import pytest
 
 from models.base import Completion, ModelError, Usage
 from models.meta_cli import MuseCLIModel
-from profiles.hylogger.generation.plan import PLAN_SCHEMA, PlanError, build_prompt, propose
+from profiles.hylogger.generation.plan import (
+    PLAN_SCHEMA,
+    PlanError,
+    build_prompt,
+    propose,
+    provider_schema,
+)
 from profiles.hylogger.intake.reader import Sample
 from profiles.hylogger.analysis.statistics import Profile
 
@@ -74,7 +80,45 @@ def test_propose_rejects_nonconforming_plan(data: Any) -> None:
 def test_propose_asks_for_plan_schema() -> None:
     model = FakeModel({"seed": 7, "n_rows": 3})
     propose(model, _toy_profile())
-    assert model.schemas == [PLAN_SCHEMA]
+    assert model.schemas == [provider_schema(None)]
+
+
+def test_provider_schema_is_strict_without_bound_strategies() -> None:
+    """Unbound wire schema: required covers every declared property."""
+    schema = provider_schema(None)
+    assert set(schema["required"]) == set(schema["properties"])
+    assert set(schema["properties"]) == {"seed", "n_rows"}
+    assert schema["additionalProperties"] is False
+
+
+def test_provider_schema_is_strict_with_bound_strategies() -> None:
+    """Bound wire schema: strategy required, so the provider accepts it.
+
+    Regression test for the live 400 (``required`` omitted ``strategy``
+    while ``properties`` declared it): the sent schema must require
+    every property it declares.
+    """
+    schema = provider_schema([STRATEGY])
+    assert set(schema["required"]) == set(schema["properties"])
+    assert set(schema["properties"]) == {"seed", "n_rows", "strategy"}
+    assert schema["additionalProperties"] is False
+
+
+def test_propose_sends_strict_schema_with_bound_strategies() -> None:
+    """The captured sent schema requires every declared property."""
+    model = FakeModel({"seed": 7, "n_rows": 3, "strategy": STRATEGY})
+    propose(model, _toy_profile(), allowed_strategies=[STRATEGY])
+    (sent,) = model.schemas
+    assert set(sent["required"]) == set(sent["properties"])
+    assert set(sent["properties"]) == {"seed", "n_rows", "strategy"}
+
+
+def test_build_prompt_requires_strategy_when_bound() -> None:
+    header = build_prompt(_toy_profile(), [STRATEGY]).split(
+        "Profile statistics"
+    )[0]
+    assert "exactly three keys" in header
+    assert STRATEGY in header
 
 
 def test_build_prompt_only_source_content_is_statistics() -> None:

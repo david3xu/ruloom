@@ -21,7 +21,7 @@ from engine import cli as cli_module
 from engine.audit.runlog import RunLog
 from engine.core.runner import EXIT_FAILED, EXIT_OK
 from models.base import Completion, Usage
-from profiles.hylogger.generation.plan import PLAN_SCHEMA
+from profiles.hylogger.generation.plan import provider_schema
 from profiles.hylogger.imaging.critic import (
     CRITIC_SCHEMA,
     CriticError,
@@ -77,7 +77,7 @@ class FakePlanner:
 
     def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
         self.calls += 1
-        assert dict(schema) == PLAN_SCHEMA
+        assert dict(schema) == provider_schema(["fitted_markov_joint"])
         return Completion(
             data=dict(self._plan),
             usage=Usage(model="fake", input_tokens=10, output_tokens=5,

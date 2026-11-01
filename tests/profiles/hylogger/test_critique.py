@@ -27,7 +27,7 @@ from models.base import Completion, ModelError, Usage
 from models.glimmer import GlimmerLocalModel
 from models.meta_cli import MuseCLIModel
 from profiles.hylogger.analysis.statistics import Profile
-from profiles.hylogger.generation.plan import PLAN_SCHEMA
+from profiles.hylogger.generation.plan import provider_schema
 from profiles.hylogger.intake.reader import Sample
 from profiles.hylogger.validation.critique import (
     CRITIQUE_SCHEMA,
@@ -191,7 +191,7 @@ class FakePlanner:
 
     def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
         self.calls += 1
-        assert dict(schema) == PLAN_SCHEMA
+        assert dict(schema) == provider_schema(["fitted_markov_joint"])
         return Completion(
             data=dict(self._plan),
             usage=Usage(model="fake", input_tokens=10, output_tokens=5,

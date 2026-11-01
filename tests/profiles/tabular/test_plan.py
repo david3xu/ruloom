@@ -23,10 +23,13 @@ class FakeModel:
     def __init__(self, plans: Sequence[Mapping[str, Any]]) -> None:
         self._plans = [dict(p) for p in plans]
         self.calls = 0
+        self.schemas: list[dict] = []
 
     def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
         self.calls += 1
-        assert dict(schema) == plan_module.PLAN_SCHEMA
+        assert set(schema["required"]) == set(schema["properties"])
+        assert set(schema["properties"]) <= {"seed", "n_rows", "strategy"}
+        self.schemas.append(dict(schema))
         assert "orders-tabular" in prompt
         return Completion(
             data=dict(self._plans.pop(0)),
@@ -89,6 +92,46 @@ def test_build_prompt_names_supported_strategies() -> None:
     prompted = plan_module.build_prompt(profile, [STRATEGY])
     assert STRATEGY in prompted
     assert profile.to_disclosed_json() in prompted
+
+
+def test_provider_schema_is_strict_without_bound_strategies() -> None:
+    """Unbound wire schema: required covers every declared property."""
+    schema = plan_module.provider_schema(None)
+    assert set(schema["required"]) == set(schema["properties"])
+    assert set(schema["properties"]) == {"seed", "n_rows"}
+    assert schema["additionalProperties"] is False
+
+
+def test_provider_schema_is_strict_with_bound_strategies() -> None:
+    """Bound wire schema: strategy required, so the provider accepts it.
+
+    Regression test for the live 400 (``required`` omitted ``strategy``
+    while ``properties`` declared it): the sent schema must require
+    every property it declares.
+    """
+    schema = plan_module.provider_schema([STRATEGY])
+    assert set(schema["required"]) == set(schema["properties"])
+    assert set(schema["properties"]) == {"seed", "n_rows", "strategy"}
+    assert schema["additionalProperties"] is False
+
+
+def test_propose_sends_strict_schema_with_bound_strategies() -> None:
+    """The captured sent schema requires every declared property."""
+    profile = TabularProfile.from_rows(COLUMNS, ROWS, "orders-tabular", "abc123")
+    model = FakeModel([{"seed": 7, "n_rows": 20, "strategy": STRATEGY}])
+    plan_module.propose(model, profile, allowed_strategies=[STRATEGY])
+    (sent,) = model.schemas
+    assert set(sent["required"]) == set(sent["properties"])
+    assert set(sent["properties"]) == {"seed", "n_rows", "strategy"}
+
+
+def test_build_prompt_requires_strategy_when_bound() -> None:
+    profile = TabularProfile.from_rows(COLUMNS, ROWS, "orders-tabular", "abc123")
+    header = plan_module.build_prompt(profile, [STRATEGY]).split(
+        "Profile statistics"
+    )[0]
+    assert "exactly three keys" in header
+    assert STRATEGY in header
 
 
 def test_repair_prompt_carries_only_supported_options() -> None:

@@ -25,7 +25,7 @@ from engine.core.manifest import load_manifest
 from engine.core.runner import EXIT_FAILED, EXIT_OK, execute
 from models.base import Completion, Usage
 from profiles.hylogger import capabilities as hy_capabilities
-from profiles.hylogger.generation.plan import PLAN_SCHEMA
+from profiles.hylogger.generation.plan import provider_schema
 from profiles.hylogger.imaging.critic import CRITIC_SCHEMA
 from profiles.hylogger.imaging.generate import make_fixture_png
 
@@ -69,7 +69,7 @@ class FakePlanner:
         self._plan = dict(plan)
 
     def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
-        assert dict(schema) == PLAN_SCHEMA
+        assert dict(schema) == provider_schema(["fitted_markov_joint"])
         return Completion(
             data=dict(self._plan),
             usage=Usage(model="fake", input_tokens=10, output_tokens=5, calls=1),

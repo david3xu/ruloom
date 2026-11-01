@@ -15,7 +15,7 @@ import pytest
 from models.base import Completion, Usage
 from profiles.hylogger.generation import repair as repair_module
 from profiles.hylogger.analysis.calibration import Band, Thresholds
-from profiles.hylogger.generation.plan import PLAN_SCHEMA
+from profiles.hylogger.generation.plan import provider_schema
 from profiles.hylogger.intake.reader import Sample
 from profiles.hylogger.analysis.statistics import Profile
 
@@ -119,7 +119,7 @@ def test_repair_passes_on_second_attempt() -> None:
     assert result.history[1].usage is not None
     assert result.history[1].usage.calls == 1
     assert model.calls == 1
-    assert model.schemas == [PLAN_SCHEMA]
+    assert model.schemas == [provider_schema(None)]
     for attempt in result.history:
         assert len(attempt.artifact_sha256) == 64
     assert result.report.artifact_sha256 == result.history[-1].artifact_sha256
@@ -232,6 +232,36 @@ def _run_checks_for_prompt(source, profile):
         artifact_sha256="0" * 64,
     )
     return report.results
+
+
+def test_repair_sends_strict_schema_with_bound_strategies() -> None:
+    """The repair wire schema requires every declared property.
+
+    Regression test for the live 400 on the repair path: the schema
+    captured from the model call must be strict.
+    """
+    source = _source()
+    profile = _profile(source)
+    thresholds = _thresholds()
+    model = FakeModel([{"seed": 8, "n_rows": 8, "strategy": "fitted_markov_joint"}])
+    result = repair_module.repair(
+        profile,
+        source,
+        thresholds,
+        {"seed": 0, "n_rows": 8},
+        model,
+        max_attempts=2,
+        allowed_strategies=["fitted_markov_joint"],
+        supported_options={
+            "strategies": ["fitted_markov_joint"],
+            "max_rows": 200000,
+        },
+    )
+    assert model.calls == 1
+    (sent,) = model.schemas
+    assert set(sent["required"]) == set(sent["properties"])
+    assert set(sent["properties"]) == {"seed", "n_rows", "strategy"}
+    assert result.plan["strategy"] == "fitted_markov_joint"
 
 
 def test_repair_rejects_disallowed_revised_strategy() -> None:

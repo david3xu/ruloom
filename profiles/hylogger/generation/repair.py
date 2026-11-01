@@ -74,11 +74,14 @@ def build_repair_prompt(
         '- "n_rows": a positive integer count of rows to generate.\n'
     )
     if supported_options is not None and supported_options.get("strategies"):
-        prompt += (
-            'Optionally, "strategy": one of '
+        prompt = (
+            "The previous generation plan failed checks. Propose a revised plan.\n"
+            "Reply with a JSON object with exactly three keys:\n"
+            '- "seed": any integer (the deterministic seed for the generator).\n'
+            '- "n_rows": a positive integer count of rows to generate.\n'
+            '"strategy": must be one of '
             f"{list(supported_options['strategies'])!r} naming the "
-            "generation strategy. Omit it to keep the run's own strategy. "
-            "No other keys are accepted.\n"
+            "generation strategy. No other keys are accepted.\n"
         )
     prompt += (
         "Failed checks (JSON):\n"
@@ -174,7 +177,9 @@ def repair(
         prompt = build_repair_prompt(
             profile, failed_results, current_plan, supported_options
         )
-        completion = model.complete(prompt, plan_module.PLAN_SCHEMA)
+        completion = model.complete(
+            prompt, plan_module.provider_schema(allowed_strategies)
+        )
         current_plan = plan_module.validate_plan(
             completion.data, allowed_strategies=allowed_strategies
         )

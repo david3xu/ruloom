@@ -20,7 +20,7 @@ from engine.core.manifest import load_manifest
 from engine.audit.runlog import RunLog
 from models.base import Completion, Usage
 from profiles.hylogger import capabilities as hy_capabilities
-from profiles.hylogger.generation.plan import PLAN_SCHEMA
+from profiles.hylogger.generation.plan import provider_schema
 
 BASE_DEPTH = 123.456789
 STEP = 0.0078
@@ -92,7 +92,7 @@ class FakeModel:
 
     def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
         self.calls += 1
-        assert dict(schema) == PLAN_SCHEMA
+        assert dict(schema) == provider_schema(["fitted_markov_joint"])
         return Completion(
             data=dict(self._plans.pop(0)),
             usage=Usage(model="fake", input_tokens=10, output_tokens=5, calls=1),

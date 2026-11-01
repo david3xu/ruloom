@@ -47,7 +47,7 @@ from .validation.checks import (
 )
 from .validation.dataset import read as read_artifact
 from .generation.generate import generate as generate_artifact
-from .generation.plan import PLAN_SCHEMA, propose, validate_plan
+from .generation.plan import propose, provider_schema, validate_plan
 from .generation.repair import build_repair_prompt
 from .analysis.statistics import Profile
 from .intake.reader import read_scalar_csv
@@ -440,7 +440,7 @@ def repair(ctx: Any) -> None:
     )
     try:
         completion = ctx.model("planner").complete(
-            prompt, PLAN_SCHEMA
+            prompt, provider_schema(_allowed_strategies(ctx))
         )
         new_plan = validate_plan(
             completion.data,

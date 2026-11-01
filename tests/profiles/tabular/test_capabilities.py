@@ -65,7 +65,9 @@ class FakeModel:
 
     def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
         self.calls += 1
-        assert dict(schema) == plan_module.PLAN_SCHEMA
+        assert dict(schema) == plan_module.provider_schema(
+            ["fitted_gaussian_disclosed"]
+        )
         return Completion(
             data=dict(self._plans.pop(0)),
             usage=Usage(model="fake", input_tokens=5, output_tokens=5, calls=1),

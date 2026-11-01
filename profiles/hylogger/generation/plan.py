@@ -37,6 +37,42 @@ PLAN_SCHEMA: dict[str, Any] = {
 }
 
 
+def provider_schema(allowed_strategies: Any = None) -> dict[str, Any]:
+    """The strict output schema actually sent to the model adapter.
+
+    The provider rejects non-strict schemas with a 400 (``required``
+    must list every key in ``properties``), while :data:`PLAN_SCHEMA`
+    keeps ``strategy`` optional so a plan omitting it still validates
+    and runs under the run spec's own strategy. The wire schema sent
+    here therefore always requires every property it declares: with
+    bound strategies it carries ``seed``/``n_rows``/``strategy`` (all
+    required, so the planner must name one of the supported
+    strategies); without bound strategies it carries ``seed``/``n_rows``
+    only (both required). Validation stays on :data:`PLAN_SCHEMA`, so
+    both wire shapes validate.
+    """
+    if allowed_strategies:
+        return {
+            "type": "object",
+            "properties": {
+                "seed": {"type": "integer"},
+                "n_rows": {"type": "integer", "minimum": 1},
+                "strategy": {"type": "string", "minLength": 1},
+            },
+            "required": ["seed", "n_rows", "strategy"],
+            "additionalProperties": False,
+        }
+    return {
+        "type": "object",
+        "properties": {
+            "seed": {"type": "integer"},
+            "n_rows": {"type": "integer", "minimum": 1},
+        },
+        "required": ["seed", "n_rows"],
+        "additionalProperties": False,
+    }
+
+
 def validate_plan(
     data: Any,
     max_rows: int | None = None,
@@ -95,9 +131,9 @@ def build_prompt(
     The only source-derived content in the prompt is the profile's
     disclosed statistics serialisation (rare group labels withheld); no
     raw source rows are ever included. When ``allowed_strategies`` is
-    given, the prompt names the supported strategies and the optional
-    ``strategy`` key; otherwise the prompt asks for the seed/row-count
-    pair only.
+    given, the prompt requires the ``strategy`` key (one of the
+    supported strategies, matching the strict wire schema); otherwise
+    the prompt asks for the seed/row-count pair only.
     """
     prompt = (
         "Propose a data-generation plan for this HyLogger hole.\n"
@@ -108,11 +144,15 @@ def build_prompt(
         "hole matches the source hole's row count.\n"
     )
     if allowed_strategies:
-        prompt += (
-            'Optionally, "strategy": one of '
-            f"{list(allowed_strategies)!r} naming the generation strategy. "
-            "Omit it to run under the run's own strategy. No other keys "
-            "are accepted.\n"
+        prompt = (
+            "Propose a data-generation plan for this HyLogger hole.\n"
+            "Reply with a JSON object with exactly three keys:\n"
+            '- "seed": any integer (the deterministic seed for the generator).\n'
+            '- "n_rows": a positive integer count of rows to generate. '
+            "Set it to the profile statistics' n_samples so the synthetic "
+            "hole matches the source hole's row count.\n"
+            f'"strategy": must be one of {list(allowed_strategies)!r} '
+            "naming the generation strategy. No other keys are accepted.\n"
         )
     return (
         prompt
@@ -134,12 +174,16 @@ def propose(
     :class:`ModelError` when the model call itself fails. ``max_rows``
     carries the profile-declared row maximum when one is declared, and
     ``allowed_strategies`` carries the spec-supported strategy set the
-    proposal must stay inside.
+    proposal must stay inside. The schema sent to the model is the
+    strict :func:`provider_schema` variant (required covers every
+    declared property, as the provider demands); validation stays on
+    :data:`PLAN_SCHEMA`.
     """
     if not isinstance(profile, Profile):
         raise TypeError(f"profile must be a Profile, got {type(profile).__name__}")
     completion = model.complete(
-        build_prompt(profile, allowed_strategies), PLAN_SCHEMA
+        build_prompt(profile, allowed_strategies),
+        provider_schema(allowed_strategies),
     )
     plan = validate_plan(
         completion.data,
