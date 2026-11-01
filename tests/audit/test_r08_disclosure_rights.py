@@ -10,8 +10,10 @@ without any rights review gate. This suite proves the corrected behaviour:
   vocabulary;
 * a sibling ``*-source.json`` hash mismatch fails intake loudly before
   any model call;
-* unverified rights produce no CC0/public-dedication claim, while
-  verified CC BY 4.0 attribution is carried verbatim with output terms
+* unverified rights produce no CC0/public-dedication claim; a verified
+  record with no explicit output-terms grant -- even a permissive or a
+  restrictive source licence -- likewise yields NOT CLEARED, while a
+  verified explicit grant is stated verbatim with output terms
   recorded as separate release evidence.
 """
 
@@ -25,9 +27,10 @@ from typing import Any, Mapping, Sequence
 import pytest
 
 from engine.artifacts.package import (
-    VERIFIED_OUTPUT_TERMS,
+    OUTPUT_TERMS_GRANT_FIELD,
     build_provenance,
     resolve_output_terms,
+    rights_block,
 )
 from engine.core.manifest import load_manifest
 from engine.core.runner import EXIT_FAILED, EXIT_OK, execute
@@ -257,16 +260,18 @@ def test_unverified_rights_yield_no_cc0_claim(
     assert rights["output_terms"] is None
 
 
-def test_verified_rights_carry_attribution_and_clear_output_terms(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stem = "r08verified"
+def _write_verified_tabular_source(
+    path: Path,
+    *,
+    stem: str,
+    manifest_extra: Mapping[str, Any] | None = None,
+) -> tuple[Path, dict[str, Any]]:
     columns = ["id", "value", "label"]
     rows = [
         {"id": str(i), "value": f"{10.0 + (i % 5)}", "label": "a" if i % 2 else "b"}
         for i in range(20)
     ]
-    csv_path = tmp_path / f"{stem}-tabular.csv"
+    csv_path = path / f"{stem}-tabular.csv"
     csv_path.write_text(
         "\n".join(
             [",".join(columns)]
@@ -276,16 +281,30 @@ def test_verified_rights_carry_attribution_and_clear_output_terms(
         encoding="utf-8",
     )
     digest = hashlib.sha256(csv_path.read_bytes()).hexdigest()
-    attribution = "Verification Attribution 4417."
     manifest = {
         "dataset_name": stem,
         "sha256": digest,
         "licence": "CC-BY-4.0",
-        "attribution": attribution,
+        "attribution": "Verification Attribution 4417.",
         "rows": len(rows),
     }
-    (tmp_path / f"{stem}-source.json").write_text(
+    if manifest_extra:
+        manifest.update(dict(manifest_extra))
+    (path / f"{stem}-source.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return csv_path, manifest
+
+
+def _accepted_verified_tabular_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    stem: str,
+    manifest_extra: Mapping[str, Any] | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    csv_path, manifest = _write_verified_tabular_source(
+        tmp_path, stem=stem, manifest_extra=manifest_extra
     )
     monkeypatch.setenv("RULOOM_THRESHOLDS", str(_write_thresholds(tmp_path)))
     planner = FakePlanner([{"seed": 7, "n_rows": 20}])
@@ -303,18 +322,79 @@ def test_verified_rights_carry_attribution_and_clear_output_terms(
     assert code == EXIT_OK
     artifact = Path(str(result["artifact_dir"]))
     provenance = (artifact / "provenance.md").read_text(encoding="utf-8")
-    assert VERIFIED_OUTPUT_TERMS in provenance
-    assert attribution in provenance
-    assert "verified against sibling manifest" in provenance
     rights = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))[
         "rights"
     ]
+    return provenance, rights, manifest
+
+
+def test_restrictive_licence_verified_yields_no_cc0_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A verified restrictive licence is not an output-terms grant."""
+    provenance, rights, _ = _accepted_verified_tabular_run(
+        tmp_path,
+        monkeypatch,
+        stem="r08restrictive",
+        manifest_extra={
+            "licence": "Proprietary - all rights reserved",
+            "attribution": "Restricted fixture.",
+        },
+    )
+    assert "CC0" not in provenance
+    assert "released under" not in provenance
+    assert "NOT CLEARED" in provenance
+    assert "verified against sibling manifest" in provenance
     assert rights["source_hash_verified"] is True
-    assert rights["source_sha256"] == digest
+    assert rights["source_licence"] == "Proprietary - all rights reserved"
+    assert rights["output_terms"] is None
+    assert rights["output_terms_grant"] is None
+    assert rights["output_terms_grant_field"] is None
+
+
+def test_verified_licence_without_grant_yields_not_cleared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A verified permissive licence without an explicit grant clears nothing."""
+    provenance, rights, manifest = _accepted_verified_tabular_run(
+        tmp_path, monkeypatch, stem="r08nogrant"
+    )
+    assert "CC0" not in provenance
+    assert "released under" not in provenance
+    assert "NOT CLEARED" in provenance
+    assert "verified against sibling manifest" in provenance
+    assert rights["source_hash_verified"] is True
+    assert rights["source_sha256"] == manifest["sha256"]
+    assert rights["source_licence"] == "CC-BY-4.0"
+    assert rights["output_terms"] is None
+    assert rights["output_terms_grant"] is None
+    assert rights["output_terms_grant_field"] is None
+
+
+def test_verified_rights_carry_attribution_and_clear_output_terms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A verified explicit output-terms grant states the granted term."""
+    attribution = "Verification Attribution 4417."
+    provenance, rights, manifest = _accepted_verified_tabular_run(
+        tmp_path,
+        monkeypatch,
+        stem="r08verified",
+        manifest_extra={"output_terms": "CC0-1.0"},
+    )
+    assert "CC0-1.0" in provenance
+    assert attribution in provenance
+    assert "verified against sibling manifest" in provenance
+    assert "NOT CLEARED" not in provenance
+    assert rights["source_hash_verified"] is True
+    assert rights["source_sha256"] == manifest["sha256"]
     assert rights["source_licence"] == "CC-BY-4.0"
     assert rights["source_attribution"] == attribution
     assert rights["output_terms"] == "CC0-1.0"
-    assert rights["manifest_name"] == f"{stem}-source.json"
+    assert rights["output_terms_grant"] == "CC0-1.0"
+    assert rights["output_terms_grant_field"] == OUTPUT_TERMS_GRANT_FIELD
+    assert OUTPUT_TERMS_GRANT_FIELD == "output_terms"
+    assert rights["manifest_name"] == "r08verified-source.json"
 
 
 def test_build_provenance_needs_explicit_output_terms() -> None:
@@ -328,13 +408,51 @@ def test_build_provenance_needs_explicit_output_terms() -> None:
         verdict="pass",
         run_id="run-1",
     )
-    assert resolve_output_terms(hash_verified=False, licence="CC-BY-4.0") is None
-    assert resolve_output_terms(hash_verified=True, licence=None) is None
-    assert resolve_output_terms(hash_verified=True, licence="") is None
     assert (
-        resolve_output_terms(hash_verified=True, licence="CC-BY-4.0")
+        resolve_output_terms(
+            hash_verified=False, output_terms_grant="CC0-1.0"
+        )
+        is None
+    )
+    assert (
+        resolve_output_terms(hash_verified=True, output_terms_grant=None)
+        is None
+    )
+    assert (
+        resolve_output_terms(hash_verified=True, output_terms_grant="")
+        is None
+    )
+    assert (
+        resolve_output_terms(hash_verified=True, output_terms_grant="  ")
+        is None
+    )
+    # A verified explicit grant resolves to the granted term itself.
+    assert (
+        resolve_output_terms(
+            hash_verified=True, output_terms_grant="CC0-1.0"
+        )
         == "CC0-1.0"
     )
+    # Licence presence is never a grant: no CC0 is ever synthesised.
+    granted = resolve_output_terms(
+        hash_verified=True,
+        output_terms_grant="Proprietary - all rights reserved",
+    )
+    assert granted is not None and "CC0" not in granted
+    # An unverified grant clears nothing but stays recorded as evidence.
+    blocked = rights_block(
+        source_sha256="abc123",
+        licence="CC-BY-4.0",
+        attribution="Attr.",
+        manifest_name="hole-source.json",
+        manifest_sha256="deadbeef",
+        hash_verified=False,
+        output_terms="CC0-1.0",
+        output_terms_grant="CC0-1.0",
+    )
+    assert blocked["output_terms"] is None
+    assert blocked["output_terms_grant"] == "CC0-1.0"
+    assert blocked["output_terms_grant_field"] == OUTPUT_TERMS_GRANT_FIELD
     # No dedication is ever implied: the default renders no-clearance.
     assert "CC0" not in build_provenance(**base)
     assert "NOT CLEARED" in build_provenance(**base)

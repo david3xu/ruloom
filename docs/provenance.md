@@ -36,10 +36,13 @@ promised here: a release is not cleared for public dedication by
 statistical similarity or by a generic acceptance prompt. A release that
 reuses another source's licence text without a matching source-hash check
 has no output-rights clearance. The only dedication the pipeline ever
-states is `CC0-1.0` over the synthetic output, and only when the source
-hash verified against the sibling manifest at intake and a source licence
-was recorded; every other release states `NOT CLEARED` explicitly, with
-no dedication implied.
+states is the granted term over the synthetic output, and only when
+the source hash verified against the sibling manifest at intake and that
+verified record carries an explicit `output_terms` grant. A recorded
+source licence alone is never such a grant -- even a permissive licence
+without the grant field, or a restrictive licence, leaves the release
+`NOT CLEARED`. Every other release states `NOT CLEARED` explicitly,
+with no dedication implied.
 
 ## Model boundary
 

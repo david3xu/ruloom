@@ -95,9 +95,12 @@ fewer than two source rows (a declared disclosure floor, not a quality
 threshold); the seeded tabular generator draws from the same disclosed
 vocabulary, so a single-row source cannot be recreated exactly. Output
 terms resolve from the recorded rights evidence alone: the synthetic
-output is dedicated under `CC0-1.0` exactly when the source hash verified
-and a licence was recorded, and every other release states `NOT CLEARED`
-with a separate `rights` evidence block in the release manifest.
+output is released under the granted term exactly when the source hash
+verified and the verified sibling record carries an explicit
+`output_terms` grant -- a recorded source licence alone, permissive or
+restrictive, never clears the output -- and every other release states
+`NOT CLEARED` with a separate `rights` evidence block (field name plus
+recorded grant value) in the release manifest.
 `Q-DATA-R08` and `Q-RELEASE-R04-RIGHTS` are enforced; the section-9 rules
 stay planned. The full suite, the gate, and the clean-archive check pass,
 and the golden PDD446 bytes reproduce unchanged.

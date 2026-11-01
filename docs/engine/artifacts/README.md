@@ -81,12 +81,16 @@ release manifest carries it as a machine-readable `rights` block
 
 Output terms resolve from that evidence only
 (`engine/artifacts/package.py: resolve_output_terms`): the synthetic
-output is dedicated under `CC0-1.0` exactly when the source hash
-verified *and* a source licence was recorded. Every other release --
-unverified source, unconfirmed licence -- states `NOT CLEARED`
+output is released under the granted term exactly when the source hash
+verified *and* the verified sibling record carries an explicit
+`output_terms` grant. A recorded source licence alone is never such a
+grant. Every other release -- unverified source, unconfirmed licence,
+or a verified record with no explicit grant -- states `NOT CLEARED`
 explicitly and carries no public-dedication claim. There is no default
 dedication in `build_provenance`: without an explicit, evidence-backed
-`output_terms` value, the no-clearance statement renders.
+`output_terms` value, the no-clearance statement renders. The release
+manifest `rights` block records the grant evidence itself as the field
+name (`output_terms`) plus the recorded value.
 
 ## Feature record
 

@@ -118,29 +118,37 @@ def frozen_member_names(
     ]
 
 
-#: Output-terms label recorded when the source rights are verified.
-#: The dedication applies to the synthetic output only, never to the
-#: source data, whose own terms continue to apply.
-VERIFIED_OUTPUT_TERMS = "CC0-1.0"
+#: Sibling-manifest field carrying the explicit output-terms grant.
+#: The verified ``*-source.json`` registry record may state, under this
+#: field, the terms the synthetic output is released under (for example
+#: ``"CC0-1.0"``). Licence presence alone is never such a grant: a
+#: recorded source licence describes the source data, not the output.
+OUTPUT_TERMS_GRANT_FIELD = "output_terms"
 
 
 def resolve_output_terms(
     *,
     hash_verified: bool,
-    licence: Any,
+    output_terms_grant: Any,
 ) -> str | None:
     """Decide the release output terms from the recorded rights evidence.
 
-    A public-dedication claim is returned only when the source bytes
-    verified against the sibling manifest record at intake *and* a source
-    licence was recorded alongside them. Anything else -- no manifest, no
-    recorded hash, a hash that could not verify, or no licence on record --
-    yields ``None``: the release then carries no output-rights clearance
-    at all. There is no default dedication; callers pass the result
+    The granted term is returned only when the source bytes verified
+    against the sibling manifest record at intake *and* that verified
+    record carries an explicit output-terms grant under
+    :data:`OUTPUT_TERMS_GRANT_FIELD`. Anything else -- no manifest, no
+    recorded hash, a hash that could not verify, or a verified record
+    with no explicit grant (even a permissive source licence) -- yields
+    ``None``: the release then carries no output-rights clearance at
+    all. There is no default dedication; callers pass the result
     through to :func:`build_provenance` explicitly.
     """
-    if hash_verified is True and isinstance(licence, str) and licence.strip():
-        return VERIFIED_OUTPUT_TERMS
+    if (
+        hash_verified is True
+        and isinstance(output_terms_grant, str)
+        and output_terms_grant.strip()
+    ):
+        return output_terms_grant.strip()
     return None
 
 
@@ -153,6 +161,7 @@ def rights_block(
     manifest_sha256: Any,
     hash_verified: Any,
     output_terms: str | None,
+    output_terms_grant: Any = None,
 ) -> dict[str, Any]:
     """The release-manifest rights evidence for one run.
 
@@ -160,9 +169,17 @@ def rights_block(
     recorded as separate fields -- never folded into a single claim -- so
     a recipient can re-derive the output-terms decision. ``output_terms``
     is the :func:`resolve_output_terms` result, or ``None`` when the
-    release carries no output-rights clearance.
+    release carries no output-rights clearance. The grant evidence itself
+    is recorded alongside as the field name
+    (:data:`OUTPUT_TERMS_GRANT_FIELD`) plus the recorded value, even when
+    the source is unverified and the grant therefore clears nothing.
     """
     verified = hash_verified is True
+    grant = (
+        output_terms_grant.strip()
+        if isinstance(output_terms_grant, str) and output_terms_grant.strip()
+        else None
+    )
     return {
         "source_sha256": source_sha256,
         "source_licence": licence,
@@ -171,6 +188,10 @@ def rights_block(
         "manifest_sha256": manifest_sha256,
         "source_hash_verified": verified,
         "output_terms": output_terms if verified else None,
+        "output_terms_grant_field": (
+            OUTPUT_TERMS_GRANT_FIELD if grant is not None else None
+        ),
+        "output_terms_grant": grant,
     }
 
 

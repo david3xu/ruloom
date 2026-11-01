@@ -293,14 +293,18 @@ class RunContext:
         manifest_name: Any = None,
         manifest_sha256: Any = None,
         hash_verified: Any = False,
+        output_terms_grant: Any = None,
     ) -> None:
         """Record the source identity and rights evidence measured at intake.
 
         ``manifest_name``/``manifest_sha256`` identify the sibling registry
         record the source was checked against, and ``hash_verified`` says
-        whether the measured source hash matched that record. Unverified
-        sources are stored as-is: the engine renders them with no
-        output-rights clearance instead of refusing them here.
+        whether the measured source hash matched that record.
+        ``output_terms_grant`` carries the explicit output-terms grant
+        recorded in that sibling manifest (if any): licence presence
+        alone is never a grant. Unverified sources are stored as-is: the
+        engine renders them with no output-rights clearance instead of
+        refusing them here.
         """
         if not isinstance(name, str) or not name:
             raise RunnerError("source name must be a non-empty string")
@@ -315,6 +319,7 @@ class RunContext:
                 "manifest_name": manifest_name,
                 "manifest_sha256": manifest_sha256,
                 "hash_verified": hash_verified is True,
+                "output_terms_grant": output_terms_grant,
             }
         )
 
@@ -1047,9 +1052,10 @@ class _Runner:
 
         Output terms resolve from the recorded rights evidence only: a
         public-dedication sentence appears exactly when the source hash
-        verified against the sibling manifest at intake and a licence was
-        recorded; otherwise the statement carries an explicit
-        no-clearance notice and no dedication is implied.
+        verified against the sibling manifest at intake and that verified
+        record carries an explicit output-terms grant; otherwise the
+        statement carries an explicit no-clearance notice and no
+        dedication is implied.
         """
         from ..artifacts.package import (
             build_provenance as _build,
@@ -1077,7 +1083,8 @@ class _Runner:
             verdict=verdict,
             run_id=self.log.run_id,
             output_terms=_resolve(
-                hash_verified=verified, licence=meta.get("licence")
+                hash_verified=verified,
+                output_terms_grant=meta.get("output_terms_grant"),
             ),
             hash_verified=verified,
             manifest_name=(
@@ -1280,8 +1287,11 @@ class _Runner:
                         hash_verified=verified,
                         output_terms=_package.resolve_output_terms(
                             hash_verified=verified,
-                            licence=meta.get("licence"),
+                            output_terms_grant=meta.get(
+                                "output_terms_grant"
+                            ),
                         ),
+                        output_terms_grant=meta.get("output_terms_grant"),
                     ),
                 },
             )

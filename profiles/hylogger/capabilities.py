@@ -183,10 +183,12 @@ def intake(ctx: Any) -> None:
     attribution = (
         config.get("attribution") if isinstance(config, dict) else None
     )
+    output_terms_grant = None
     if manifest is not None:
         record = json.loads(manifest.read_text(encoding="utf-8"))
         licence = record.get("licence")
         attribution = record.get("attribution")
+        output_terms_grant = record.get("output_terms")
     samples = read_scalar_csv(ctx.source_path)
     source_name = ctx.source_path.stem
     ctx.set_source_meta(
@@ -197,6 +199,7 @@ def intake(ctx: Any) -> None:
         manifest_name=manifest_name,
         manifest_sha256=manifest_sha256,
         hash_verified=hash_verified,
+        output_terms_grant=output_terms_grant,
     )
     ctx.set_source_frame(list(samples))
     ctx.event(
@@ -212,6 +215,7 @@ def intake(ctx: Any) -> None:
             "manifest": manifest_name,
             "manifest_sha256": manifest_sha256,
             "hash_verified": hash_verified,
+            "output_terms_grant": output_terms_grant,
         },
     )
     ctx.say(
