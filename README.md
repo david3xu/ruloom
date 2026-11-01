@@ -70,14 +70,18 @@ Test suite: 134 passed. Force-pass gate (`scripts/force_pass.py`):
 7/7 rules PASS. Run it with:
 
 ```bash
-.venv/bin/python -m engine.cli run data/sources/PDD446-scalars.csv --max-attempts 3
+.venv/bin/ruloom run data/sources/PDD446-scalars.csv --max-attempts 3
+# Generic profile path (the default profile is hylogger):
+.venv/bin/ruloom run --profile tabular <source>.csv --max-attempts 3
 ```
 
 ## Layout
 
 | Path | What lives there |
 |---|---|
-| `engine/` | The lifecycle (`cli.py`), the append-only hash-chained log (`runlog.py`), content addressing (`hashing.py`) |
-| `profiles/hylogger/` | The first domain profile: `reader.py`, `statistics.py`, `calibration.py`, `checks.py`, `dataset.py`, `generate.py`, `plan.py`, `repair.py` |
+| `engine/` | The generic lifecycle: the profile runner (`cli.py`), the declared-graph executor with permission enforcement (`runner.py`), profile manifests (`manifest.py`), strict run records (`records.py`), the append-only hash-chained log (`runlog.py`), content addressing (`hashing.py`), release packaging (`package.py`) |
+| `profiles/` | Profile registry and loader (`__init__.py`): new profiles arrive as new directories, never as engine edits |
+| `profiles/hylogger/` | The first domain profile: `profile.json` (manifest: capabilities, permissions, checks, graph), `reader.py`, `statistics.py`, `calibration.py`, `checks.py`, `dataset.py`, `generate.py`, `plan.py`, `repair.py`, `capabilities.py` (manifest step implementations) |
+| `profiles/tabular/` | The second profile (common CSV proof): `profile.json`, `reader.py`, `statistics.py`, `calibration.py`, `checks.py`, `dataset.py`, `generate.py`, `plan.py`, `capabilities.py` |
 | `models/` | Model adapters — the only code that talks to a model (`base.py`, `meta_cli.py`) |
 | `runs/` | Run artifacts, addressed by SHA-256 |

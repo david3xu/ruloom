@@ -16,9 +16,12 @@ AGENTS.md).
 from __future__ import annotations
 
 import ast
+import io
+import json
 import re
 import subprocess
 import sys
+import tokenize
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +29,25 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PRODUCT_DIRS = ("engine", "models", "profiles")
 HYLOGGER_DIR = Path("profiles/hylogger")
 TESTS_DIR = Path("tests")
+ENGINE_DIR = Path("engine")
+
+#: Words no engine module may use outside comments (the engine knows no
+#: domain). Listed here so the rule can name them; FP-CODE-6 forbids them
+#: in engine/ code, strings, and docstrings alike.
+DOMAIN_WORDS = (
+    "depth",
+    "mineral",
+    "swir",
+    "tir",
+    "TSG",
+    "Markov",
+    "hole",
+    "hylogger",
+)
+DOMAIN_RE = re.compile(
+    r"\b(?:depth|mineral|swir|tir|tsg|markov|hole|hylogger)\b",
+    re.IGNORECASE,
+)
 
 # profiles/hylogger files allowed to import the models.base contract.
 ALLOWED_MODELS_BASE = {
@@ -292,6 +314,133 @@ def check_code5(root: Path, tracked: list[str] | None = None) -> tuple[bool, str
     return True, f"no data/ path tracked ({len(files)} files); .gitignore data/ rule present"
 
 
+def check_code6(root: Path) -> tuple[bool, str]:
+    """FP-CODE-6: engine/ uses no domain words outside comments.
+
+    Comments are stripped with :mod:`tokenize` (so ``#`` inside strings is
+    safe) and the remaining code, strings, and docstrings must not contain
+    any of :data:`DOMAIN_WORDS`. A comment may name the rule itself; all
+    other comments are ignored as well.
+    """
+    offenders: list[str] = []
+    scanned = 0
+    base = root / ENGINE_DIR
+    if not base.is_dir():
+        return False, "no engine/ directory found"
+    for path in sorted(base.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        rel = _rel(path, root)
+        scanned += 1
+        try:
+            readline = io.StringIO(path.read_text(encoding="utf-8")).readline
+            tokens = tokenize.generate_tokens(readline)
+            for token in tokens:
+                if token.type == tokenize.COMMENT:
+                    continue
+                for match in DOMAIN_RE.finditer(token.string):
+                    offenders.append(
+                        f"{rel}:{token.start[0]}: {match.group(0)!r}"
+                    )
+        except (tokenize.TokenError, SyntaxError, UnicodeDecodeError) as exc:
+            offenders.append(f"{rel}: unscannable ({exc})")
+    if not scanned:
+        return False, "no engine modules found"
+    if offenders:
+        return False, "domain words in engine/: " + "; ".join(offenders)
+    return True, f"no domain words in engine/ ({scanned} files scanned)"
+
+
+def _manifest_files(root: Path) -> list[Path]:
+    base = root / "profiles"
+    if not base.is_dir():
+        return []
+    return sorted(
+        p
+        for p in base.rglob("profile.json")
+        if "__pycache__" not in p.parts
+    )
+
+
+def check_code7(root: Path) -> tuple[bool, str]:
+    """FP-CODE-7: manifests use only step/loop/gate; loops bind max_attempts.
+
+    Every profile manifest graph node must declare exactly one of the
+    three node kinds, and every loop node must bind ``max_attempts`` to the
+    caller-supplied value (the literal binding, never a default). Engine
+    functions must also take ``max_attempts`` with no default.
+    """
+    problems: list[str] = []
+    manifests = _manifest_files(root)
+    if not manifests:
+        return False, "no profile manifests (profiles/*/profile.json) found"
+    for path in manifests:
+        rel = _rel(path, root)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            problems.append(f"{rel}: invalid JSON ({exc})")
+            continue
+        graph = payload.get("graph")
+        if not isinstance(graph, list) or not graph:
+            problems.append(f"{rel}: 'graph' must be a non-empty list")
+            continue
+        for index, node in enumerate(graph):
+            where = f"{rel} node {index}"
+            kinds = (
+                [k for k in node if k in ("step", "loop", "gate")]
+                if isinstance(node, dict)
+                else []
+            )
+            if not isinstance(node, dict) or len(kinds) != 1:
+                problems.append(
+                    f"{where}: must declare exactly one of step/loop/gate"
+                )
+                continue
+            if kinds[0] == "loop" and node.get("max_attempts") != "max_attempts":
+                problems.append(
+                    f"{where}: loop must bind 'max_attempts' with no default"
+                )
+    base = root / ENGINE_DIR
+    scanned = 0
+    for path in sorted(base.rglob("*.py")) if base.is_dir() else []:
+        if "__pycache__" in path.parts:
+            continue
+        rel = _rel(path, root)
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError as exc:
+            problems.append(f"{rel}: unparseable ({exc})")
+            continue
+        scanned += 1
+        for node in ast.walk(tree):
+            if not isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
+                continue
+            args = node.args
+            pos = list(args.args)
+            pos_defaults = list(args.defaults)
+            offset = len(pos) - len(pos_defaults)
+            for position, arg in enumerate(pos):
+                if arg.arg == "max_attempts" and position >= offset:
+                    problems.append(
+                        f"{rel}:{node.lineno}: max_attempts has a default"
+                    )
+            for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+                if arg.arg == "max_attempts" and default is not None:
+                    problems.append(
+                        f"{rel}:{node.lineno}: max_attempts has a default"
+                    )
+    if problems:
+        return False, "; ".join(problems)
+    return (
+        True,
+        f"graphs use step/loop/gate with bound loops "
+        f"({len(manifests)} manifests, {scanned} engine files scanned)",
+    )
+
+
 CHECKS = (
     ("FP-DOC-1", check_doc1),
     ("FP-DOC-2", check_doc2),
@@ -300,6 +449,8 @@ CHECKS = (
     ("FP-CODE-3", check_code3),
     ("FP-CODE-4", check_code4),
     ("FP-CODE-5", check_code5),
+    ("FP-CODE-6", check_code6),
+    ("FP-CODE-7", check_code7),
 )
 
 

@@ -33,6 +33,12 @@ any `FAIL`.
   `tests/test_<feature>.py`.
 - **FP-CODE-5** — `git ls-files` contains no `data/` path, and `.gitignore`
   contains a `data/` rule.
+- **FP-CODE-6** — `engine/` contains no domain words (`depth`, `mineral`,
+  `swir`, `tir`, `TSG`, `Markov`, `hole`, `hylogger`) outside comments
+  naming the rule itself.
+- **FP-CODE-7** — Every profile manifest (`profiles/*/profile.json`) graph
+  uses only `step`/`loop`/`gate` nodes, and every `loop` binds
+  `max_attempts` to the caller supply with no default.
 
 ## Review
 

@@ -71,6 +71,16 @@ def test_real_tree_code5() -> None:
     assert ok
 
 
+def test_real_tree_code6() -> None:
+    ok, _ = gate.check_code6(REPO_ROOT)
+    assert ok
+
+
+def test_real_tree_code7() -> None:
+    ok, _ = gate.check_code7(REPO_ROOT)
+    assert ok
+
+
 def test_script_entry_point_passes() -> None:
     proc = subprocess.run(
         [sys.executable, "scripts/force_pass.py"],
@@ -81,7 +91,7 @@ def test_script_entry_point_passes() -> None:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
-    assert len(lines) == 7
+    assert len(lines) == 9
     assert all("PASS" in line for line in lines)
 
 
@@ -189,3 +199,131 @@ def test_planted_missing_mirror_test_fails(tmp_path: Path) -> None:
     ok, evidence = gate.check_code4(tmp_path)
     assert not ok
     assert "test_fram.py" in evidence
+
+
+def test_planted_engine_domain_word_fails(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "engine/evil.py",
+        'KIND = "hylogger"\n',
+    )
+    ok, evidence = gate.check_code6(tmp_path)
+    assert not ok
+    assert "evil.py" in evidence
+
+
+def test_engine_comment_naming_rule_passes(tmp_path: Path) -> None:
+    # Comments may name the rule itself; only code carries the ban.
+    _write(
+        tmp_path,
+        "engine/ok.py",
+        "# FP-CODE-6: this comment names the rule, not the domain\nVALUE = 1\n",
+    )
+    ok, _ = gate.check_code6(tmp_path)
+    assert ok
+
+
+def test_planted_fourth_node_kind_fails(tmp_path: Path) -> None:
+    import json as _json
+
+    _write(
+        tmp_path,
+        "profiles/fake/profile.json",
+        _json.dumps(
+            {
+                "id": "fake",
+                "version": 1,
+                "engine_api": 1,
+                "source": {},
+                "capabilities": {"a": {"impl": "fake.a"}},
+                "graph": [{"branch": "a"}],
+                "checks": [
+                    {
+                        "id": "c",
+                        "kind": "constraint",
+                        "threshold": {"source": "literal"},
+                    }
+                ],
+            }
+        ),
+    )
+    ok, evidence = gate.check_code7(tmp_path)
+    assert not ok
+    assert "step/loop/gate" in evidence
+
+
+def test_planted_loop_default_fails(tmp_path: Path) -> None:
+    import json as _json
+
+    _write(
+        tmp_path,
+        "profiles/fake/profile.json",
+        _json.dumps(
+            {
+                "id": "fake",
+                "version": 1,
+                "engine_api": 1,
+                "source": {},
+                "capabilities": {
+                    "a": {"impl": "fake.a"},
+                    "b": {"impl": "fake.b"},
+                },
+                "graph": [
+                    {"loop": ["a"], "on_fail": "b", "max_attempts": 3},
+                ],
+                "checks": [
+                    {
+                        "id": "c",
+                        "kind": "constraint",
+                        "threshold": {"source": "literal"},
+                    }
+                ],
+            }
+        ),
+    )
+    ok, evidence = gate.check_code7(tmp_path)
+    assert not ok
+    assert "no default" in evidence
+
+
+def test_planted_engine_max_attempts_default_fails(tmp_path: Path) -> None:
+    import json as _json
+
+    _write(
+        tmp_path,
+        "profiles/fake/profile.json",
+        _json.dumps(
+            {
+                "id": "fake",
+                "version": 1,
+                "engine_api": 1,
+                "source": {},
+                "capabilities": {
+                    "a": {"impl": "fake.a"},
+                    "b": {"impl": "fake.b"},
+                },
+                "graph": [
+                    {
+                        "loop": ["a"],
+                        "on_fail": "b",
+                        "max_attempts": "max_attempts",
+                    },
+                ],
+                "checks": [
+                    {
+                        "id": "c",
+                        "kind": "constraint",
+                        "threshold": {"source": "literal"},
+                    }
+                ],
+            }
+        ),
+    )
+    _write(
+        tmp_path,
+        "engine/evil.py",
+        "def run(max_attempts=3):\n    return max_attempts\n",
+    )
+    ok, evidence = gate.check_code7(tmp_path)
+    assert not ok
+    assert "default" in evidence

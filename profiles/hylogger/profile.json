@@ -1,0 +1,94 @@
+{
+  "id": "hylogger",
+  "version": 1,
+  "engine_api": 1,
+  "source": {
+    "reader": "hylogger.reader",
+    "data_suffix": "-scalars.csv",
+    "manifest_suffix": "-source.json",
+    "licence": null,
+    "attribution": null
+  },
+  "capabilities": {
+    "intake": {
+      "impl": "hylogger.intake",
+      "reads_raw_source": true,
+      "stage": "source_intake"
+    },
+    "profile_source": {
+      "impl": "hylogger.profile_source",
+      "reads_raw_source": true,
+      "stage": "profile"
+    },
+    "plan": {
+      "impl": "hylogger.plan",
+      "calls_model": "planner",
+      "stage": "plan"
+    },
+    "generate": {
+      "impl": "hylogger.generate",
+      "stage": "generate"
+    },
+    "validate": {
+      "impl": "hylogger.validate",
+      "writes_verdict": true,
+      "stage": "validate"
+    },
+    "repair": {
+      "impl": "hylogger.repair",
+      "calls_model": "planner",
+      "stage": "repair"
+    },
+    "package_artifact": {
+      "impl": "hylogger.package_artifact",
+      "stage": "artifact"
+    },
+    "package_release": {
+      "impl": "hylogger.package_release",
+      "stage": "release"
+    }
+  },
+  "graph": [
+    {"step": "intake"},
+    {"step": "profile_source"},
+    {"step": "plan"},
+    {
+      "loop": ["generate", "validate"],
+      "on_fail": "repair",
+      "max_attempts": "max_attempts",
+      "stage": "generate_validate_repair"
+    },
+    {"step": "package_artifact"},
+    {"gate": "human_review"},
+    {"step": "package_release"}
+  ],
+  "checks": [
+    {"id": "has_rows", "kind": "constraint", "threshold": {"source": "literal"}},
+    {"id": "backward_steps", "kind": "constraint", "threshold": {"source": "literal"}},
+    {"id": "depth_non_decreasing", "kind": "constraint", "threshold": {"source": "literal"}},
+    {"id": "spacing_median", "kind": "fidelity", "threshold": {"source": "real_vs_real_band"}},
+    {"id": "repeated_depth_fraction", "kind": "fidelity", "threshold": {"source": "real_vs_real_band"}},
+    {"id": "valid_fraction", "kind": "fidelity", "threshold": {"source": "real_vs_real_band"}},
+    {"id": "repeated_depths_masked_out", "kind": "fidelity", "threshold": {"source": "real_vs_real_band"}},
+    {"id": "swir_answer_rate", "kind": "fidelity", "threshold": {"source": "real_vs_real_band"}},
+    {"id": "tir_answer_rate", "kind": "fidelity", "threshold": {"source": "real_vs_real_band"}},
+    {"id": "swir_vocabulary", "kind": "constraint", "threshold": {"source": "literal"}},
+    {"id": "tir_vocabulary", "kind": "constraint", "threshold": {"source": "literal"}},
+    {"id": "swir_fidelity", "kind": "fidelity", "threshold": {"source": "split_half_reference"}},
+    {"id": "tir_fidelity", "kind": "fidelity", "threshold": {"source": "split_half_reference"}},
+    {"id": "csv_schema", "kind": "constraint", "threshold": {"source": "literal"}}
+  ],
+  "models": {
+    "roles": {
+      "planner": {
+        "provider": "meta-api",
+        "model": "muse-spark-1.3",
+        "reasoning_effort": "max",
+        "structured_output": true
+      }
+    }
+  },
+  "limits": {
+    "max_rows": 200000
+  }
+}
