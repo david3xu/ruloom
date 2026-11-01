@@ -65,7 +65,7 @@ only — see `docs/provenance.md`.
 
 | Path | What lives there |
 |---|---|
-| `engine/` | The lifecycle, the append-only hash-chained log, content addressing |
-| `profiles/hylogger/` | The first domain profile: reader, statistics, calibration, generator, checks |
-| `models/` | Model adapters — the only code that talks to a model |
+| `engine/` | The lifecycle (`cli.py`), the append-only hash-chained log (`runlog.py`), content addressing (`hashing.py`) |
+| `profiles/hylogger/` | The first domain profile: `reader.py`, `statistics.py`, `calibration.py`, `checks.py`, `dataset.py`, `generate.py`, `plan.py`, `repair.py` |
+| `models/` | Model adapters — the only code that talks to a model (`base.py`, `meta_cli.py`) |
 | `runs/` | Run artifacts, addressed by SHA-256 |
