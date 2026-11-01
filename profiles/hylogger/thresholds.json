@@ -1,0 +1,335 @@
+{
+  "bands": {
+    "backward_steps": {
+      "hi": 0,
+      "lo": 0,
+      "vacuous": false
+    },
+    "repeated_depth_fraction": {
+      "hi": 0.35117,
+      "lo": 0.0,
+      "vacuous": false
+    },
+    "repeated_valid_fraction": {
+      "hi": 0.157337,
+      "lo": 0.0,
+      "vacuous": false
+    },
+    "spacing_median_m": {
+      "hi": 0.008898,
+      "lo": 0.003472,
+      "vacuous": false
+    },
+    "swir_answer_rate": {
+      "hi": 1.0,
+      "lo": 0.0,
+      "vacuous": true
+    },
+    "tir_answer_rate": {
+      "hi": 1.0,
+      "lo": 0.957949,
+      "vacuous": false
+    },
+    "valid_fraction": {
+      "hi": 0.929615,
+      "lo": 0.602929,
+      "vacuous": false
+    }
+  },
+  "composition": {
+    "swir": {
+      "median": 0.274411,
+      "n_holes": 38,
+      "note": "Within-hole split-half marginal TVD is large: composition varies within a single hole, so composition is not universally checkable. Per-run fidelity is judged against the source hole's own split-half tolerance.",
+      "p95": 0.83015
+    },
+    "tir": {
+      "median": 0.297716,
+      "n_holes": 38,
+      "note": "Within-hole split-half marginal TVD is large: composition varies within a single hole, so composition is not universally checkable. Per-run fidelity is judged against the source hole's own split-half tolerance.",
+      "p95": 0.719072
+    }
+  },
+  "provenance": {
+    "attribution": "Geological Survey of Western Australia, National Virtual Core Library (NVCL) WA node, via AuScope. Licensed CC BY 4.0.",
+    "holes": [
+      {
+        "n": 69680,
+        "name": "09THD033-scalars",
+        "path": "09THD033-scalars.csv",
+        "sha256": "334152f8803a00b2a979b37adfc8c8cad28f55c98c27cbe12c28f65879287129"
+      },
+      {
+        "n": 10880,
+        "name": "17MVRCD008-scalars",
+        "path": "17MVRCD008-scalars.csv",
+        "sha256": "b925a4fb44ba216ee2e59881267c94d7a3e716663fda69b2edc9a2dfd0e507c8"
+      },
+      {
+        "n": 146864,
+        "name": "18LCDD0001-scalars",
+        "path": "18LCDD0001-scalars.csv",
+        "sha256": "341b054277adeadb5ddc72ab5d0a562ccb9ba6edc95f0d2318870de8fb50a51c"
+      },
+      {
+        "n": 48730,
+        "name": "19AFDD1009-scalars",
+        "path": "19AFDD1009-scalars.csv",
+        "sha256": "f1f8c4e6658f80151ad9d9115d6497ab8fe576f2ab2f5125b1ef4e1debb310f5"
+      },
+      {
+        "n": 75706,
+        "name": "19AFRD2005-scalars",
+        "path": "19AFRD2005-scalars.csv",
+        "sha256": "6d20810ad2545800d2762f5a91b8deac5469f694fc6e1464664ddf0157a1fec9"
+      },
+      {
+        "n": 27880,
+        "name": "19EMRCD003-scalars",
+        "path": "19EMRCD003-scalars.csv",
+        "sha256": "a0c9c71ca1dc80bbbf809ceed4625327834287adc8e6f12faf63061a4084482d"
+      },
+      {
+        "n": 21976,
+        "name": "20CFRCD003-scalars",
+        "path": "20CFRCD003-scalars.csv",
+        "sha256": "40e9e0bd86ef5a1a6daed32283e026d3e86d5180e20c82d1ef99c64549b7a473"
+      },
+      {
+        "n": 65304,
+        "name": "20LCDD001-scalars",
+        "path": "20LCDD001-scalars.csv",
+        "sha256": "0ee4fe897c080a61efae9448d31c0eb2ab534d9679af48f0be81f5c24d911704"
+      },
+      {
+        "n": 17688,
+        "name": "85IRCH1-scalars",
+        "path": "85IRCH1-scalars.csv",
+        "sha256": "a17309472f9d0a2070560b6a6cf32404020a9d9ea69541b1c30e3c49e3f80855"
+      },
+      {
+        "n": 41272,
+        "name": "ABDP1-scalars",
+        "path": "ABDP1-scalars.csv",
+        "sha256": "3a78c225883e3be1e8377b04d07c62ad62c2b83ad43fbab2d84d0bd7fd7615e1"
+      },
+      {
+        "n": 68162,
+        "name": "ARMCDD001-scalars",
+        "path": "ARMCDD001-scalars.csv",
+        "sha256": "7bec9076b2425b84833a743684be7e33f38e9bb825c5d15be3711d42294ae38a"
+      },
+      {
+        "n": 11256,
+        "name": "BNDD002-scalars",
+        "path": "BNDD002-scalars.csv",
+        "sha256": "6f759340fbc627c7262a44acb76fe9809e8a4e6c40008292a28e01770112d837"
+      },
+      {
+        "n": 16080,
+        "name": "BNDD007-scalars",
+        "path": "BNDD007-scalars.csv",
+        "sha256": "98752a27f8a00d5733151f957aeda9a586100414f7742a12dd60384948d046bf"
+      },
+      {
+        "n": 66155,
+        "name": "BWSDD001-scalars",
+        "path": "BWSDD001-scalars.csv",
+        "sha256": "7d02c61a1a5a2c2d4f9d02254de478c4b2530a9f796685492e0d52b807eeacb4"
+      },
+      {
+        "n": 14742,
+        "name": "DD93HS1-scalars",
+        "path": "DD93HS1-scalars.csv",
+        "sha256": "afcf4339e70bf397f2506e220cf89e66cd09d64ae36d5d040fe03e5b8e7705fd"
+      },
+      {
+        "n": 28140,
+        "name": "DDB9-scalars",
+        "path": "DDB9-scalars.csv",
+        "sha256": "8915d8c72910e587289f4b860af6730ee34a8759291925d10da45b2e452c64c0"
+      },
+      {
+        "n": 24790,
+        "name": "DW001-scalars",
+        "path": "DW001-scalars.csv",
+        "sha256": "07ceda5ad67aefab16e46c8784e356b1265c68691dc8a1937861928131adc70b"
+      },
+      {
+        "n": 272586,
+        "name": "EMSD1388-scalars",
+        "path": "EMSD1388-scalars.csv",
+        "sha256": "95321ae7a37d5b5bdc002262e7a6d4527f121577ec511d00d42fe22f36494bf5"
+      },
+      {
+        "n": 48106,
+        "name": "FFD03-scalars",
+        "path": "FFD03-scalars.csv",
+        "sha256": "e8bd1426d6eefd9be6130bef2a5436d80f3eccf00b88c4d0144a8ce3937dad33"
+      },
+      {
+        "n": 45768,
+        "name": "HE001-NE-scalars",
+        "path": "HE001-NE-scalars.csv",
+        "sha256": "e7ec3c0b8252361d1d1477b62a71dd1b49efc73888cccb6ed31654abfecf379e"
+      },
+      {
+        "n": 27012,
+        "name": "KD1-scalars",
+        "path": "KD1-scalars.csv",
+        "sha256": "c93bc2b2c470436586450b348a5518e4f6f72a6fd236fba5be597d548814372b"
+      },
+      {
+        "n": 36580,
+        "name": "KMRD056-scalars",
+        "path": "KMRD056-scalars.csv",
+        "sha256": "02fa1fcfb280aadedc4219402a11fa58320a54aff87c6660cd79232e14ff984d"
+      },
+      {
+        "n": 59630,
+        "name": "KNCD180012-scalars",
+        "path": "KNCD180012-scalars.csv",
+        "sha256": "e96afcb48364a4b3d15ce010db3ab03311693748f356eafa2590d9aeb9008662"
+      },
+      {
+        "n": 144080,
+        "name": "KPDDH010-scalars",
+        "path": "KPDDH010-scalars.csv",
+        "sha256": "73d35e4d9695e4de8f53bd8e2825beff3689abf8664dcc641e9bbaf77e83f357"
+      },
+      {
+        "n": 31552,
+        "name": "LSRD012-scalars",
+        "path": "LSRD012-scalars.csv",
+        "sha256": "80115a7f37ba54a0988880df9c0933c5bc04dc6eea91a306c5b9de707a79aafa"
+      },
+      {
+        "n": 36040,
+        "name": "MCPDH0001-scalars",
+        "path": "MCPDH0001-scalars.csv",
+        "sha256": "753d9fd04d4a499a8c2f91dbeb162068867ebc04d2d382ebe89e603d7649b991"
+      },
+      {
+        "n": 48280,
+        "name": "MCPDH0002-scalars",
+        "path": "MCPDH0002-scalars.csv",
+        "sha256": "7f0eb5ba1c963cf155e48fd307b18bf3495f9529756cb14c6ff9593c7a46cd52"
+      },
+      {
+        "n": 85140,
+        "name": "MDDH0002-scalars",
+        "path": "MDDH0002-scalars.csv",
+        "sha256": "f4ee8de1b0937a810f46d76fe6210fd3b30c5742518b897bd4957fb997347957"
+      },
+      {
+        "n": 24120,
+        "name": "MFED078-scalars",
+        "path": "MFED078-scalars.csv",
+        "sha256": "670cc8d13321c239d7fd20e52330ede839e0c35007d71696999e33aca97c52b8"
+      },
+      {
+        "n": 41265,
+        "name": "NUG0453-scalars",
+        "path": "NUG0453-scalars.csv",
+        "sha256": "139ad94d9ce947172d51d2d9c8776370b3cb75db9cccf2023917a128c1673810"
+      },
+      {
+        "n": 42210,
+        "name": "ORTL04-scalars",
+        "path": "ORTL04-scalars.csv",
+        "sha256": "fa07182d9472119f6870334c4c8024880c1bfe4a030650d2247a765647d8d68f"
+      },
+      {
+        "n": 139519,
+        "name": "PDDD010-scalars",
+        "path": "PDDD010-scalars.csv",
+        "sha256": "9a75aac4e771e9b21573fa51c3d039b21cd0ef5a7224e893b280f796e36ea717"
+      },
+      {
+        "n": 22500,
+        "name": "RYDD14004-scalars",
+        "path": "RYDD14004-scalars.csv",
+        "sha256": "2214ffae4cd4576ed6cb175121a825382e8e832bb8a41f7110de04025c203aad"
+      },
+      {
+        "n": 158656,
+        "name": "SDH08-2-scalars",
+        "path": "SDH08-2-scalars.csv",
+        "sha256": "d2e6d45a138dc32469ae3e74a6346792b095d14222cf1d87ab1d3466c67ad9a6"
+      },
+      {
+        "n": 136320,
+        "name": "THD001-scalars",
+        "path": "THD001-scalars.csv",
+        "sha256": "31dfd84c8c38f4aff0e838d26aec3b2228504b2e122c385796aa13993eb07736"
+      },
+      {
+        "n": 72600,
+        "name": "TUR13DD004-scalars",
+        "path": "TUR13DD004-scalars.csv",
+        "sha256": "51725d0654b806206a0ad77229973e4864d103b6fa02c7785e2d3aa32b45ab8a"
+      },
+      {
+        "n": 31088,
+        "name": "WBD11575-008-scalars",
+        "path": "WBD11575-008-scalars.csv",
+        "sha256": "a2433295ab49eb1be14647477ca56d5558ad30eaef34a5842b35addd14f58d43"
+      },
+      {
+        "n": 112009,
+        "name": "YGD4-scalars",
+        "path": "YGD4-scalars.csv",
+        "sha256": "c7fb0650a3dd8bddce42320c4ebc634be49f4ad54ce0cef40d4df73a19d0c6a3"
+      }
+    ],
+    "licence": "CC-BY-4.0"
+  },
+  "split_half_p95": {
+    "repeated_depth_fraction": 0.043888,
+    "repeated_valid_fraction": 0.032602,
+    "spacing_median_m": 0.000248,
+    "swir_answer_rate": 0.439351,
+    "tir_answer_rate": 0.012464,
+    "valid_fraction": 0.073844
+  },
+  "version": 1,
+  "vocabulary": {
+    "swir": [
+      "AMPHIBOLE",
+      "CARBONATE",
+      "CHLORITE",
+      "DARK-MICA",
+      "EPIDOTE",
+      "KAOLIN",
+      "OTHER-ALOH",
+      "OTHER-MGOH",
+      "SERPENTINE",
+      "SMECTITE",
+      "SULPHATE",
+      "TOURMALINE",
+      "WHITE-MICA"
+    ],
+    "tir": [
+      "AMPHIBOLE",
+      "CARBONATE",
+      "CHLORITE",
+      "DARK-MICA",
+      "EPIDOTE",
+      "GARNET",
+      "K-FELDSPAR",
+      "KAOLIN",
+      "OLIVINE",
+      "OTHER-ALOH",
+      "OTHER-MGOH",
+      "OXIDE",
+      "PHOSPHATE",
+      "PLAGIOCLASE",
+      "PYROXENE",
+      "SERPENTINE",
+      "SILICA",
+      "SMECTITE",
+      "SULPHATE",
+      "WHITE-MICA"
+    ]
+  }
+}
