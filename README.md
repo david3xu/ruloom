@@ -1,12 +1,12 @@
-# CalibraSynth
+# Ruloom
 
-**Calibrated synthetic data. Evidence included.**
+**Synthetic data, woven from reality. Backed by evidence.*
 
 A plain-language dataset requirement becomes reproducible synthetic data,
 calibrated against real data, proven by executed checks, delivered as a CC0
 package with its evidence.
 
-Synthetic data is easy to generate and hard to trust. CalibraSynth's answer is
+Synthetic data is easy to generate and hard to trust. Ruloom's answer is
 calibration: quality thresholds are derived from how real datasets differ from
 each other, the generator is fitted to statistics of the real source, and
 every quality claim is a deterministic check result bound to the SHA-256 of

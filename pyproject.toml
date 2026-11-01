@@ -1,7 +1,7 @@
 [project]
-name = "calibrasynth"
+name = "ruloom"
 version = "0.1.0"
-description = "Calibrated synthetic data. Evidence included."
+description = "Synthetic data, woven from reality. Backed by evidence."
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "pytsg>=1.0.0",
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-calibrasynth = "engine.cli:main"
+ruloom = "engine.cli:main"
 
 [build-system]
 requires = ["hatchling"]
