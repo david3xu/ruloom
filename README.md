@@ -69,6 +69,29 @@ only PNG is decoded, statistics are computed by code, the synthetic
 render is seeded code fitted to those statistics, and a vision model may
 look at the synthetic render as an advisory critic only.
 
+A second, text-only critic seat is bound to a local Muse Glimmer model
+served over an OpenAI-compatible endpoint. It reads the run's validation
+report plus the profile statistics summary only — never raw rows, never
+images — and writes an advisory `critic-note.json`
+(`{critique, concerns}`) to the run directory alongside the run-log
+advisory event. It runs after validate and before the human gate, and
+like every advisory it cannot change a pass/fail verdict. It is opt-in:
+pass `ruloom run --profile hylogger SOURCE --local-critic
+--max-attempts N`; without the flag the step is a silent no-op and the
+run is byte-identical to a run without it. With the flag on and the
+server unreachable, the run fails loudly with the adapter error instead
+of skipping the critique. To serve the model locally:
+
+```bash
+llama-server -m ~/models/muse-glimmer/Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf --port 8080
+```
+
+then run with the default adapter base URL `http://127.0.0.1:8080`
+(override per role with the `base_url` binding, or per client with
+`GlimmerLocalModel(base_url=...)`). The image weights (`mmproj`) for
+Glimmer are not present, so Glimmer serves the text critique only; the
+Spark multimodal adapter stays the vision critic for synthetic renders.
+
 ## Status
 
 New work, written fresh for the Meta Global AI Developer Hackathon
@@ -81,7 +104,7 @@ First-stage product is complete: one command runs the full lifecycle
 release). Verified on a real PDD446 run: plan `{seed 42, n_rows 39300}`,
 validation verdict pass, artifact `be9e26d7e664…`, release ZIP
 `46c7c07110c5…` with a hash-chained run log that verifies end to end.
-Test suite: 216 passed. Force-pass gate (`scripts/force_pass.py`):
+Test suite: 239 passed. Force-pass gate (`scripts/force_pass.py`):
 10/10 rules PASS. The engine is generic: profiles declare their
 step/loop/gate graphs and permissions, and the same engine code runs
 the HyLogger profile and the common tabular profile
@@ -103,9 +126,9 @@ the HyLogger profile and the common tabular profile
 | `engine/audit/` | The append-only hash-chained log (`runlog.py`) |
 | `engine/cli/` | The profile runner package: `ruloom run --profile <id>` entry (`__init__.py`) plus `__main__.py` so `python -m engine.cli` works too |
 | `profiles/` | Profile registry and loader (`__init__.py`): new profiles arrive as new directories, never as engine edits |
-| `profiles/hylogger/` | The first domain profile: `profile.json` (manifest: capabilities, permissions, checks, graph), `thresholds.json`, `capabilities.py` (manifest step implementations); features in `intake/` (`reader.py`), `analysis/` (`statistics.py`, `calibration.py`), `generation/` (`generate.py`, `plan.py`, `repair.py`), `validation/` (`checks.py`, `dataset.py`) |
+| `profiles/hylogger/` | The first domain profile: `profile.json` (manifest: capabilities, permissions, checks, graph), `thresholds.json`, `capabilities.py` (manifest step implementations); features in `intake/` (`reader.py`), `analysis/` (`statistics.py`, `calibration.py`), `generation/` (`generate.py`, `plan.py`, `repair.py`), `validation/` (`checks.py`, `dataset.py`, `critique.py` — advisory text critique over the validation report plus profile statistics, bound to the `local_critic` role) |
 | `profiles/hylogger/imaging/` | The HyLogger image extension (optional `--images DIR` branch after validate, before the human gate): `codec.py` (stdlib PNG encode/decode), `intake.py` (image hashing/attribution), `statistics.py` (code-only histograms/texture/strips), `generate.py` (seeded synthetic PNGs), `checks.py` (deterministic image checks), `critic.py` (advisory vision note over synthetic renders only) |
 | `profiles/tabular/` | The second profile (common CSV proof): same root wiring (`profile.json`, `thresholds.json`, `capabilities.py`); features in `intake/` (`reader.py`), `analysis/` (`statistics.py`, `calibration.py`), `generation/` (`generate.py`, `plan.py`), `validation/` (`checks.py`, `dataset.py`) |
-| `models/` | Model adapters — the only code that talks to a model (`base.py`, `meta_cli.py`) |
+| `models/` | Model adapters — the only code that talks to a model (`base.py`, `meta_cli.py`, `glimmer.py` — local OpenAI-compatible text adapter; role bindings select it with `"adapter": "glimmer_local"`) |
 | `tests/` | Mirrors the tree: `tests/engine/`, `tests/profiles/hylogger/`, `tests/profiles/tabular/` (one `test_<feature>.py` per feature module), gate tests at the root |
 | `runs/` | Run artifacts, addressed by SHA-256 |

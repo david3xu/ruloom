@@ -26,7 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     ``--images DIR`` is optional: a directory of companion image files
     for profiles declaring image capabilities. Without it the run is
-    unchanged (no image step does any work).
+    unchanged (no image step does any work). ``--local-critic`` is
+    likewise optional: it enables the advisory local text-critique step
+    (default off, so the default run is unchanged).
     """
     parser = argparse.ArgumentParser(prog="ruloom")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -55,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="optional directory of companion image files",
     )
+    run.add_argument(
+        "--local-critic",
+        action="store_true",
+        default=False,
+        help="enable the optional advisory local text-critique step",
+    )
     return parser
 
 
@@ -78,7 +86,26 @@ def load_registry(profile_id: str) -> Mapping[str, Any]:
 
 
 def default_client(role: str, config: Mapping[str, Any]) -> StructuredModel:
-    """Build the model client for one resolved role (composition root)."""
+    """Build the model client for one resolved role (composition root).
+
+    Each role binding declares its adapter: ``meta_cli`` (the hosted
+    ``muse exec`` adapter, the default for existing roles) or
+    ``glimmer_local`` (the local OpenAI-compatible server). An unknown
+    adapter name fails loudly.
+    """
+    adapter = config.get("adapter", "meta_cli")
+    if adapter == "glimmer_local":
+        from models.glimmer import DEFAULT_BASE_URL, GlimmerLocalModel
+
+        return GlimmerLocalModel(
+            model=str(config.get("model", "muse-glimmer-30B")),
+            base_url=str(config.get("base_url") or DEFAULT_BASE_URL),
+        )
+    if adapter != "meta_cli":
+        raise ValueError(
+            f"unknown model adapter {adapter!r} for role {role!r} "
+            "(expected 'meta_cli' or 'glimmer_local')"
+        )
     from models.meta_cli import MuseCLIModel
 
     return MuseCLIModel(
@@ -125,6 +152,7 @@ def main(
             model_factory=factory,
             out=Path(args.out),
             images_dir=Path(args.images) if args.images is not None else None,
+            local_critic=args.local_critic,
         )
         return code
     return 1

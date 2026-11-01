@@ -36,6 +36,7 @@ from .imaging.statistics import (
     read_statistics,
     summarize_for_prompt,
 )
+from .validation.critique import critique_report
 
 
 def _thresholds_path() -> Path:
@@ -380,6 +381,29 @@ def image_critique(ctx: Any) -> None:
         synthetic_path.unlink(missing_ok=True)
 
 
+def local_critique(ctx: Any) -> None:
+    """Advisory text note on the validation report (never a verdict).
+
+    Off by default: without the ``--local-critic`` flag this step returns
+    silently, so the default run is byte-identical to a run without it.
+    With the flag on, the ``local_critic`` role reads the validation
+    report plus the profile statistics summary only -- never raw rows,
+    never images. Any failure propagates, so an unreachable local server
+    fails the run loudly instead of silently skipping the critique.
+    """
+    if not getattr(ctx, "local_critic_enabled", False):
+        return
+    report = ctx.state["report"]
+    profile = ctx.state["profile"]
+    note = critique_report(
+        ctx.model("local_critic"), report.to_dict(), profile.to_json()
+    )
+    ctx.state["local_critique_note"] = note
+    ctx.record_advisory("local_critique_note", note)
+    ctx.event("local_critique", "ok", {"model": note.get("model")})
+    ctx.say("[local_critique] advisory text note recorded")
+
+
 def package_artifact(ctx: Any) -> None:
     """Write the artifact directory with data, plan, report, and log."""
     sha = ctx.state["artifact_sha256"]
@@ -426,6 +450,14 @@ def package_artifact(ctx: Any) -> None:
                 + "\n",
                 encoding="utf-8",
             )
+    if ctx.state.get("local_critique_note") is not None:
+        (artifact_dir / "critic-note.json").write_text(
+            json.dumps(
+                ctx.state["local_critique_note"], indent=2, sort_keys=True
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     ctx.state["artifact_dir"] = str(artifact_dir)
     ctx.event(
         "artifact", "ok", {"artifact_dir": str(artifact_dir)},
@@ -463,6 +495,7 @@ CAPABILITIES: dict[str, Any] = {
     "image_synthesize": image_synthesize,
     "image_validate": image_validate,
     "image_critique": image_critique,
+    "local_critique": local_critique,
     "package_artifact": package_artifact,
     "package_release": package_release,
 }

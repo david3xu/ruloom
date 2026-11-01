@@ -214,6 +214,11 @@ class RunContext:
         return self._runner.images_dir
 
     @property
+    def local_critic_enabled(self) -> bool:
+        """Whether the optional local text-critique step should run."""
+        return self._runner.local_critic_enabled
+
+    @property
     def out_dir(self) -> Path:
         """Base output directory for run artifacts."""
         return self._runner.out
@@ -268,6 +273,7 @@ class _Runner:
         say: Callable[[str], None],
         ask: Callable[[str], str],
         images_dir: Path | None = None,
+        local_critic: bool = False,
     ) -> None:
         if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
             raise TypeError(
@@ -290,6 +296,7 @@ class _Runner:
                     f"images directory not found: {images_dir}"
                 )
         self.images_dir = images_dir
+        self.local_critic_enabled = bool(local_critic)
         self.max_attempts = max_attempts
         self.model_factory = model_factory
         self.out = out
@@ -318,6 +325,7 @@ class _Runner:
                     if images_dir is not None
                     else {}
                 ),
+                **({"local_critic": True} if local_critic else {}),
             },
             limits=dict(manifest.limits),
         )
@@ -532,11 +540,14 @@ def execute(
     say: Callable[[str], None] | None = None,
     ask: Callable[[str], str] | None = None,
     images_dir: Path | None = None,
+    local_critic: bool = False,
 ) -> tuple[int, dict[str, Any]]:
     """Execute a manifest graph; return (exit code, outcome summary).
 
     ``max_attempts`` is required and has no default: the caller supplies
-    the bound and every loop node binds to it.
+    the bound and every loop node binds to it. ``local_critic`` enables
+    the optional advisory text-critique step (default off); advisory
+    output is logged and never affects the verdict.
     """
     import sys as _sys
 
@@ -568,6 +579,7 @@ def execute(
         say=_say,
         ask=_ask,
         images_dir=images_dir,
+        local_critic=local_critic,
     )
     runner.log.append("run_start", "ok", {"run": runner.run.to_dict()})
     gate_id = ""
