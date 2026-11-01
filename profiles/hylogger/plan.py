@@ -32,6 +32,26 @@ PLAN_SCHEMA: dict[str, Any] = {
 }
 
 
+def validate_plan(data: Any) -> dict[str, Any]:
+    """Validate a plan dict against :data:`PLAN_SCHEMA`.
+
+    Returns a plain ``dict`` copy of the conforming plan. Raises
+    :class:`PlanError` when the value is not a conforming plan.
+    """
+    if not isinstance(data, Mapping):
+        raise PlanError(f"plan must be an object, got {type(data).__name__}")
+    plan = dict(data)
+    try:
+        jsonschema.validate(plan, PLAN_SCHEMA)
+    except jsonschema.ValidationError as exc:
+        raise PlanError(f"plan does not conform to PLAN_SCHEMA: {exc.message}") from exc
+    for key in ("seed", "n_rows"):
+        value = plan[key]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise PlanError(f"plan {key!r} must be an integer, got {value!r}")
+    return plan
+
+
 def build_prompt(profile: Profile) -> str:
     """Build the planning prompt for a profile.
 
@@ -60,16 +80,5 @@ def propose(model: StructuredModel, profile: Profile) -> Completion:
     if not isinstance(profile, Profile):
         raise TypeError(f"profile must be a Profile, got {type(profile).__name__}")
     completion = model.complete(build_prompt(profile), PLAN_SCHEMA)
-    data = completion.data
-    if not isinstance(data, Mapping):
-        raise PlanError(f"plan must be an object, got {type(data).__name__}")
-    plan = dict(data)
-    try:
-        jsonschema.validate(plan, PLAN_SCHEMA)
-    except jsonschema.ValidationError as exc:
-        raise PlanError(f"plan does not conform to PLAN_SCHEMA: {exc.message}") from exc
-    for key in ("seed", "n_rows"):
-        value = plan[key]
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise PlanError(f"plan {key!r} must be an integer, got {value!r}")
+    plan = validate_plan(completion.data)
     return Completion(data=plan, usage=completion.usage, meta=completion.meta)
