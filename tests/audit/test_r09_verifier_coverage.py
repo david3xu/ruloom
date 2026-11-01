@@ -1,11 +1,10 @@
-"""Audit counterexample fixture: R09 missing checks still reach release.
+"""R09 required-check contracts: only validated passing evidence accepts.
 
-The engine defines success as an empty failure list without requiring
-the declared checks to have run, so a verifier that records nothing
-reaches ``released``. The test asserts the corrected behaviour (a run
-with no recorded checks for a declared required check must not
-release); it currently fails because the no-op verifier releases,
-recorded as strict xfail.
+The engine computes the verdict only from check results that belong to
+the current attempt, name the exact artifact hash they measured, carry a
+recognised status, and cover every required check exactly once. A
+verifier that records nothing fails coverage; a result naming the wrong
+artifact hash is rejected as invalid. Neither can reach acceptance.
 """
 
 from __future__ import annotations
@@ -14,14 +13,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from engine.core.manifest import validate_manifest
-from engine.core.runner import EXIT_OK, execute
-
-needs_fix = pytest.mark.xfail(
-    strict=True, reason="audit R09 open: no-op verifier reaches released"
-)
+from engine.core.runner import EXIT_FAILED, EXIT_OK, execute
 
 
 def _write_source(path: Path) -> Path:
@@ -81,7 +74,6 @@ def _registry(validate: Any) -> dict[str, Any]:
     }
 
 
-@needs_fix
 def test_noop_verifier_must_not_release(tmp_path: Path) -> None:
     source = _write_source(tmp_path)
     code, result = execute(
@@ -107,7 +99,7 @@ def test_recorded_failure_blocks_release(tmp_path: Path) -> None:
                 {
                     "check_id": "required_check",
                     "kind": "constraint",
-                    "passed": False,
+                    "status": "fail",
                     "measured": "no data examined",
                     "threshold": "must examine data",
                     "threshold_source": "literal",
@@ -129,3 +121,72 @@ def test_recorded_failure_blocks_release(tmp_path: Path) -> None:
     )
     assert code != EXIT_OK
     assert result["status"] != "released"
+
+
+def test_wrong_artifact_hash_is_rejected(tmp_path: Path) -> None:
+    """A result naming an artifact hash it did not measure is invalid."""
+
+    def validate(ctx: Any) -> None:
+        ctx.record_checks(
+            [
+                {
+                    "check_id": "required_check",
+                    "kind": "constraint",
+                    "status": "pass",
+                    "measured": "ok",
+                    "threshold": {"source": "literal"},
+                    "threshold_source": "literal",
+                    "artifact_sha256": "0" * 64,
+                    "detail": "stale proof for another artifact",
+                }
+            ]
+        )
+
+    source = _write_source(tmp_path)
+    code, result = execute(
+        _manifest(),
+        _registry(validate),
+        source=source,
+        max_attempts=1,
+        model_factory=lambda role, config: None,
+        out=tmp_path / "out",
+        say=lambda message: None,
+        ask=lambda prompt: "accept",
+    )
+    assert code == EXIT_FAILED
+    assert result["status"] != "released"
+
+
+def test_explicit_correct_hash_is_accepted(tmp_path: Path) -> None:
+    """A result naming the exact artifact hash it measured satisfies."""
+
+    def validate(ctx: Any) -> None:
+        sha = ctx.latest_artifact().sha256
+        ctx.record_checks(
+            [
+                {
+                    "check_id": "required_check",
+                    "kind": "constraint",
+                    "status": "pass",
+                    "measured": "ok",
+                    "threshold": {"source": "literal"},
+                    "threshold_source": "literal",
+                    "artifact_sha256": sha,
+                    "detail": "measured this artifact",
+                }
+            ]
+        )
+
+    source = _write_source(tmp_path)
+    code, result = execute(
+        _manifest(),
+        _registry(validate),
+        source=source,
+        max_attempts=1,
+        model_factory=lambda role, config: None,
+        out=tmp_path / "out",
+        say=lambda message: None,
+        ask=lambda prompt: "accept",
+    )
+    assert code == EXIT_OK
+    assert result["status"] == "released"

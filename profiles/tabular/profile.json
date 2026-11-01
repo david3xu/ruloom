@@ -91,28 +91,32 @@
       "kind": "constraint",
       "threshold": {
         "source": "literal"
-      }
+      },
+      "required": true
     },
     {
       "id": "schema_columns",
       "kind": "constraint",
       "threshold": {
         "source": "literal"
-      }
+      },
+      "required": true
     },
     {
       "id": "row_count",
       "kind": "constraint",
       "threshold": {
         "source": "literal"
-      }
+      },
+      "required": true
     },
     {
       "id": "mean_value",
       "kind": "fidelity",
       "threshold": {
         "source": "relative_tolerance"
-      }
+      },
+      "required": true
     }
   ],
   "models": {

@@ -128,14 +128,13 @@ def _registry(failures: list[list[str]], client: FakeClient) -> dict:
     """decide calls the model; judge fails per-attempt ids; repair recalls."""
 
     def intake(ctx: Any) -> None:
-        ctx.state.setdefault("plan", {"rev": 0})
+        ctx.set_plan({"rev": 0})
         ctx.event("intake", "ok", {})
 
     def decide(ctx: Any) -> None:
         completion = ctx.model("planner").complete("prompt", {})
-        ctx.state["plan"] = dict(completion.data)
-        artifact = ctx.record_artifact("out.bin", "text/csv", b"data")
-        ctx.state["artifact_sha"] = artifact.sha256
+        ctx.set_plan(dict(completion.data))
+        ctx.record_artifact("out.bin", "text/csv", b"data")
 
     def judge(ctx: Any) -> None:
         attempt = ctx.attempt_number
@@ -145,7 +144,7 @@ def _registry(failures: list[list[str]], client: FakeClient) -> dict:
                 {
                     "check_id": "shape_ok",
                     "kind": "constraint",
-                    "passed": "shape_ok" not in wanted,
+                    "status": "fail" if "shape_ok" in wanted else "pass",
                     "measured": "ok",
                     "threshold": {"source": "literal"},
                     "threshold_source": "literal",
@@ -155,7 +154,7 @@ def _registry(failures: list[list[str]], client: FakeClient) -> dict:
 
     def repair(ctx: Any) -> None:
         completion = ctx.model("planner").complete("repair", {})
-        ctx.state["plan"] = dict(completion.data)
+        ctx.set_plan(dict(completion.data))
 
     return {
         "intake": intake,
@@ -411,24 +410,24 @@ def test_effective_bindings_recorded_in_run_log(tmp_path: Path) -> None:
 
     def decide(ctx: Any) -> None:
         completion = ctx.model("planner").complete("prompt", {})
-        artifact = ctx.record_artifact("out.bin", "text/csv", b"data")
-        ctx.state["artifact_sha"] = artifact.sha256
-        ctx.state["plan"] = dict(completion.data)
+        ctx.record_artifact("out.bin", "text/csv", b"data")
+        ctx.set_plan(dict(completion.data))
 
     def judge(ctx: Any) -> None:
+        # No verdict writes exist: the engine decides acceptance from the
+        # recorded check result alone.
         ctx.record_checks(
             [
                 {
                     "check_id": "shape_ok",
                     "kind": "constraint",
-                    "passed": True,
+                    "status": "pass",
                     "measured": "ok",
                     "threshold": {"source": "literal"},
                     "threshold_source": "literal",
                 }
             ]
         )
-        ctx.state["verdict"] = "pass"
 
     def pack(ctx: Any) -> None:
         (tmp_path / "out").mkdir(parents=True, exist_ok=True)

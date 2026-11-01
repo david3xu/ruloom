@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
 from ..analysis.calibration import (
     Thresholds,
@@ -22,6 +22,33 @@ from .dataset import read_csv_bytes, to_csv_bytes
 from ..intake.reader import Sample
 
 PASS, FAIL, SKIP = "pass", "fail", "skip"
+
+
+def source_fidelity_reference(
+    source_samples: Sequence[Sample],
+) -> dict[str, dict[str, Any]]:
+    """Precompute the source-side fidelity references for the checks.
+
+    The engine hands only statistics views to capabilities without raw
+    access, so the granted profiling step computes these once from the
+    source samples: per-channel full-source marginals plus the
+    split-half tolerance. The numbers are identical to the ones the
+    checks would compute inline from the same samples.
+    """
+    source = list(source_samples)
+    first, second = source[: len(source) // 2], source[len(source) // 2 :]
+    reference: dict[str, dict[str, Any]] = {}
+    for channel in ("swir", "tir"):
+        key = f"{channel}_group"
+        tolerance = marginal_tvd(
+            channel_marginals(first, key),
+            channel_marginals(second, key),
+        )
+        reference[channel] = {
+            "marginals": channel_marginals(source, key),
+            "tolerance": tolerance,
+        }
+    return reference
 
 
 def band_position(value: float, lo: float, hi: float) -> float:
@@ -112,6 +139,7 @@ def run_checks(
     thresholds: Thresholds,
     *,
     source_samples: Sequence[Sample] | None = None,
+    source_reference: Mapping[str, Any] | None = None,
     artifact_name: str = "",
     artifact_sha256: str = "",
 ) -> CheckReport:
@@ -189,25 +217,39 @@ def run_checks(
 
     for channel in ("swir", "tir"):
         name = f"{channel}_fidelity"
-        if source_samples is None:
-            add(CheckResult(name, SKIP, "no source samples provided"))
-            continue
-        source = list(source_samples)
-        first, second = source[: len(source) // 2], source[len(source) // 2 :]
-        tolerance = marginal_tvd(
-            channel_marginals(first, f"{channel}_group"),
-            channel_marginals(second, f"{channel}_group"),
-        )
+        if source_reference is not None:
+            # Statistics view computed by the granted profiling step from
+            # the same source samples; the numbers below are identical to
+            # the inline path. No raw source reaches this capability.
+            channel_ref = source_reference.get(channel)
+            if not isinstance(channel_ref, Mapping):
+                add(CheckResult(name, SKIP, "no source samples provided"))
+                continue
+            source_marginals = channel_ref.get("marginals")
+            tolerance = channel_ref.get("tolerance")
+        else:
+            if source_samples is None:
+                add(CheckResult(name, SKIP, "no source samples provided"))
+                continue
+            source = list(source_samples)
+            first, second = (
+                source[: len(source) // 2], source[len(source) // 2 :]
+            )
+            tolerance = marginal_tvd(
+                channel_marginals(first, f"{channel}_group"),
+                channel_marginals(second, f"{channel}_group"),
+            )
+            source_marginals = channel_marginals(source, f"{channel}_group")
         if tolerance is None:
             add(CheckResult(name, SKIP,
                             "source cannot establish split-half tolerance"))
             continue
         distance = marginal_tvd(
             channel_marginals(samples, f"{channel}_group"),
-            channel_marginals(source, f"{channel}_group"),
+            source_marginals,
         )
         if distance is None:
-            if channel_marginals(source, f"{channel}_group") is None:
+            if source_marginals is None:
                 add(CheckResult(name, PASS, "neither artifact nor source answers"))
             else:
                 add(CheckResult(name, FAIL, "artifact never answers, source does"))

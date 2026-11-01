@@ -7,6 +7,21 @@ permissions, and these functions never reach past their scoped context.
 
 The context is duck-typed on purpose: this module imports no engine and
 no model code, so the layer boundary stays intact.
+
+Declared inputs per capability (frozen snapshots; validated writes only):
+
+* ``intake`` (raw-granted): source bytes/path, sibling manifest; stores
+  the source identity and the parsed source frame.
+* ``profile_source`` (raw-granted): source frame and identity; stores the
+  statistics profile.
+* ``plan``/``repair`` (model-granted): statistics profile, latest report;
+  store generation plans.
+* ``generate``: profile and plan; stores the artifact bytes.
+* ``validate`` (verdict-granted): latest attempt artifact and profile;
+  stores the validation report and the engine-bound check results.
+* ``describe`` (advisory): profile only; advisory output never decides.
+* ``package_artifact``/``package_release``: engine-selected artifact and
+  evidence; write the artifact directory and the release ZIP.
 """
 
 from __future__ import annotations
@@ -29,6 +44,12 @@ from .generation.plan import (
 )
 from .intake.reader import read_tabular_csv
 from .analysis.statistics import TabularProfile
+
+
+#: Profile check statuses translated to the engine's recognised verdict
+#: statuses. A profile ``skip`` is recorded as engine ``skipped`` so it
+#: can never read as a pass at acceptance.
+_ENGINE_STATUS = {"pass": "pass", "fail": "fail", "skip": "skipped"}
 
 
 def _thresholds_path() -> Path:
@@ -62,15 +83,15 @@ def _sibling_manifest(source_path: Path, config: Any) -> Path | None:
 
 
 def _catalog(ctx: Any) -> dict[str, dict[str, Any]]:
-    return {entry["id"]: entry for entry in ctx.manifest.checks}
+    return {entry["id"]: entry for entry in ctx.declared_checks}
 
 
 def intake(ctx: Any) -> None:
     """Hash the source, record licence/attribution, parse rows."""
     payload = ctx.raw_bytes()
     source_sha256 = hashlib.sha256(payload).hexdigest()
-    manifest = _sibling_manifest(ctx.source_path, ctx.manifest.source)
-    config = ctx.manifest.source
+    manifest = _sibling_manifest(ctx.source_path, ctx.source_config)
+    config = ctx.source_config
     licence = config.get("licence") if isinstance(config, dict) else None
     attribution = (
         config.get("attribution") if isinstance(config, dict) else None
@@ -83,12 +104,13 @@ def intake(ctx: Any) -> None:
         manifest_name = manifest.name
     columns, rows = read_tabular_csv(ctx.source_path)
     source_name = ctx.source_path.stem
-    ctx.state["columns"] = columns
-    ctx.state["source_rows"] = rows
-    ctx.state["source_name"] = source_name
-    ctx.state["source_sha256"] = source_sha256
-    ctx.state["licence"] = licence
-    ctx.state["attribution"] = attribution
+    ctx.set_source_meta(
+        name=source_name,
+        sha256=source_sha256,
+        licence=licence,
+        attribution=attribution,
+    )
+    ctx.set_source_frame({"columns": list(columns), "rows": list(rows)})
     ctx.event(
         "source_intake",
         "ok",
@@ -112,37 +134,38 @@ def intake(ctx: Any) -> None:
 
 def profile_source(ctx: Any) -> None:
     """Build summary statistics over the parsed rows."""
+    frame = ctx.source_frame()
+    meta = ctx.source_meta()
     profile = TabularProfile.from_rows(
-        ctx.state["columns"],
-        ctx.state["source_rows"],
-        ctx.state["source_name"],
-        ctx.state["source_sha256"],
+        frame["columns"],
+        frame["rows"],
+        meta["source_name"],
+        meta["source_sha256"],
     )
-    ctx.state["profile"] = profile
+    ctx.set_profile(profile)
     ctx.event(
         "profile",
         "ok",
         {
-            "source_name": ctx.state["source_name"],
-            "n_samples": len(ctx.state["source_rows"]),
+            "source_name": meta["source_name"],
+            "n_samples": len(frame["rows"]),
         },
     )
     ctx.say(
-        f"[profile] statistics built over {len(ctx.state['source_rows'])} rows"
+        f"[profile] statistics built over {len(frame['rows'])} rows"
     )
 
 
 def plan(ctx: Any) -> None:
     """Ask the planner role for a generation plan (statistics only)."""
-    profile = ctx.state["profile"]
+    profile = ctx.profile()
     try:
         completion = propose(ctx.model("planner"), profile)
     except Exception as exc:  # noqa: BLE001 -- logged, then reported
         ctx.event("plan", "error", {"error": f"{type(exc).__name__}: {exc}"})
         ctx.say(f"[plan] error: {exc}")
         raise RuntimeError(f"plan failed: {exc}") from exc
-    ctx.state["plan"] = dict(completion.data)
-    ctx.state["attempt_usages"] = [completion.usage]
+    ctx.set_plan(dict(completion.data))
     ctx.event(
         "plan", "ok", {"plan": dict(completion.data)}, usage=completion.usage
     )
@@ -153,13 +176,12 @@ def plan(ctx: Any) -> None:
 
 def generate(ctx: Any) -> None:
     """Generate one synthetic artifact from the current plan."""
-    payload = generate_artifact(ctx.state["profile"], ctx.state["plan"])
-    artifact = ctx.record_artifact("data.csv", "text/csv", payload)
-    ctx.state["artifact_sha"] = artifact.sha256
+    payload = generate_artifact(ctx.profile(), ctx.plan())
+    ctx.record_artifact("data.csv", "text/csv", payload)
 
 
 def _profile_mean_column(ctx: Any) -> tuple[str | None, float | None]:
-    numeric = ctx.state["profile"].stats.get("numeric", {})
+    numeric = ctx.profile().stats.get("numeric", {})
     if not numeric:
         return None, None
     column = next(iter(numeric))
@@ -168,26 +190,27 @@ def _profile_mean_column(ctx: Any) -> tuple[str | None, float | None]:
 
 def validate(ctx: Any) -> None:
     """Read the artifact back and run the deterministic checks."""
-    sha = ctx.state["artifact_sha"]
-    payload = ctx.artifact_payload(sha)
+    artifact = ctx.latest_artifact()
+    payload = ctx.artifact_payload(artifact.sha256)
     columns, rows = read_payload(payload)
     thresholds = load_thresholds(_thresholds_path())
     mean_column, profile_mean = _profile_mean_column(ctx)
+    plan = ctx.plan()
+    meta = ctx.source_meta()
     report = run_checks(
         columns,
         rows,
         thresholds,
-        plan_n_rows=ctx.state["plan"]["n_rows"],
-        profile_columns=ctx.state["profile"].stats.get("columns"),
+        plan_n_rows=plan["n_rows"],
+        profile_columns=ctx.profile().stats.get("columns"),
         profile_mean=profile_mean,
         mean_column=mean_column,
         artifact_name=(
-            f"{ctx.state['source_name']}:attempt-{ctx.attempt_number}"
+            f"{meta['source_name']}:attempt-{ctx.attempt_number}"
         ),
-        artifact_sha256=sha,
+        artifact_sha256=artifact.sha256,
     )
-    ctx.state["report"] = report
-    ctx.state.setdefault("reports", {})[sha] = report
+    ctx.set_report(report)
     catalog = _catalog(ctx)
     items = []
     for result in report.results:
@@ -197,7 +220,7 @@ def validate(ctx: Any) -> None:
             {
                 "check_id": result.name,
                 "kind": entry.get("kind", "constraint"),
-                "passed": result.status != "fail",
+                "status": _ENGINE_STATUS[result.status],
                 "measured": result.detail,
                 "threshold": threshold,
                 "threshold_source": threshold.get("source", "literal")
@@ -212,15 +235,15 @@ def validate(ctx: Any) -> None:
 
 def repair(ctx: Any) -> None:
     """Ask the planner role for a revised plan after failed checks."""
-    profile = ctx.state["profile"]
-    report = ctx.state["report"]
+    profile = ctx.profile()
+    report = ctx.latest_report()
     failed_results = [
         {"name": r.name, "status": r.status, "detail": r.detail}
         for r in report.results
         if r.status == "fail"
     ]
     prompt = build_repair_prompt(
-        profile, failed_results, ctx.state["plan"]
+        profile, failed_results, ctx.plan()
     )
     try:
         completion = ctx.model("planner").complete(
@@ -231,19 +254,17 @@ def repair(ctx: Any) -> None:
         ctx.event("repair", "error", {"error": f"{type(exc).__name__}: {exc}"})
         ctx.say(f"[repair] error: {exc}")
         raise RuntimeError(f"repair failed: {exc}") from exc
-    ctx.state["plan"] = dict(new_plan)
-    ctx.state.setdefault("attempt_usages", []).append(completion.usage)
+    ctx.set_plan(dict(new_plan))
     ctx.event("repair", "ok", {"plan": dict(new_plan)},
               usage=completion.usage)
 
 
 def describe(ctx: Any) -> None:
     """Record an advisory summary; it is logged but never affects pass/fail."""
-    profile = ctx.state["profile"]
+    profile = ctx.profile()
     payload = {
         "n_rows": profile.stats.get("n_rows"),
         "columns": list(profile.stats.get("columns", [])),
-        "verdict": ctx.state.get("verdict"),
     }
     ctx.record_advisory("table_summary", payload)
     ctx.say(f"[describe] advisory summary recorded for {profile.source_name}")
@@ -251,12 +272,11 @@ def describe(ctx: Any) -> None:
 
 def package_artifact(ctx: Any) -> None:
     """Write the artifact directory with data, plan, report, and log."""
-    sha = ctx.state["artifact_sha256"]
+    sha = ctx.selected_artifact_sha()
     payload = ctx.artifact_payload(sha)
-    plan = ctx.state["plan"]
-    report = ctx.state["reports"][sha]
-    artifact_dir = ctx.out_dir / "runs" / sha
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+    plan = ctx.plan()
+    report = ctx.report_for(sha)
+    artifact_dir = ctx.prepare_artifact_dir()
     (artifact_dir / "data.csv").write_bytes(payload)
     (artifact_dir / "plan.json").write_text(
         json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -271,7 +291,6 @@ def package_artifact(ctx: Any) -> None:
     (artifact_dir / "provenance.md").write_text(
         ctx.provenance_text(), encoding="utf-8"
     )
-    ctx.state["artifact_dir"] = str(artifact_dir)
     ctx.event(
         "artifact", "ok", {"artifact_dir": str(artifact_dir)},
         artifact_sha256=sha,
@@ -282,9 +301,9 @@ def package_artifact(ctx: Any) -> None:
 
 def package_release(ctx: Any) -> None:
     """On human accept, write the reproducible release ZIP."""
-    artifact_dir = Path(ctx.state["artifact_dir"])
-    sha = ctx.state["artifact_sha256"]
-    zip_path, zip_sha = ctx.pack_release(artifact_dir)
+    artifact_dir = Path(ctx.artifact_dir())
+    sha = ctx.selected_artifact_sha()
+    zip_path, zip_sha = ctx.pack_release()
     ctx.event(
         "release",
         "ok",

@@ -9,6 +9,25 @@ permissions, and these functions never reach past their scoped context.
 
 The context is duck-typed on purpose: this module imports no engine and
 no model code, so the layer boundary stays intact.
+
+Declared inputs per capability (frozen snapshots; validated writes only):
+
+* ``intake``/``profile_source`` (raw-granted): source bytes/path and the
+  parsed frame; store the source identity, the frame, the statistics
+  profile, and the source-derived fidelity reference the checks need.
+* ``plan``/``repair`` (model-granted): profile and latest report; store
+  generation plans.
+* ``generate``: profile and plan; stores the artifact bytes.
+* ``validate`` (verdict-granted): latest attempt artifact, profile, and
+  reference statistics (never raw rows); stores the validation report
+  and the engine-bound check results.
+* ``image_*``: the companion bundle via the engine (``image_intake`` is
+  raw-granted); image validation records engine-bound check results, and
+  the image verdict folds into final acceptance through those results.
+* ``image_critique``/``local_critique`` (advisory): synthetic evidence
+  only; advisory output never decides.
+* ``package_artifact``/``package_release``: the engine-selected artifact
+  and evidence; write the artifact directory and the release ZIP.
 """
 
 from __future__ import annotations
@@ -20,7 +39,10 @@ from pathlib import Path
 from typing import Any
 
 from .analysis.calibration import load_thresholds
-from .validation.checks import run_checks
+from .validation.checks import (
+    run_checks,
+    source_fidelity_reference,
+)
 from .validation.dataset import read as read_artifact
 from .generation.generate import generate as generate_artifact
 from .generation.plan import PLAN_SCHEMA, propose, validate_plan
@@ -37,6 +59,12 @@ from .imaging.statistics import (
     summarize_for_prompt,
 )
 from .validation.critique import critique_report
+
+
+#: Profile check statuses translated to the engine's recognised verdict
+#: statuses. A profile ``skip`` is recorded as engine ``skipped`` so it
+#: can never read as a pass at acceptance.
+_ENGINE_STATUS = {"pass": "pass", "fail": "fail", "skip": "skipped"}
 
 
 def _thresholds_path() -> Path:
@@ -70,15 +98,39 @@ def _sibling_manifest(source_path: Path, config: Any) -> Path | None:
 
 
 def _catalog(ctx: Any) -> dict[str, dict[str, Any]]:
-    return {entry["id"]: entry for entry in ctx.manifest.checks}
+    return {entry["id"]: entry for entry in ctx.declared_checks}
+
+
+def _items(ctx: Any, report: Any) -> list[dict[str, Any]]:
+    """Translate a profile check report to engine-bound check items."""
+    catalog = _catalog(ctx)
+    items = []
+    for result in report.results:
+        entry = catalog.get(result.name, {})
+        threshold = entry.get("threshold", {"source": "literal"})
+        items.append(
+            {
+                "check_id": result.name,
+                "kind": entry.get("kind", "constraint"),
+                "status": _ENGINE_STATUS[result.status],
+                "measured": result.detail,
+                "threshold": threshold,
+                "threshold_source": threshold.get("source", "literal")
+                if isinstance(threshold, dict)
+                else "literal",
+                "detail": result.detail,
+                "band_position": getattr(result, "band_position", None),
+            }
+        )
+    return items
 
 
 def intake(ctx: Any) -> None:
     """Hash the source, record licence/attribution, parse samples."""
     payload = ctx.raw_bytes()
     source_sha256 = hashlib.sha256(payload).hexdigest()
-    manifest = _sibling_manifest(ctx.source_path, ctx.manifest.source)
-    config = ctx.manifest.source
+    manifest = _sibling_manifest(ctx.source_path, ctx.source_config)
+    config = ctx.source_config
     licence = config.get("licence") if isinstance(config, dict) else None
     attribution = (
         config.get("attribution") if isinstance(config, dict) else None
@@ -91,11 +143,13 @@ def intake(ctx: Any) -> None:
         manifest_name = manifest.name
     samples = read_scalar_csv(ctx.source_path)
     source_name = ctx.source_path.stem
-    ctx.state["samples"] = samples
-    ctx.state["source_name"] = source_name
-    ctx.state["source_sha256"] = source_sha256
-    ctx.state["licence"] = licence
-    ctx.state["attribution"] = attribution
+    ctx.set_source_meta(
+        name=source_name,
+        sha256=source_sha256,
+        licence=licence,
+        attribution=attribution,
+    )
+    ctx.set_source_frame(list(samples))
     ctx.event(
         "source_intake",
         "ok",
@@ -119,34 +173,39 @@ def intake(ctx: Any) -> None:
 
 def profile_source(ctx: Any) -> None:
     """Build summary statistics over the parsed samples."""
+    samples = ctx.source_frame()
+    meta = ctx.source_meta()
     profile = Profile.from_samples(
-        ctx.state["samples"],
-        ctx.state["source_name"],
-        ctx.state["source_sha256"],
+        samples,
+        meta["source_name"],
+        meta["source_sha256"],
     )
-    ctx.state["profile"] = profile
+    ctx.set_profile(profile)
+    # Source-derived fidelity references the checks need, computed once
+    # here where raw access is granted; validation reads this statistics
+    # view and never the rows.
+    ctx.set_reference_stats(source_fidelity_reference(samples))
     ctx.event(
         "profile",
         "ok",
         {
-            "source_name": ctx.state["source_name"],
-            "n_samples": len(ctx.state["samples"]),
+            "source_name": meta["source_name"],
+            "n_samples": len(samples),
         },
     )
-    ctx.say(f"[profile] statistics built over {len(ctx.state['samples'])} samples")
+    ctx.say(f"[profile] statistics built over {len(samples)} samples")
 
 
 def plan(ctx: Any) -> None:
     """Ask the planner role for a generation plan (statistics only)."""
-    profile = ctx.state["profile"]
+    profile = ctx.profile()
     try:
         completion = propose(ctx.model("planner"), profile)
     except Exception as exc:  # noqa: BLE001 -- logged, then reported
         ctx.event("plan", "error", {"error": f"{type(exc).__name__}: {exc}"})
         ctx.say(f"[plan] error: {exc}")
         raise RuntimeError(f"plan failed: {exc}") from exc
-    ctx.state["plan"] = dict(completion.data)
-    ctx.state["attempt_usages"] = [completion.usage]
+    ctx.set_plan(dict(completion.data))
     ctx.event("plan", "ok", {"plan": dict(completion.data)},
               usage=completion.usage)
     ctx.say(
@@ -156,57 +215,59 @@ def plan(ctx: Any) -> None:
 
 def generate(ctx: Any) -> None:
     """Generate one synthetic artifact from the current plan."""
-    payload = generate_artifact(ctx.state["profile"], ctx.state["plan"])
-    artifact = ctx.record_artifact("data.csv", "text/csv", payload)
-    ctx.state["artifact_sha"] = artifact.sha256
+    payload = generate_artifact(ctx.profile(), ctx.plan())
+    ctx.record_artifact("data.csv", "text/csv", payload)
 
 
 def validate(ctx: Any) -> None:
     """Read the artifact back and run the deterministic checks."""
-    sha = ctx.state["artifact_sha"]
-    payload = ctx.artifact_payload(sha)
-    samples = read_artifact(payload)
+    artifact = ctx.latest_artifact()
+    payload = ctx.artifact_payload(artifact.sha256)
+    try:
+        samples = read_artifact(payload)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"synthetic artifact failed schema parse: {exc}"
+        ) from exc
     thresholds = load_thresholds(_thresholds_path())
+    meta = ctx.source_meta()
     report = run_checks(
         samples,
         thresholds,
-        source_samples=list(ctx.state["samples"]),
+        source_reference=ctx.reference_stats(),
         artifact_name=(
-            f"{ctx.state['source_name']}:attempt-{ctx.attempt_number}"
+            f"{meta['source_name']}:attempt-{ctx.attempt_number}"
         ),
-        artifact_sha256=sha,
+        artifact_sha256=artifact.sha256,
     )
-    ctx.state["report"] = report
-    ctx.state.setdefault("reports", {})[sha] = report
+    ctx.set_report(report)
     catalog = _catalog(ctx)
-    items = []
-    for result in report.results:
-        entry = catalog.get(result.name, {})
-        threshold = entry.get("threshold", {"source": "literal"})
-        items.append(
-            {
-                "check_id": result.name,
-                "kind": entry.get("kind", "constraint"),
-                "passed": result.status != "fail",
-                "measured": result.detail,
-                "threshold": threshold,
-                "threshold_source": threshold.get("source", "literal")
-                if isinstance(threshold, dict)
-                else "literal",
-                "detail": result.detail,
-                "band_position": getattr(result, "band_position", None),
-            }
-        )
+    schema_entry = catalog.get("csv_schema", {})
+    schema_threshold = schema_entry.get("threshold", {"source": "literal"})
+    items = [
+        {
+            "check_id": "csv_schema",
+            "kind": schema_entry.get("kind", "constraint"),
+            "status": "pass",
+            "measured": f"{len(samples)} rows, header ok",
+            "threshold": schema_threshold,
+            "threshold_source": schema_threshold.get("source", "literal")
+            if isinstance(schema_threshold, dict)
+            else "literal",
+            "detail": f"{len(samples)} rows, header ok",
+        }
+    ]
+    items.extend(_items(ctx, report))
     ctx.record_checks(items)
 
 
 def repair(ctx: Any) -> None:
     """Ask the planner role for a revised plan after failed checks."""
-    profile = ctx.state["profile"]
-    report = ctx.state["report"]
+    profile = ctx.profile()
+    report = ctx.latest_report()
     failed_results = [r for r in report.results if r.status == "fail"]
     prompt = build_repair_prompt(
-        profile, failed_results, ctx.state["plan"]
+        profile, failed_results, ctx.plan()
     )
     try:
         completion = ctx.model("planner").complete(
@@ -217,8 +278,7 @@ def repair(ctx: Any) -> None:
         ctx.event("repair", "error", {"error": f"{type(exc).__name__}: {exc}"})
         ctx.say(f"[repair] error: {exc}")
         raise RuntimeError(f"repair failed: {exc}") from exc
-    ctx.state["plan"] = dict(new_plan)
-    ctx.state.setdefault("attempt_usages", []).append(completion.usage)
+    ctx.set_plan(dict(new_plan))
     ctx.event("repair", "ok", {"plan": dict(new_plan)},
               usage=completion.usage)
 
@@ -231,15 +291,19 @@ def image_intake(ctx: Any) -> None:
     computed for each PNG. Without the flag this step returns silently
     so the default run is byte-identical to a run without image steps.
     """
-    images_dir = getattr(ctx, "images_dir", None)
+    images_dir = ctx.images_dir
     if images_dir is None:
         return
     records = inventory_images(images_dir)
     stats, skipped = read_statistics(images_dir)
-    ctx.state["image_records"] = [record.to_dict() for record in records]
-    ctx.state["image_stats"] = [item.to_dict() for item in stats]
-    ctx.state["image_skipped"] = list(skipped)
-    ctx.state["image_reference"] = stats[0].to_dict() if stats else None
+    ctx.set_companion(
+        {
+            "records": [record.to_dict() for record in records],
+            "stats": [item.to_dict() for item in stats],
+            "skipped": list(skipped),
+            "reference": stats[0].to_dict() if stats else None,
+        }
+    )
     ctx.event(
         "image_intake",
         "ok",
@@ -258,14 +322,16 @@ def image_intake(ctx: Any) -> None:
 
 def image_synthesize(ctx: Any) -> None:
     """Render the synthetic PNG from reference statistics and plan seed."""
-    reference = ctx.state.get("image_reference")
+    bundle = ctx.companion()
+    reference = bundle.get("reference")
     if reference is None:
         return
-    plan = ctx.state.get("plan") or {}
+    plan = ctx.plan()
     seed = plan.get("seed", 0)
     payload = synthesize_image(reference, int(seed))
     artifact = ctx.record_artifact("synthetic.png", "image/png", payload)
-    ctx.state["image_artifact_sha"] = artifact.sha256
+    bundle["image_artifact_sha"] = artifact.sha256
+    ctx.set_companion(bundle)
     ctx.event(
         "image_synthesize",
         "ok",
@@ -276,9 +342,16 @@ def image_synthesize(ctx: Any) -> None:
 
 
 def image_validate(ctx: Any) -> None:
-    """Run the deterministic image checks on the synthetic PNG."""
-    sha = ctx.state.get("image_artifact_sha")
-    reference = ctx.state.get("image_reference")
+    """Run the deterministic image checks on the synthetic PNG.
+
+    Image failures reach the run verdict only through the engine-bound
+    check results recorded here; advisory critique output can never do
+    this. The image report itself rides in the companion bundle, never
+    in the validation-report slot owned by the loop checks.
+    """
+    bundle = ctx.companion()
+    sha = bundle.get("image_artifact_sha")
+    reference = bundle.get("reference")
     if sha is None or reference is None:
         return
     payload = ctx.artifact_payload(sha)
@@ -288,56 +361,9 @@ def image_validate(ctx: Any) -> None:
         artifact_name="synthetic.png",
         artifact_sha256=sha,
     )
-    ctx.state["image_report"] = report.to_dict()
-    catalog = _catalog(ctx)
-    items = []
-    for result in report.results:
-        entry = catalog.get(result.name, {})
-        threshold = entry.get("threshold", {"source": "literal"})
-        items.append(
-            {
-                "check_id": result.name,
-                "kind": entry.get("kind", "constraint"),
-                "passed": result.status != "fail",
-                "measured": result.detail,
-                "threshold": threshold,
-                "threshold_source": threshold.get("source", "literal")
-                if isinstance(threshold, dict)
-                else "literal",
-                "detail": result.detail,
-                "band_position": getattr(result, "band_position", None),
-            }
-        )
-    ctx.record_checks(items)
-    if report.verdict == "fail":
-        # Deterministic image checks validate: fold failures into the run
-        # verdict (the shape below matches EngineCheckResult serialised
-        # entries so the gate reports them like any other failure).
-        # Advisory critique output can never do this — only checks can.
-        ctx.state["failed"] = sorted(
-            set(ctx.state.get("failed", [])) | set(report.failed)
-        )
-        ctx.state["verdict"] = "fail"
-        best = ctx.state.get("best_attempt")
-        if isinstance(best, dict):
-            entries = best.setdefault("check_results", [])
-            for result in report.results:
-                if result.status == "fail":
-                    entries.append(
-                        {
-                            "check_id": result.name,
-                            "kind": catalog.get(result.name, {}).get(
-                                "kind", "constraint"
-                            ),
-                            "passed": False,
-                            "measured": result.detail,
-                            "threshold": {"source": "literal"},
-                            "threshold_source": "literal",
-                            "artifact_sha256": sha,
-                            "verifier": "image_validate",
-                            "detail": result.detail,
-                        }
-                    )
+    bundle["report"] = report.to_dict()
+    ctx.set_companion(bundle)
+    ctx.record_checks(_items(ctx, report))
     ctx.event(
         "image_validate",
         "ok" if report.verdict == "pass" else "fail",
@@ -356,8 +382,9 @@ def image_critique(ctx: Any) -> None:
     """
     import tempfile
 
-    sha = ctx.state.get("image_artifact_sha")
-    reference = ctx.state.get("image_reference")
+    bundle = ctx.companion()
+    sha = bundle.get("image_artifact_sha")
+    reference = bundle.get("reference")
     if sha is None or reference is None:
         return
     payload = ctx.artifact_payload(sha)
@@ -393,14 +420,13 @@ def local_critique(ctx: Any) -> None:
     never images. Any failure propagates, so an unreachable local server
     fails the run loudly instead of silently skipping the critique.
     """
-    if not getattr(ctx, "local_critic_enabled", False):
+    if not ctx.local_critic_enabled:
         return
-    report = ctx.state["report"]
-    profile = ctx.state["profile"]
+    report = ctx.latest_report()
+    profile = ctx.profile()
     note = critique_report(
         ctx.model("local_critic"), report.to_dict(), profile.to_json()
     )
-    ctx.state["local_critique_note"] = note
     ctx.record_advisory("local_critique_note", note)
     ctx.event("local_critique", "ok", {"model": note.get("model")})
     ctx.say("[local_critique] advisory text note recorded")
@@ -408,12 +434,11 @@ def local_critique(ctx: Any) -> None:
 
 def package_artifact(ctx: Any) -> None:
     """Write the artifact directory with data, plan, report, and log."""
-    sha = ctx.state["artifact_sha256"]
+    sha = ctx.selected_artifact_sha()
     payload = ctx.artifact_payload(sha)
-    plan = ctx.state["plan"]
-    report = ctx.state["reports"][sha]
-    artifact_dir = ctx.out_dir / "runs" / sha
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+    plan = ctx.plan()
+    report = ctx.report_for(sha)
+    artifact_dir = ctx.prepare_artifact_dir()
     (artifact_dir / "data.csv").write_bytes(payload)
     (artifact_dir / "plan.json").write_text(
         json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -428,15 +453,16 @@ def package_artifact(ctx: Any) -> None:
     (artifact_dir / "provenance.md").write_text(
         ctx.provenance_text(), encoding="utf-8"
     )
-    if ctx.state.get("image_artifact_sha") is not None:
+    bundle = ctx.companion()
+    if bundle.get("image_artifact_sha") is not None:
         (artifact_dir / "synthetic.png").write_bytes(
-            ctx.artifact_payload(ctx.state["image_artifact_sha"])
+            ctx.artifact_payload(bundle["image_artifact_sha"])
         )
         (artifact_dir / "image-statistics.json").write_text(
             json.dumps(
                 {
-                    "reference": ctx.state.get("image_reference"),
-                    "skipped": ctx.state.get("image_skipped", []),
+                    "reference": bundle.get("reference"),
+                    "skipped": bundle.get("skipped", []),
                 },
                 indent=2,
                 sort_keys=True,
@@ -444,23 +470,23 @@ def package_artifact(ctx: Any) -> None:
             + "\n",
             encoding="utf-8",
         )
-        if ctx.state.get("image_report") is not None:
+        if bundle.get("report") is not None:
             (artifact_dir / "image-validation.json").write_text(
                 json.dumps(
-                    ctx.state["image_report"], indent=2, sort_keys=True
+                    bundle["report"], indent=2, sort_keys=True
                 )
                 + "\n",
                 encoding="utf-8",
             )
-    if ctx.state.get("local_critique_note") is not None:
+    note = ctx.advisory("local_critique_note")
+    if note is not None:
         (artifact_dir / "critic-note.json").write_text(
             json.dumps(
-                ctx.state["local_critique_note"], indent=2, sort_keys=True
+                note, indent=2, sort_keys=True
             )
             + "\n",
             encoding="utf-8",
         )
-    ctx.state["artifact_dir"] = str(artifact_dir)
     ctx.event(
         "artifact", "ok", {"artifact_dir": str(artifact_dir)},
         artifact_sha256=sha,
@@ -471,9 +497,9 @@ def package_artifact(ctx: Any) -> None:
 
 def package_release(ctx: Any) -> None:
     """On human accept, write the reproducible release ZIP."""
-    artifact_dir = Path(ctx.state["artifact_dir"])
-    sha = ctx.state["artifact_sha256"]
-    zip_path, zip_sha = ctx.pack_release(artifact_dir)
+    artifact_dir = Path(ctx.artifact_dir())
+    sha = ctx.selected_artifact_sha()
+    zip_path, zip_sha = ctx.pack_release()
     ctx.event(
         "release",
         "ok",

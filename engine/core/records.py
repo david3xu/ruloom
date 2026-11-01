@@ -48,20 +48,51 @@ class Artifact:
     name: str = ""
 
 
+#: Statuses the engine recognises on a check result. Only ``"pass"``
+#: satisfies a required check; every other status blocks acceptance.
+#: Profile reports that say ``"skip"`` are translated to ``"skipped"``
+#: at the capability boundary so a skipped check can never read as a pass.
+CHECK_PASS = "pass"
+CHECK_FAIL = "fail"
+CHECK_ERROR = "error"
+CHECK_UNSUPPORTED = "unsupported"
+CHECK_SKIPPED = "skipped"
+
+#: Every status the engine accepts. Anything else is invalid evidence.
+VALID_CHECK_STATUSES = (
+    CHECK_PASS,
+    CHECK_FAIL,
+    CHECK_ERROR,
+    CHECK_UNSUPPORTED,
+    CHECK_SKIPPED,
+)
+
+
 @dataclass(frozen=True)
 class EngineCheckResult:
-    """One check outcome bound to the exact artifact hash it measured."""
+    """One check outcome bound to the exact artifact hash it measured.
+
+    ``status`` is one of :data:`VALID_CHECK_STATUSES`; only ``"pass"``
+    satisfies a required check. ``attempt`` is the 1-based loop attempt
+    that produced the result (``0`` when recorded outside any loop).
+    """
 
     check_id: str
     kind: str
-    passed: bool
+    status: str
     measured: Any
     threshold: Any
     threshold_source: str
     artifact_sha256: str
     verifier: str
+    attempt: int = 0
     detail: str = ""
     band_position: float | None = None
+
+    @property
+    def passed(self) -> bool:
+        """Whether this result satisfies a required check."""
+        return self.status == CHECK_PASS
 
 
 @dataclass

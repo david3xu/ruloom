@@ -47,3 +47,17 @@ without RP-00 regression tests; their checkers arrive with RP-03/RP-06
 views) and RP-02 (durable runs) respectively, per the implementation
 plan. Product behaviour is unchanged in RP-00: gates, tests, CI and
 wording only.
+
+RP-01 closed the engine side of R07 and R09. Capabilities now receive
+frozen input views and validated write methods — no shared mutable
+state, no runner reference, no verdict/artifact/decision path —
+advisories land in a separate store the verdict never reads, and raw
+source is gated behind `reads_raw_source`. Manifests declare
+per-check `required`/`applicable_when` status; the verdict comes only
+from results bound to the current attempt's exact artifact hash with a
+recognised status, and only `pass` satisfies. `Q-ENGINE-R07` and
+`Q-EVAL-R09-ENGINE` are enforced; `Q-EVAL-R09-HARNESS` stays
+open for RP-08. One declared exception: HyLogger `swir_answer_rate`
+is `required: false` with a manifest note because its calibrated band
+is vacuous (informative bands are RP-05). R01, R02, R03, R05, R06, R10
+remain open findings with strict-xfail counterexamples.

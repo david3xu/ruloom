@@ -41,7 +41,8 @@
     },
     "image_intake": {
       "impl": "hylogger.imaging.intake",
-      "stage": "image_intake"
+      "stage": "image_intake",
+      "reads_raw_source": true
     },
     "image_synthesize": {
       "impl": "hylogger.imaging.generate",
@@ -123,98 +124,113 @@
       "kind": "constraint",
       "threshold": {
         "source": "literal"
-      }
+      },
+      "required": true
     },
     {
       "id": "backward_steps",
       "kind": "constraint",
       "threshold": {
         "source": "literal"
-      }
+      },
+      "required": true
     },
     {
       "id": "depth_non_decreasing",
       "kind": "constraint",
       "threshold": {
         "source": "literal"
-      }
+      },
+      "required": true
     },
     {
       "id": "spacing_median",
       "kind": "fidelity",
       "threshold": {
         "source": "real_vs_real_band"
-      }
+      },
+      "required": true
     },
     {
       "id": "repeated_depth_fraction",
       "kind": "fidelity",
       "threshold": {
         "source": "real_vs_real_band"
-      }
+      },
+      "required": true
     },
     {
       "id": "valid_fraction",
       "kind": "fidelity",
       "threshold": {
         "source": "real_vs_real_band"
-      }
+      },
+      "required": true
     },
     {
       "id": "repeated_depths_masked_out",
       "kind": "fidelity",
       "threshold": {
         "source": "real_vs_real_band"
-      }
+      },
+      "required": true
     },
     {
       "id": "swir_answer_rate",
       "kind": "fidelity",
       "threshold": {
         "source": "real_vs_real_band"
-      }
+      },
+      "required": false,
+      "note": "Calibrated band is vacuous (RP-05 owns informative bands); a skip is shown in the report but never gates acceptance. Re-require when the band is informative."
     },
     {
       "id": "tir_answer_rate",
       "kind": "fidelity",
       "threshold": {
         "source": "real_vs_real_band"
-      }
+      },
+      "required": true
     },
     {
       "id": "swir_vocabulary",
       "kind": "constraint",
       "threshold": {
         "source": "literal"
-      }
+      },
+      "required": true
     },
     {
       "id": "tir_vocabulary",
       "kind": "constraint",
       "threshold": {
         "source": "literal"
-      }
+      },
+      "required": true
     },
     {
       "id": "swir_fidelity",
       "kind": "fidelity",
       "threshold": {
         "source": "split_half_reference"
-      }
+      },
+      "required": true
     },
     {
       "id": "tir_fidelity",
       "kind": "fidelity",
       "threshold": {
         "source": "split_half_reference"
-      }
+      },
+      "required": true
     },
     {
       "id": "csv_schema",
       "kind": "constraint",
       "threshold": {
         "source": "literal"
-      }
+      },
+      "required": true
     },
     {
       "id": "image_histogram_distance",
@@ -222,21 +238,27 @@
       "threshold": {
         "source": "literal",
         "max": 0.35
-      }
+      },
+      "required": true,
+      "applicable_when": "images_present"
     },
     {
       "id": "image_dimensions",
       "kind": "constraint",
       "threshold": {
         "source": "literal"
-      }
+      },
+      "required": true,
+      "applicable_when": "images_present"
     },
     {
       "id": "image_strip_alignment",
       "kind": "constraint",
       "threshold": {
         "source": "literal"
-      }
+      },
+      "required": true,
+      "applicable_when": "images_present"
     }
   ],
   "models": {

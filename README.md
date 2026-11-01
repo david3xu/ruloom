@@ -34,6 +34,37 @@ Two consequences that are easy to violate by accident:
 - **If repair attempts are exhausted, the run stops and reports the failing
   checks.** It never ships as passing.
 
+## Engine authority
+
+The engine privately owns verdicts, chosen artifacts, and state
+transitions. Each capability receives a frozen view — its declared
+inputs, statistics views, prior attempt records — and returns declared
+outputs through validated engine methods. Capabilities get no reference
+to the runner, no mutable shared state, and no path to
+verdict/artifact/decision state. Advisory outputs land in a separate
+store that verdict computation never reads, so a critic can never flip
+a deterministic result. Raw source bytes, source paths, and parsed
+source frames are materialised only for capabilities declaring
+`reads_raw_source`; every other capability works from statistics views.
+
+Acceptance is a contract, not a counter. Each manifest declares its
+check set with per-check `required` status (HyLogger image checks
+additionally declare `applicable_when: images_present`). The verdict
+comes only from results that belong to the current attempt, name the
+exact `artifact_sha256` they measured, and carry a recognised status
+(`pass`, `fail`, `error`, `unsupported`, `skipped`) — only `pass`
+satisfies a required check. Missing, duplicated, unknown-required,
+error, unsupported, or skipped required checks block acceptance, and an
+empty check set cannot pass. One declared exception:
+HyLogger `swir_answer_rate` is `required: false` with a manifest note
+because its calibrated band is vacuous; the skip is shown in the report
+but never gates, until RP-05 delivers informative bands.
+
+Trust assumption: this boundary is in-process typing against
+accidental misuse, not a sandbox. Running untrusted third-party
+capabilities would need isolated processes with restricted input mounts
+and mediated model/network access.
+
 ## Data
 
 HyLogger source data is **not committed to this repository**, following GSWA

@@ -113,7 +113,9 @@ def test_script_entry_point_passes() -> None:
     assert len(registry_lines) == 1
     assert "v1" in registry_lines[0]
     q_lines = [line for line in lines if line.startswith("Q-")]
-    assert len(q_lines) == 12
+    assert len(q_lines) == len(
+        [rule for rule in gate.registry_q_rules(REPO_ROOT) or []]
+    )
     assert all(
         "OPEN_FINDING" in line or "ENFORCED" in line or "PLANNED" in line
         for line in q_lines
@@ -468,7 +470,7 @@ def test_registry_maps_every_audit_finding() -> None:
     payload = gate.load_registry(REPO_ROOT)
     assert payload is not None
     q_rules = [rule for rule in payload["rules"] if rule["id"].startswith("Q-")]
-    refs = sorted(rule.get("audit_ref") for rule in q_rules)
+    refs = sorted({rule.get("audit_ref") for rule in q_rules})
     assert refs == [f"R{i:02d}" for i in range(1, 13)]
     for rule in q_rules:
         assert rule["status"] in ("enforced", "open_finding", "planned")

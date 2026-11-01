@@ -7,14 +7,29 @@ The runner walks the manifest graph, which uses only three node kinds:
   attempts, bounded by the caller-supplied ``max_attempts`` (no default);
 * ``gate`` -- stop for a human decision recorded verbatim.
 
-Enforcement is mechanical, not conventional. Raw source bytes are handed
-only to capabilities declaring ``reads_raw_source``. A model client is
-handed only to capabilities declaring a ``calls_model`` role, and only
-when that role resolves to an enabled binding. Advisory outputs are logged
-and excluded from the pass/fail computation. Only capabilities declaring
-``writes_verdict`` may record check results, and every recorded check must
-be declared in the manifest; the engine binds the artifact hash and the
-verifier itself.
+The engine privately owns verdicts, chosen artifacts, and state
+transitions. Each capability receives a :class:`RunContext`: a frozen
+view of its declared inputs (statistics views, prior attempt records)
+plus narrow engine-mediated write methods with validated return values.
+Capabilities get no reference to the runner, no mutable shared state
+dict, and no path to verdict, artifact-selection, or decision state.
+Advisory outputs go to a separate advisory store that verdict
+computation never reads. Raw source bytes, source paths, and parsed
+source frames are handed only to capabilities declaring
+``reads_raw_source``. A model client is handed only to capabilities
+declaring a ``calls_model`` role, and only when that role resolves to an
+enabled binding. Only capabilities declaring ``writes_verdict`` may
+record check results, and every recorded check must be declared in the
+manifest with a recognised status; the engine binds the artifact hash,
+the attempt, and the verifier itself, and computes the verdict only from
+that validated evidence.
+
+Trust assumption (in-process typing is an accidental-misuse boundary,
+not a sandbox): these guarantees stop a well-meaning capability from
+reaching authority it was not granted through the declared interface.
+Arbitrary third-party plugins are not sandboxed here; running untrusted
+code would need isolated processes with restricted input mounts and
+mediated model/network access.
 
 Loop policy (engine-owned): keep the best attempt by check score, stop on
 the bound or on no improvement across two consecutive attempts. Exhaustion
@@ -23,6 +38,8 @@ reports the failing checks and never ships as passing.
 
 from __future__ import annotations
 
+import copy
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -34,7 +51,20 @@ from .manifest import (
     Manifest,
     permission_of,
 )
-from .records import Artifact, Attempt, Decision, EngineCheckResult, Run
+from .records import (
+    Artifact,
+    Attempt,
+    Decision,
+    EngineCheckResult,
+    Run,
+    VALID_CHECK_STATUSES,
+)
+from .verdict import (
+    CONDITION_IMAGES_PRESENT,
+    applicable_required_ids,
+    decide,
+    unconditional_required_ids,
+)
 from ..audit.runlog import RunLog
 
 #: Status values the runner assigns to loop attempts.
@@ -71,7 +101,7 @@ CapabilityFn = Callable[["RunContext",], None]
 ModelFactory = Callable[[str, Mapping[str, Any]], Any]
 
 
-@dataclass
+@dataclass(frozen=True)
 class _Permissions:
     reads_raw_source: bool = False
     calls_model: str | None = None
@@ -127,6 +157,7 @@ class _BudgetedClient:
         self._check_budget()
         completion = self._client.complete(prompt, schema)
         self._runner.record_model_usage(completion.usage)
+        self._runner.note_model_call(completion.usage)
         return completion
 
     def complete_with_image(
@@ -137,18 +168,41 @@ class _BudgetedClient:
             prompt, schema, image_path
         )
         self._runner.record_model_usage(completion.usage)
+        self._runner.note_model_call(completion.usage)
         return completion
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.__dict__["_client"], name)
 
 
+def _copy(value: Any) -> Any:
+    """An immutable-by-convention snapshot of engine-owned data."""
+    return copy.deepcopy(value)
+
+
+def _must_json(value: Any, what: str, capability_id: str) -> Any:
+    """Deep-copy ``value``, refusing it when it is not JSON-native."""
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError) as exc:
+        raise RunnerError(
+            f"capability {capability_id!r} supplied a non-JSON {what}: {exc}"
+        ) from exc
+    return copy.deepcopy(value)
+
+
 class RunContext:
     """The scoped view one capability execution receives.
 
-    Profiles never touch the runner, the log, or other capabilities
-    directly; every access passes through this object so the runner can
-    enforce the declared permissions.
+    Frozen inputs plus validated writes. The context carries immutable
+    snapshots of the capability's declared inputs -- statistics views,
+    prior attempt records, the selected artifact identity -- and narrow
+    engine-mediated methods that validate and store declared outputs.
+    Profiles never touch the runner, the run log, other capabilities, or
+    any mutable shared state: this object exposes no ``state`` dict, no
+    runner reference, no manifest object, and no path to verdict,
+    artifact-selection, or decision state. Those stay private to the
+    engine, which computes them only from validated check results.
     """
 
     def __init__(
@@ -156,24 +210,63 @@ class RunContext:
         *,
         capability_id: str,
         permissions: _Permissions,
-        manifest: Manifest,
-        state: dict[str, Any],
-        runner: "_Runner",
+        engine: "_Runner",
     ) -> None:
         self.capability_id = capability_id
         self.permissions = permissions
-        self.manifest = manifest
-        self.state = state
-        self._runner = runner
+        self._engine = engine
 
-    def raw_bytes(self) -> bytes:
-        """Return the raw source bytes (guarded by ``reads_raw_source``)."""
+    def _deny_unless_raw(self, what: str) -> None:
         if not self.permissions.reads_raw_source:
             raise PermissionDenied(
                 f"capability {self.capability_id!r} does not declare "
-                "reads_raw_source: raw source is not materialised for it"
+                f"reads_raw_source: {what} is not materialised for it"
             )
-        return self._runner.source_bytes
+
+    @property
+    def attempt_number(self) -> int:
+        """1-based attempt inside a loop body; 0 outside any loop."""
+        return self._engine.loop_attempt_no
+
+    @property
+    def declared_checks(self) -> tuple[dict[str, Any], ...]:
+        """Immutable copies of the manifest check declarations."""
+        return tuple(
+            copy.deepcopy(dict(entry))
+            for entry in self._engine.manifest.checks
+        )
+
+    @property
+    def source_config(self) -> dict[str, Any]:
+        """Immutable copy of the manifest ``source`` configuration."""
+        return copy.deepcopy(dict(self._engine.manifest.source))
+
+    @property
+    def source_path(self) -> Path:
+        """Filesystem path of the profile source (raw-granted only)."""
+        self._deny_unless_raw("the source path")
+        return self._engine.source
+
+    @property
+    def images_dir(self) -> Path | None:
+        """Optional directory of companion source files (raw-granted only)."""
+        self._deny_unless_raw("the companion directory")
+        return self._engine.images_dir
+
+    @property
+    def local_critic_enabled(self) -> bool:
+        """Whether the optional local text-critique step should run."""
+        return self._engine.local_critic_enabled
+
+    @property
+    def out_dir(self) -> Path:
+        """Base output directory for run artifacts."""
+        return self._engine.out
+
+    def raw_bytes(self) -> bytes:
+        """Return the raw source bytes (guarded by ``reads_raw_source``)."""
+        self._deny_unless_raw("raw source bytes")
+        return self._engine.source_bytes
 
     def model(self, role: str) -> Any:
         """Return the model client for ``role`` (guarded by ``calls_model``)."""
@@ -183,85 +276,220 @@ class RunContext:
                 f"capability {self.capability_id!r} is not granted model "
                 f"role {role!r}: model client withheld"
             )
-        return self._runner.model_for(role)
+        return self._engine.model_for(role)
+
+    def source_meta(self) -> dict[str, Any]:
+        """Immutable copy of the recorded source identity record."""
+        return _copy(self._engine.source_meta_record())
+
+    def set_source_meta(
+        self,
+        *,
+        name: str,
+        sha256: str,
+        licence: Any,
+        attribution: Any,
+    ) -> None:
+        """Record the source identity measured at intake."""
+        if not isinstance(name, str) or not name:
+            raise RunnerError("source name must be a non-empty string")
+        if not isinstance(sha256, str) or not sha256:
+            raise RunnerError("source sha256 must be a non-empty string")
+        self._engine.store_source_meta(
+            {
+                "source_name": name,
+                "source_sha256": sha256,
+                "licence": licence,
+                "attribution": attribution,
+            }
+        )
+
+    def source_frame(self) -> Any:
+        """Immutable copy of the parsed source frame (raw-granted only)."""
+        self._deny_unless_raw("the parsed source frame")
+        return self._engine.read_source_frame()
+
+    def set_source_frame(self, frame: Any) -> None:
+        """Store the parsed source frame for granted downstream readers."""
+        self._deny_unless_raw("the parsed source frame")
+        self._engine.store_source_frame(frame)
+
+    def profile(self) -> Any:
+        """Immutable copy of the statistics profile."""
+        return self._engine.read_profile()
+
+    def set_profile(self, profile: Any) -> None:
+        """Store the statistics profile built from the source frame."""
+        self._engine.store_profile(profile)
+
+    def plan(self) -> dict[str, Any]:
+        """Immutable copy of the current generation plan."""
+        return self._engine.read_plan()
+
+    def set_plan(self, plan: Mapping[str, Any]) -> None:
+        """Store a generation plan (must be a JSON-native mapping)."""
+        if not isinstance(plan, Mapping):
+            raise RunnerError(
+                f"capability {self.capability_id!r} supplied a plan that "
+                "is not a mapping"
+            )
+        self._engine.store_plan(_must_json(dict(plan), "plan", self.capability_id))
+
+    def reference_stats(self) -> dict[str, Any]:
+        """Immutable copy of the source-derived reference statistics."""
+        return _copy(self._engine.reference_stats_record())
+
+    def set_reference_stats(self, reference: Mapping[str, Any]) -> None:
+        """Store source-derived reference statistics for the checks."""
+        if not isinstance(reference, Mapping):
+            raise RunnerError(
+                f"capability {self.capability_id!r} supplied reference "
+                "statistics that are not a mapping"
+            )
+        self._engine.store_reference_stats(
+            _must_json(dict(reference), "reference statistics", self.capability_id)
+        )
+
+    def companion(self) -> dict[str, Any]:
+        """Immutable copy of the companion (image) bundle, if any."""
+        return _copy(self._engine.companion_record())
+
+    def set_companion(self, bundle: Mapping[str, Any]) -> None:
+        """Store the companion (image) bundle for downstream steps."""
+        if not isinstance(bundle, Mapping):
+            raise RunnerError(
+                f"capability {self.capability_id!r} supplied a companion "
+                "bundle that is not a mapping"
+            )
+        self._engine.store_companion(
+            _must_json(dict(bundle), "companion bundle", self.capability_id)
+        )
+
+    def latest_report(self) -> Any:
+        """The most recently recorded validation report."""
+        return self._engine.read_latest_report()
+
+    def report_for(self, sha256: str) -> Any:
+        """The validation report recorded for one artifact hash."""
+        return self._engine.read_report_for(sha256)
+
+    def set_report(self, report: Any) -> None:
+        """Store a validation report bound to the current artifact."""
+        self._engine.store_report(report, self.capability_id)
+
+    def prior_attempts(self) -> tuple[dict[str, Any], ...]:
+        """Immutable records of completed attempts, oldest first."""
+        return self._engine.prior_attempt_records()
+
+    def selected_artifact_sha(self) -> str | None:
+        """The engine-selected artifact hash, once a loop has decided."""
+        return self._engine.selected_artifact_record()
+
+    def artifact_dir(self) -> str | None:
+        """The engine-registered artifact directory, once prepared."""
+        return self._engine.artifact_dir_record()
 
     def record_checks(self, items: list[Mapping[str, Any]]) -> None:
         """Record verdict checks (guarded by ``writes_verdict``).
 
-        Each item declares ``check_id``, ``kind``, ``passed``, ``measured``,
-        ``threshold`` and ``threshold_source``. The engine binds
-        ``artifact_sha256`` to the current attempt artifact and ``verifier``
-        to the calling capability; undeclared check ids are rejected.
+        Each item declares ``check_id``, ``kind``, ``status`` (one of
+        ``pass``, ``fail``, ``error``, ``unsupported``, ``skipped`` --
+        only ``pass`` satisfies a required check), ``measured``,
+        ``threshold`` and ``threshold_source``. An item may name
+        ``artifact_sha256`` explicitly; otherwise the engine binds the
+        latest artifact of the current phase. A hash that does not match
+        the attempt artifact is rejected as invalid. The engine also
+        binds the attempt number and the calling capability as verifier;
+        undeclared check ids, kind mismatches, and unrecognised statuses
+        are rejected. Recording never decides: the engine computes the
+        verdict from the validated evidence.
         """
         if not self.permissions.writes_verdict:
             raise PermissionDenied(
                 f"capability {self.capability_id!r} does not declare "
                 "writes_verdict: it cannot produce check results"
             )
-        declared = {entry["id"]: entry for entry in self.manifest.checks}
-        current = self._runner.current_artifact_sha
-        if current is None:
+        if not isinstance(items, list):
+            raise RunnerError("check items must be provided as a list")
+        self._engine.store_checks(
+            self.capability_id, items, self._engine.loop_attempt_no
+        )
+
+    def _check_item(
+        self, item: Any, *, artifact_sha256: str, attempt: int
+    ) -> EngineCheckResult:
+        if not isinstance(item, Mapping):
+            raise RunnerError("check items must be mappings")
+        check_id = item.get("check_id")
+        declared = {
+            str(entry["id"]): entry for entry in self.declared_checks
+        }
+        entry = declared.get(str(check_id)) if isinstance(check_id, str) else None
+        if entry is None:
             raise RunnerError(
-                f"capability {self.capability_id!r} recorded checks with no "
-                "artifact bound on this attempt"
+                f"capability {self.capability_id!r} recorded undeclared "
+                f"check {check_id!r}"
             )
-        for item in items:
-            if not isinstance(item, Mapping):
-                raise RunnerError("check items must be mappings")
-            check_id = item.get("check_id")
-            if check_id not in declared:
+        for key in ("kind", "status", "threshold_source"):
+            if key not in item:
                 raise RunnerError(
-                    f"capability {self.capability_id!r} recorded undeclared "
-                    f"check {check_id!r}"
+                    f"check {check_id!r} is missing {key!r}"
                 )
-            for key in ("kind", "passed", "threshold_source"):
-                if key not in item:
-                    raise RunnerError(
-                        f"check {check_id!r} is missing {key!r}"
-                    )
-            if not isinstance(item["passed"], bool):
-                raise RunnerError(
-                    f"check {check_id!r}: 'passed' must be true or false"
-                )
-            position = item.get("band_position")
-            if position is not None and (
-                isinstance(position, bool)
-                or not isinstance(position, (int, float))
-            ):
-                raise RunnerError(
-                    f"check {check_id!r}: 'band_position' must be a number"
-                )
-            self._runner.pending_checks.append(
-                EngineCheckResult(
-                    check_id=str(check_id),
-                    kind=str(item["kind"]),
-                    passed=bool(item["passed"]),
-                    measured=item.get("measured"),
-                    threshold=item.get("threshold"),
-                    threshold_source=str(item["threshold_source"]),
-                    artifact_sha256=current,
-                    verifier=self.capability_id,
-                    detail=str(item.get("detail", "")),
-                    band_position=position,
-                )
+        if item["kind"] != entry.get("kind"):
+            raise RunnerError(
+                f"check {check_id!r} kind {item['kind']!r} does not match "
+                f"declared kind {entry.get('kind')!r}"
             )
+        status = item["status"]
+        if status not in VALID_CHECK_STATUSES:
+            raise RunnerError(
+                f"check {check_id!r} status {status!r} is not recognised "
+                f"(expected one of {', '.join(VALID_CHECK_STATUSES)})"
+            )
+        position = item.get("band_position")
+        if position is not None and (
+            isinstance(position, bool)
+            or not isinstance(position, (int, float))
+        ):
+            raise RunnerError(
+                f"check {check_id!r}: 'band_position' must be a number"
+            )
+        return EngineCheckResult(
+            check_id=str(check_id),
+            kind=str(item["kind"]),
+            status=str(status),
+            measured=item.get("measured"),
+            threshold=item.get("threshold"),
+            threshold_source=str(item["threshold_source"]),
+            artifact_sha256=artifact_sha256,
+            verifier=self.capability_id,
+            attempt=attempt,
+            detail=str(item.get("detail", "")),
+            band_position=position,
+        )
 
     def record_advisory(self, name: str, payload: Any) -> None:
-        """Log an advisory output; it never affects pass/fail."""
-        self._runner.advisories.append(
-            {"capability": self.capability_id, "name": name, "payload": payload}
-        )
+        """Log an advisory output; it never affects pass/fail.
+
+        Advisories land in a separate advisory store. Verdict computation
+        never reads that store, so advisory output cannot flip a verdict.
+        """
+        self._engine.store_advisory(self.capability_id, name, payload)
         self.event(
             f"{self.capability_id}:advisory",
             "ok",
             {"name": name, "payload": payload},
         )
 
+    def advisory(self, name: str) -> Any:
+        """Immutable copy of one recorded advisory payload, if any."""
+        return self._engine.read_advisory(self.capability_id, name)
+
     def record_artifact(
         self, name: str, media_type: str, payload: bytes
     ) -> Artifact:
         """Store one byte payload; identity is its SHA-256."""
-        return self._runner.store_artifact(
+        return self._engine.store_artifact(
             name, media_type, payload, self.capability_id
         )
 
@@ -274,7 +502,7 @@ class RunContext:
         artifact_sha256: str | None = None,
     ) -> dict[str, Any]:
         """Append one event to the append-only run log."""
-        return self._runner.log.append(
+        return self._engine.log.append(
             stage,
             status,
             dict(details or {}),
@@ -284,66 +512,36 @@ class RunContext:
 
     def flush_log(self, path: str | Path) -> Path:
         """Write the run log to ``path`` as JSON lines."""
-        return self._runner.log.write_jsonl(path)
-
-    @property
-    def attempt_number(self) -> int:
-        """1-based attempt inside a loop body; 0 outside any loop."""
-        return self._runner.loop_attempt_no
-
-    @property
-    def source_path(self) -> Path:
-        """Filesystem path of the profile source input."""
-        return self._runner.source
-
-    @property
-    def images_dir(self) -> Path | None:
-        """Optional directory of companion source files (``None`` unset)."""
-        return self._runner.images_dir
-
-    @property
-    def local_critic_enabled(self) -> bool:
-        """Whether the optional local text-critique step should run."""
-        return self._runner.local_critic_enabled
-
-    @property
-    def out_dir(self) -> Path:
-        """Base output directory for run artifacts."""
-        return self._runner.out
+        return self._engine.log.write_jsonl(path)
 
     def artifact_payload(self, sha256: str) -> bytes:
         """Return stored bytes for one recorded artifact hash."""
         try:
-            return self._runner.artifact_payloads[sha256]
+            return self._engine.artifact_payloads[sha256]
         except KeyError as exc:
             raise RunnerError(
                 f"no stored payload for artifact {sha256}"
             ) from exc
 
+    def latest_artifact(self) -> Artifact:
+        """The record for the most recently stored artifact."""
+        return self._engine.latest_artifact_record()
+
+    def prepare_artifact_dir(self) -> Path:
+        """Create and register the directory for the selected artifact."""
+        return self._engine.prepare_artifact_dir(self.capability_id)
+
     def provenance_text(self) -> str:
-        """Render the release provenance statement from run state."""
-        from ..artifacts.package import build_provenance as _build
+        """Render the release provenance statement from engine state."""
+        return self._engine.provenance_record()
 
-        return _build(
-            source_name=str(self.state.get("source_name", "")),
-            source_sha256=str(self.state.get("source_sha256", "")),
-            licence=self.state.get("licence"),
-            attribution=self.state.get("attribution"),
-            artifact_sha256=str(self.state.get("artifact_sha256", "")),
-            plan=self.state.get("plan") or {"seed": 0, "n_rows": 0},
-            verdict=str(self.state.get("verdict", "")),
-            run_id=self._runner.log.run_id,
-        )
-
-    def pack_release(self, artifact_dir: str | Path) -> tuple[Path, str]:
-        """Write the reproducible release ZIP for an artifact directory."""
-        from ..artifacts.package import write_release_zip as _pack
-
-        return _pack(Path(artifact_dir))
+    def pack_release(self) -> tuple[Path, str]:
+        """Write the reproducible release ZIP for the artifact directory."""
+        return self._engine.pack_recorded_release(self.capability_id)
 
     def say(self, message: str) -> None:
         """Print one line of run progress."""
-        self._runner.say(message)
+        self._engine.say(message)
 
 
 class _Runner:
@@ -394,10 +592,32 @@ class _Runner:
         self._ask = ask
         self.log = RunLog()
         self._in_loop = False
-        self.state: dict[str, Any] = {}
+        # Engine-private run state. Capabilities never see this object;
+        # they exchange frozen copies and validated writes through
+        # RunContext, and the engine alone derives verdicts, the selected
+        # artifact, and the decision from the validated evidence.
+        self._source_meta: dict[str, Any] = {}
+        self._source_frame: Any = None
+        self._profile: Any = None
+        self._plan: dict[str, Any] | None = None
+        self._reports: dict[str, Any] = {}
+        self._latest_report_sha: str | None = None
+        self._reference_stats: dict[str, Any] = {}
+        self._companion: dict[str, Any] = {}
+        self._best: Attempt | None = None
+        self._selected_artifact_sha: str | None = None
+        self._artifact_dir: str | None = None
+        self._decision: dict[str, Any] | None = None
+        self._loop_verdict: str | None = None
+        self._loop_failed: list[str] = []
+        self._final_verdict: str | None = None
+        self._final_failed: list[str] = []
+        self._last_usage: Any = None
+        self._post_artifacts: list[str] = []
         self.pending_checks: list[EngineCheckResult] = []
         self.advisories: list[dict[str, Any]] = []
         self.attempts: list[Attempt] = []
+        self.artifact_records: list[Artifact] = []
         self.artifact_payloads: dict[str, bytes] = {}
         self.current_artifact_sha: str | None = None
         self.attempt_artifacts: list[str] = []
@@ -497,6 +717,287 @@ class _Runner:
         """Accumulate one model call's reported tokens toward the budget."""
         self.model_tokens += usage_tokens(usage)
 
+    def note_model_call(self, usage: Any) -> None:
+        """Remember the latest model usage for the attempt log entry."""
+        self._last_usage = usage
+
+    def source_meta_record(self) -> dict[str, Any]:
+        """The recorded source identity record (possibly empty)."""
+        return self._source_meta
+
+    def store_source_meta(self, meta: Mapping[str, Any]) -> None:
+        """Store the source identity measured at intake."""
+        self._source_meta = dict(meta)
+
+    def read_source_frame(self) -> Any:
+        """The parsed source frame; loud when intake never stored one."""
+        if self._source_frame is None:
+            raise RunnerError("no source frame recorded yet")
+        return copy.deepcopy(self._source_frame)
+
+    def store_source_frame(self, frame: Any) -> None:
+        """Store the parsed source frame for granted downstream readers."""
+        if not isinstance(frame, (list, dict)):
+            raise RunnerError(
+                "source frame must be a list or a mapping, "
+                f"got {type(frame).__name__}"
+            )
+        self._source_frame = copy.deepcopy(frame)
+
+    def read_profile(self) -> Any:
+        """The statistics profile; loud when profiling never stored one."""
+        if self._profile is None:
+            raise RunnerError("no statistics profile recorded yet")
+        return copy.deepcopy(self._profile)
+
+    def store_profile(self, profile: Any) -> None:
+        """Store the statistics profile built from the source frame."""
+        if profile is None:
+            raise RunnerError("cannot store an empty statistics profile")
+        self._profile = copy.deepcopy(profile)
+
+    def read_plan(self) -> dict[str, Any]:
+        """The current generation plan; loud when no plan was stored."""
+        if self._plan is None:
+            raise RunnerError("no generation plan recorded yet")
+        return copy.deepcopy(self._plan)
+
+    def store_plan(self, plan: dict[str, Any]) -> None:
+        """Store a generation plan as the current plan."""
+        self._plan = copy.deepcopy(dict(plan))
+
+    def reference_stats_record(self) -> dict[str, Any]:
+        """The source-derived reference statistics (possibly empty)."""
+        return self._reference_stats
+
+    def store_reference_stats(self, reference: dict[str, Any]) -> None:
+        """Store source-derived reference statistics for the checks."""
+        self._reference_stats = copy.deepcopy(dict(reference))
+
+    def companion_record(self) -> dict[str, Any]:
+        """The companion bundle (possibly empty when unused)."""
+        return self._companion
+
+    def store_companion(self, bundle: dict[str, Any]) -> None:
+        """Store the companion bundle for downstream steps."""
+        self._companion = copy.deepcopy(dict(bundle))
+
+    def read_latest_report(self) -> Any:
+        """The most recently recorded validation report."""
+        if self._latest_report_sha is None:
+            raise RunnerError("no validation report recorded yet")
+        return copy.deepcopy(self._reports[self._latest_report_sha])
+
+    def read_report_for(self, sha256: str) -> Any:
+        """The validation report recorded for one artifact hash."""
+        try:
+            return copy.deepcopy(self._reports[sha256])
+        except KeyError as exc:
+            raise RunnerError(
+                f"no validation report recorded for artifact {sha256}"
+            ) from exc
+
+    def store_report(self, report: Any, capability_id: str) -> None:
+        """Store a validation report bound to the current artifact."""
+        current = self.current_artifact_sha
+        if current is None:
+            raise RunnerError(
+                f"capability {capability_id!r} recorded a report with no "
+                "artifact bound on this attempt"
+            )
+        self._reports[current] = copy.deepcopy(report)
+        self._latest_report_sha = current
+
+    def prior_attempt_records(self) -> tuple[dict[str, Any], ...]:
+        """Immutable records of completed attempts, oldest first."""
+        return tuple(attempt.to_dict() for attempt in self.attempts)
+
+    def selected_artifact_record(self) -> str | None:
+        """The engine-selected artifact hash, once a loop has decided."""
+        return self._selected_artifact_sha
+
+    def artifact_dir_record(self) -> str | None:
+        """The engine-registered artifact directory, once prepared."""
+        return self._artifact_dir
+
+    def store_advisory(
+        self, capability_id: str, name: str, payload: Any
+    ) -> None:
+        """Append one advisory output to the separate advisory store."""
+        self.advisories.append(
+            {"capability": capability_id, "name": name, "payload": payload}
+        )
+
+    def read_advisory(self, capability_id: str, name: str) -> Any:
+        """The latest advisory payload recorded under ``name``, if any."""
+        for entry in reversed(self.advisories):
+            if entry["name"] == name:
+                return copy.deepcopy(entry["payload"])
+        return None
+
+    def bind_check_artifact(self, explicit: Any) -> str:
+        """Resolve the artifact hash one check result measures.
+
+        An explicitly named hash must be a known stored artifact in the
+        current phase; otherwise the latest artifact of the current phase
+        applies. Anything else is rejected as invalid evidence.
+        """
+        if explicit is not None and not isinstance(explicit, str):
+            raise RunnerError(
+                f"check artifact_sha256 must be a string, got {explicit!r}"
+            )
+        if self._in_loop:
+            phase = list(self.attempt_artifacts)
+        elif self._best is not None:
+            phase = list(self._best.artifact_refs) + list(self._post_artifacts)
+        else:
+            phase = list(self.attempt_artifacts)
+        if explicit is not None:
+            if explicit not in self.artifact_payloads:
+                raise RunnerError(
+                    f"check names unknown artifact {explicit!r}: refusing "
+                    "(no release)"
+                )
+            if explicit not in phase:
+                raise RunnerError(
+                    f"check measures artifact {explicit!r} outside the "
+                    "current attempt: refusing (no release)"
+                )
+            return explicit
+        if self.current_artifact_sha is None:
+            raise RunnerError(
+                "recorded checks with no artifact bound on this attempt"
+            )
+        if self.current_artifact_sha not in phase:
+            raise RunnerError(
+                f"check measures artifact {self.current_artifact_sha!r} "
+                "outside the current attempt: refusing (no release)"
+            )
+        return self.current_artifact_sha
+
+    def store_checks(
+        self, capability_id: str, items: list[Mapping[str, Any]], attempt: int
+    ) -> None:
+        """Validate and store one capability's check results."""
+        from .verdict import validate_results as _validate
+
+        scoped = RunContext(
+            capability_id=capability_id,
+            permissions=_Permissions(writes_verdict=True),
+            engine=self,
+        )
+        bound: list[EngineCheckResult] = []
+        for item in items:
+            sha = self.bind_check_artifact(
+                item.get("artifact_sha256") if isinstance(item, Mapping) else None
+            )
+            bound.append(
+                scoped._check_item(item, artifact_sha256=sha, attempt=attempt)
+            )
+        _validate(
+            bound,
+            self.manifest.checks,
+            known_artifacts=list(self.artifact_payloads),
+            where=f"capability {capability_id!r}",
+        )
+        self.pending_checks.extend(bound)
+
+    def prepare_artifact_dir(self, capability_id: str) -> Path:
+        """Create and register the directory for the selected artifact."""
+        sha = self._selected_artifact_sha
+        if sha is None:
+            raise RunnerError(
+                f"capability {capability_id!r} cannot prepare an artifact "
+                "directory before the engine selects an artifact"
+            )
+        artifact_dir = self.out / "runs" / sha
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        self._artifact_dir = str(artifact_dir)
+        return artifact_dir
+
+    def provenance_record(self) -> str:
+        """Render the release provenance statement from engine state."""
+        from ..artifacts.package import build_provenance as _build
+
+        meta = self._source_meta
+        verdict, _ = self.final_decision()
+        self._final_verdict = verdict
+        return _build(
+            source_name=str(meta.get("source_name", "")),
+            source_sha256=str(meta.get("source_sha256", "")),
+            licence=meta.get("licence"),
+            attribution=meta.get("attribution"),
+            artifact_sha256=str(self._selected_artifact_sha or ""),
+            plan=dict(self._plan) if isinstance(self._plan, Mapping) else {},
+            verdict=verdict,
+            run_id=self.log.run_id,
+        )
+
+    def pack_recorded_release(self, capability_id: str) -> tuple[Path, str]:
+        """Write the reproducible release ZIP for the artifact directory."""
+        from ..artifacts.package import write_release_zip as _pack
+
+        if self._artifact_dir is None:
+            raise RunnerError(
+                f"capability {capability_id!r} cannot pack a release "
+                "before the artifact directory is prepared"
+            )
+        return _pack(Path(self._artifact_dir))
+
+    def run_conditions(self) -> dict[str, bool]:
+        """Resolve the applicability conditions for the final verdict."""
+        return {
+            CONDITION_IMAGES_PRESENT: (
+                self._companion.get("reference") is not None
+            ),
+        }
+
+    def final_decision(self) -> tuple[str, list[str]]:
+        """Compute the engine-owned final verdict from validated evidence."""
+        best_results = (
+            list(self._best.check_results) if self._best is not None else []
+        )
+        evidence = best_results + list(self.pending_checks)
+        required = applicable_required_ids(
+            self.manifest.checks, conditions=self.run_conditions()
+        )
+        return decide(
+            evidence,
+            self.manifest.checks,
+            required_ids=required,
+            known_artifacts=list(self.artifact_payloads),
+            where="final acceptance",
+        )
+
+    def final_verdict_record(self, verdict: str, failed: list[str]) -> None:
+        """Record the engine-owned final verdict decided at the gate."""
+        self._final_verdict = verdict
+        self._final_failed = list(failed)
+
+    def final_verdict_recorded(self) -> bool:
+        """Whether the gate has recorded the engine-owned final verdict."""
+        return self._final_verdict is not None
+
+    def final_verdict_value(self) -> str | None:
+        """The engine-owned final verdict, once recorded at the gate."""
+        return self._final_verdict
+
+    def final_failed_value(self) -> list[str]:
+        """The unsatisfied required checks from the final verdict."""
+        return list(self._final_failed)
+
+    def loop_verdict_value(self) -> str | None:
+        """The engine-owned loop verdict, once a loop has decided."""
+        return self._loop_verdict
+
+    def loop_failed_value(self) -> list[str]:
+        """The unsatisfied checks from the engine-owned loop verdict."""
+        return list(self._loop_failed)
+
+    def best_record(self) -> Attempt | None:
+        """The engine-selected best attempt, once a loop has decided."""
+        return self._best
+
     def model_for(self, role: str) -> Any:
         """Resolve a model role to a client, enforcing availability."""
         if role in self._models:
@@ -520,10 +1021,19 @@ class _Runner:
     ) -> Artifact:
         from ..artifacts.hashing import sha256_bytes
 
-        digest = sha256_bytes(payload)
-        self.artifact_payloads[digest] = payload
+        if not isinstance(payload, (bytes, bytearray)):
+            raise RunnerError(
+                f"capability {produced_by!r} stored an artifact payload "
+                f"that is not bytes (got {type(payload).__name__})"
+            )
+        if not isinstance(name, str) or not name:
+            raise RunnerError("artifact name must be a non-empty string")
+        digest = sha256_bytes(bytes(payload))
+        self.artifact_payloads[digest] = bytes(payload)
         self.current_artifact_sha = digest
         self.attempt_artifacts.append(digest)
+        if not self._in_loop:
+            self._post_artifacts.append(digest)
         record = Artifact(
             sha256=digest,
             media_type=media_type,
@@ -531,9 +1041,14 @@ class _Runner:
             attempt=len(self.attempts) + 1,
             name=name,
         )
-        existing = self.state.setdefault("artifacts", [])
-        existing.append(record)
+        self.artifact_records.append(record)
         return record
+
+    def latest_artifact_record(self) -> Artifact:
+        """The record for the most recently stored artifact."""
+        if not self.artifact_records:
+            raise RunnerError("no artifact recorded yet")
+        return self.artifact_records[-1]
 
     def scoped(self, capability_id: str) -> RunContext:
         spec = permission_of(self.manifest, capability_id)
@@ -546,9 +1061,7 @@ class _Runner:
         return RunContext(
             capability_id=capability_id,
             permissions=permissions,
-            manifest=self.manifest,
-            state=self.state,
-            runner=self,
+            engine=self,
         )
 
     def run_capability(self, capability_id: str) -> None:
@@ -557,7 +1070,7 @@ class _Runner:
     def enforce_limits(self) -> None:
         """Enforce manifest limits against the current plan, when present."""
         max_rows = self.manifest.limits.get("max_rows")
-        plan = self.state.get("plan")
+        plan = self._plan
         if (
             isinstance(max_rows, int)
             and isinstance(plan, Mapping)
@@ -571,7 +1084,14 @@ class _Runner:
             )
 
     def run_loop(self, node: Mapping[str, Any]) -> str:
-        """Execute a loop node; return the final verdict."""
+        """Execute a loop node; return the engine-owned attempt verdict.
+
+        Each attempt's verdict comes only from the required-check contract
+        over that attempt's validated results: every unconditional required
+        check covered exactly once with status ``"pass"``. Conditional
+        checks (applicability-gated, e.g. image checks) never drive loop
+        decisions; they are decided at final acceptance.
+        """
         body = list(node["loop"])
         on_fail = str(node["on_fail"])
         stage = str(node.get("stage", "loop"))
@@ -580,9 +1100,11 @@ class _Runner:
             raise RunnerError(
                 "loop nodes bind max_attempts to the caller supply only"
             )
+        required = unconditional_required_ids(self.manifest.checks)
         best: Attempt | None = None
         previous_failed: int | None = None
         self._in_loop = True
+        self._post_artifacts = []
         try:
             for attempt_number in range(1, self.max_attempts + 1):
                 self.pending_checks = []
@@ -590,22 +1112,27 @@ class _Runner:
                 for capability_id in body:
                     self.run_capability(capability_id)
                 self.enforce_limits()
-                failed = [
-                    check.check_id
-                    for check in self.pending_checks
-                    if not check.passed
-                ]
-                verdict = ATTEMPT_FAIL if failed else ATTEMPT_PASS
+                verdict, failed = decide(
+                    list(self.pending_checks),
+                    self.manifest.checks,
+                    required_ids=required,
+                    known_artifacts=list(self.artifact_payloads),
+                    phase_artifacts=list(self.attempt_artifacts),
+                    where=f"{stage} attempt {attempt_number}",
+                )
+                plan_snapshot = (
+                    copy.deepcopy(self._plan)
+                    if isinstance(self._plan, Mapping)
+                    else {}
+                )
                 attempt = Attempt(
                     n=attempt_number,
-                    plan_ref=dict(self.state.get("plan") or {}),
+                    plan_ref=plan_snapshot,
                     artifact_refs=list(self.attempt_artifacts),
                     check_results=list(self.pending_checks),
                     status=verdict,
                 )
                 self.attempts.append(attempt)
-                usages = self.state.get("attempt_usages", [])
-                usage = usages[-1] if usages else None
                 self.log.append(
                     stage,
                     "ok" if verdict == ATTEMPT_PASS else "fail",
@@ -613,9 +1140,9 @@ class _Runner:
                         "attempt": attempt_number,
                         "verdict": verdict,
                         "failed": failed,
-                        "plan": dict(self.state.get("plan") or {}),
+                        "plan": plan_snapshot,
                     },
-                    usage=usage,
+                    usage=self._last_usage,
                     artifact_sha256=(
                         self.attempt_artifacts[-1]
                         if self.attempt_artifacts
@@ -645,13 +1172,16 @@ class _Runner:
         finally:
             self._in_loop = False
         assert best is not None
-        self.state["attempts"] = [a.to_dict() for a in self.attempts]
-        self.state["best_attempt"] = best.to_dict()
-        self.state["verdict"] = best.status
-        self.state["failed"] = list(best.failed)
-        self.state["artifact_sha256"] = (
+        # The engine alone selects the attempt, its artifact, and the loop
+        # verdict. Capabilities cannot reach any of these.
+        self._best = best
+        self._post_artifacts = []
+        self.pending_checks = []
+        self._selected_artifact_sha = (
             best.artifact_refs[-1] if best.artifact_refs else None
         )
+        self._loop_verdict = best.status
+        self._loop_failed = list(best.failed)
         return best.status
 
     def run_gate(self, gate_id: str) -> Decision:
@@ -666,7 +1196,7 @@ class _Runner:
         record = Decision(
             verdict=decision, note=note, decided_by="human"
         ).with_time()
-        self.state["decision"] = {
+        self._decision = {
             "verdict": record.verdict,
             "note": record.note,
             "decided_by": record.decided_by,
@@ -676,7 +1206,7 @@ class _Runner:
             gate_id,
             decision if decision in ("accept", "modify", "reject") else "invalid",
             {"decision": decision, "note": note},
-            artifact_sha256=self.state.get("artifact_sha256"),
+            artifact_sha256=self._selected_artifact_sha,
         )
         return record
 
@@ -792,12 +1322,16 @@ def execute(
                 runner.run_loop(node)
             elif "gate" in node:
                 gate_id = str(node["gate"])
-                if runner.state.get("verdict") != ATTEMPT_PASS:
-                    return _refuse_gate(runner, gate_id)
+                # The engine alone decides acceptance, from validated check
+                # evidence only. Advisory output is never consulted here.
+                verdict, failed = runner.final_decision()
+                runner.final_verdict_record(verdict, failed)
+                if verdict != ATTEMPT_PASS:
+                    return _refuse_gate(runner, gate_id, failed)
                 decision = runner.run_gate(gate_id)
-                if runner.state.get("artifact_dir") is not None:
+                if runner.artifact_dir_record() is not None:
                     runner.log.write_jsonl(
-                        Path(str(runner.state["artifact_dir"])) / "run.jsonl"
+                        Path(str(runner.artifact_dir_record())) / "run.jsonl"
                     )
                 if decision.verdict == "accept":
                     continue
@@ -826,14 +1360,20 @@ def execute(
 def _outcome(
     runner: _Runner, status: str, error: str | None = None
 ) -> dict[str, Any]:
+    if runner.final_verdict_recorded():
+        verdict: str | None = runner.final_verdict_value()
+        failed = list(runner.final_failed_value())
+    else:
+        verdict = runner.loop_verdict_value()
+        failed = list(runner.loop_failed_value())
     outcome: dict[str, Any] = {
         "status": status,
         "run_id": runner.run.id,
         "profile": runner.manifest.id,
-        "verdict": runner.state.get("verdict"),
-        "failed": list(runner.state.get("failed") or []),
-        "artifact_sha256": runner.state.get("artifact_sha256"),
-        "artifact_dir": runner.state.get("artifact_dir"),
+        "verdict": verdict,
+        "failed": failed,
+        "artifact_sha256": runner.selected_artifact_record(),
+        "artifact_dir": runner.artifact_dir_record(),
         "attempts": len(runner.attempts),
         "advisories": list(runner.advisories),
     }
@@ -842,22 +1382,29 @@ def _outcome(
     return outcome
 
 
+def _evidence_details(runner: _Runner) -> dict[str, str]:
+    """Map failed check ids to their detail strings for gate reporting."""
+    details: dict[str, str] = {}
+    if runner.best_record() is not None:
+        for result in runner.best_record().check_results:
+            if result.status != "pass":
+                details[result.check_id] = result.detail
+    for result in runner.pending_checks:
+        if result.status != "pass":
+            details[result.check_id] = result.detail
+    return details
+
+
 def _refuse_gate(
-    runner: _Runner, gate_id: str
+    runner: _Runner, gate_id: str, failed: list[str]
 ) -> tuple[int, dict[str, Any]]:
     """Decline the gate on a failing verdict: nothing to accept.
 
     The artifact steps before the gate still run, so the failing evidence
     is stored; the human is never asked to accept a failing run.
     """
-    failed: list[str] = list(runner.state.get("failed") or [])
-    best = runner.state.get("best_attempt") or {}
-    details = {
-        check["check_id"]: check.get("detail", "")
-        for check in best.get("check_results", [])
-        if not check.get("passed", True)
-    }
-    artifact_dir = runner.state.get("artifact_dir")
+    details = _evidence_details(runner)
+    artifact_dir = runner.artifact_dir_record()
     runner.say(f"[{gate_id}] skipped: validation failed, nothing to accept")
     for check_id in failed:
         runner.say(f"[fail] {check_id}")
@@ -870,7 +1417,7 @@ def _refuse_gate(
             gate_id,
             "skipped",
             {"reason": "failing verdict", "failed": failed},
-            artifact_sha256=runner.state.get("artifact_sha256"),
+            artifact_sha256=runner.selected_artifact_record(),
         )
         runner.log.write_jsonl(Path(str(artifact_dir)) / "run.jsonl")
     return EXIT_FAILED, _outcome(runner, "failed")

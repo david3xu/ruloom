@@ -135,17 +135,16 @@ def _passing_registry(failures: list[list[str]], log: dict) -> dict:
 
     def intake(ctx: Any) -> None:
         raw = ctx.raw_bytes()
-        ctx.state["raw_len"] = len(raw)
-        ctx.state.setdefault("plan", {"rev": 0})
+        assert raw == b"a,b\n1,2\n"
+        ctx.set_plan({"rev": 0})
         ctx.event("intake", "ok", {})
 
     def decide(ctx: Any) -> None:
         client = ctx.model("planner")
         completion = client.complete("prompt", {})
-        ctx.state["plan"] = dict(completion.data)
+        ctx.set_plan(dict(completion.data))
         payload = f"payload-rev-{completion.data.get('rev', 0)}".encode()
-        artifact = ctx.record_artifact("out.bin", "text/csv", payload)
-        ctx.state["artifact_sha"] = artifact.sha256
+        ctx.record_artifact("out.bin", "text/csv", payload)
         ctx.record_advisory("note", {"rev": completion.data.get("rev", 0)})
 
     def judge(ctx: Any) -> None:
@@ -155,7 +154,7 @@ def _passing_registry(failures: list[list[str]], log: dict) -> dict:
             {
                 "check_id": "shape_ok",
                 "kind": "constraint",
-                "passed": "shape_ok" not in wanted,
+                "status": "fail" if "shape_ok" in wanted else "pass",
                 "measured": "ok",
                 "threshold": {"source": "literal"},
                 "threshold_source": "literal",
@@ -163,7 +162,7 @@ def _passing_registry(failures: list[list[str]], log: dict) -> dict:
             {
                 "check_id": "content_ok",
                 "kind": "fidelity",
-                "passed": "content_ok" not in wanted,
+                "status": "fail" if "content_ok" in wanted else "pass",
                 "measured": "ok",
                 "threshold": {"source": "relative_tolerance"},
                 "threshold_source": "relative_tolerance",
@@ -175,7 +174,7 @@ def _passing_registry(failures: list[list[str]], log: dict) -> dict:
         log["repairs"] = log.get("repairs", 0) + 1
         client = ctx.model("planner")
         completion = client.complete("repair", {})
-        ctx.state["plan"] = dict(completion.data)
+        ctx.set_plan(dict(completion.data))
 
     def note(ctx: Any) -> None:
         ctx.record_advisory("summary", {"done": True})
@@ -286,6 +285,36 @@ def test_raw_source_refused_without_permission(tmp_path: Path) -> None:
         sneaky(_scoped(tmp_path, manifest, "sneaky"))
 
 
+def test_source_path_refused_without_grant(tmp_path: Path) -> None:
+    manifest = _manifest()
+    ctx = _scoped(tmp_path, manifest, "judge")
+    with pytest.raises(PermissionDenied):
+        ctx.source_path
+
+
+def test_source_frame_refused_without_grant(tmp_path: Path) -> None:
+    manifest = _manifest()
+    ctx = _scoped(tmp_path, manifest, "judge")
+    with pytest.raises(PermissionDenied):
+        ctx.source_frame()
+    with pytest.raises(PermissionDenied):
+        ctx.set_source_frame([{"a": "1"}])
+
+
+def test_companion_dir_refused_without_grant(tmp_path: Path) -> None:
+    manifest = _manifest()
+    ctx = _scoped(tmp_path, manifest, "judge")
+    with pytest.raises(PermissionDenied):
+        ctx.images_dir
+
+
+def test_capability_context_exposes_no_mutable_state(tmp_path: Path) -> None:
+    manifest = _manifest()
+    ctx = _scoped(tmp_path, manifest, "judge")
+    for forbidden in ("state", "manifest", "runner", "_runner", "verdict"):
+        assert not hasattr(ctx, forbidden), forbidden
+
+
 def _scoped(tmp_path: Path, manifest: Any, capability_id: str) -> Any:
     from engine.core.runner import _Runner
 
@@ -352,14 +381,13 @@ def test_writes_verdict_required(tmp_path: Path) -> None:
 
 def test_undeclared_check_rejected(tmp_path: Path) -> None:
     def judge(ctx: Any) -> None:
-        artifact = ctx.record_artifact("out.bin", "text/csv", b"data")
-        ctx.state["artifact_sha"] = artifact.sha256
+        ctx.record_artifact("out.bin", "text/csv", b"data")
         ctx.record_checks(
             [
                 {
                     "check_id": "invented_check",
                     "kind": "constraint",
-                    "passed": True,
+                    "status": "pass",
                     "measured": None,
                     "threshold": None,
                     "threshold_source": "literal",
@@ -380,14 +408,13 @@ def test_undeclared_check_rejected(tmp_path: Path) -> None:
 
 def test_advisory_excluded_from_verdict(tmp_path: Path) -> None:
     def judge(ctx: Any) -> None:
-        artifact = ctx.record_artifact("out.bin", "text/csv", b"data")
-        ctx.state["artifact_sha"] = artifact.sha256
+        ctx.record_artifact("out.bin", "text/csv", b"data")
         ctx.record_checks(
             [
                 {
                     "check_id": "shape_ok",
                     "kind": "constraint",
-                    "passed": False,
+                    "status": "fail",
                     "measured": "bad",
                     "threshold": {"source": "literal"},
                     "threshold_source": "literal",

@@ -160,6 +160,13 @@ def _check_graph(
     return nodes
 
 
+#: Conditions a check entry may name in ``applicable_when``. The engine
+#: resolves them against its own run facts before the run decides; an
+#: unknown condition is refused at load. Only ``images_present`` exists
+#: today (true once image reference statistics are registered).
+CHECK_CONDITIONS = ("images_present",)
+
+
 def _check_checks(checks: Any, manifest_id: str) -> list[dict[str, Any]]:
     if not isinstance(checks, list) or not checks:
         raise ManifestError(f"manifest {manifest_id!r}: 'checks' must be a "
@@ -182,6 +189,16 @@ def _check_checks(checks: Any, manifest_id: str) -> list[dict[str, Any]]:
         ):
             raise ManifestError(
                 f"{where}: needs a 'threshold' object with a 'source'"
+            )
+        if "required" in entry and not isinstance(entry["required"], bool):
+            raise ManifestError(
+                f"{where}: 'required' must be true or false when present"
+            )
+        condition = entry.get("applicable_when")
+        if condition is not None and condition not in CHECK_CONDITIONS:
+            raise ManifestError(
+                f"{where}: unknown 'applicable_when' {condition!r} "
+                f"(known: {', '.join(CHECK_CONDITIONS)})"
             )
         out.append(dict(entry))
     return out

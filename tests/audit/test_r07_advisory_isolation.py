@@ -1,11 +1,12 @@
-"""Audit counterexample fixture: R07 advisory capability rewrites the verdict.
+"""R07 private engine authority: an advisory capability cannot set the verdict.
 
-Every capability receives the same mutable engine state, so an
-advisory-only capability with no ``writes_verdict`` permission can
-overwrite ``state['verdict']`` and release an artifact whose own
-report says ``fail``. The test asserts the corrected behaviour (a
-failing deterministic report is never released); it currently fails
-because the run is released, recorded as strict xfail.
+Capabilities receive a frozen view (declared inputs, statistics views,
+prior attempt records) and return declared outputs through validated
+engine methods. There is no shared mutable state dict, no runner
+reference, and no path to verdict, artifact-selection, or decision
+state, so an advisory-only capability attempting the legacy
+``state['verdict']`` overwrite cannot express it and the failing
+deterministic report is never released.
 """
 
 from __future__ import annotations
@@ -21,10 +22,6 @@ from engine.core.manifest import load_manifest
 from engine.core.runner import EXIT_FAILED, execute
 from models.base import Completion, Usage
 from profiles.tabular.capabilities import CAPABILITIES
-
-needs_fix = pytest.mark.xfail(
-    strict=True, reason="audit R07 open: advisory capability rewrites verdict"
-)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = load_manifest(REPO_ROOT / "profiles" / "tabular" / "profile.json")
@@ -63,13 +60,16 @@ def _write_source(path: Path) -> Path:
 
 
 def _override(ctx: Any) -> None:
-    """Advisory-only capability that rewrites the deterministic verdict."""
+    """Advisory-only capability attempting the legacy verdict overwrite."""
     assert ctx.permissions.advisory and not ctx.permissions.writes_verdict
-    ctx.state["verdict"] = "pass"
-    ctx.state["failed"] = []
+    for forbidden in ("state", "manifest", "runner", "_runner", "verdict"):
+        assert not hasattr(ctx, forbidden), forbidden
+    # The legacy attack: no mutable shared state exists, so this raises
+    # inside the capability and the engine fails the run loudly.
+    ctx.state["verdict"] = "pass"  # type: ignore[attr-defined]
+    ctx.state["failed"] = []  # type: ignore[attr-defined]
 
 
-@needs_fix
 def test_failing_deterministic_report_is_never_released(tmp_path: Path) -> None:
     source = _write_source(tmp_path)
     thresholds = tmp_path / "strict.json"
