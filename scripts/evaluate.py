@@ -33,6 +33,26 @@ the harness operationalises it as the vocabulary pair
 the calibrated source vocabulary. That definition is stated here and in
 ``docs/results.md`` so the Leakage row stays a measured value, not prose.
 
+Scoring integrity (R09-harness, RP-08):
+
+- Fresh-invocation binding: only a product run directory created by the
+  harness's own CLI invocation is ever scored. Older run directories
+  are counted as stale-ignored and never read for verdicts; a CLI
+  failure over old or missing artifacts records the arm unscorable
+  with the error, never a pass.
+- Empty check groups fail coverage, and an arm that executed zero
+  required checks is unscorable. Required coverage
+  (executed/required per hole) is recorded on every scored arm.
+- Every baseline invocation saves its raw output bytes, prompt digest,
+  model identity, invocation id, usage, and error state next to the
+  per-hole record. A failed invocation is unscorable and never reuses
+  a previous invocation's output.
+- Aggregates recompute independently: ``--recompute`` (and the end of
+  every run) rebuilds headline counts purely from the saved per-hole
+  artifacts and fails loudly on mismatch with the stored summary.
+  Unscorable arms stay in the holes_total denominator, never in pass
+  counts.
+
 Outputs: ``<out>/<hole>.json`` per hole plus ``<out>/summary.json``.
 Standard library plus project imports only. No network except the model
 calls the protocol requires.
@@ -45,6 +65,7 @@ import json
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -119,15 +140,101 @@ def load_check_kinds(manifest_path: Path | None = None) -> dict[str, str]:
     }
 
 
+def required_check_ids(
+    manifest_path: Path | None = None, *, images_present: bool = False
+) -> list[str]:
+    """List manifest check ids that are required for a run of this shape.
+
+    Checks gated by ``applicable_when: images_present`` count only when
+    the run produced images. ``required: false`` checks (e.g. the
+    vacuous ``swir_answer_rate`` band) never gate.
+    """
+    path = manifest_path or (REPO_ROOT / "profiles" / "hylogger" / "profile.json")
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    ids = []
+    for entry in manifest.get("checks", []):
+        if not isinstance(entry, dict) or not entry.get("required"):
+            continue
+        if entry.get("applicable_when") == "images_present" and not images_present:
+            continue
+        ids.append(entry["id"])
+    return ids
+
+
+def coverage_report(
+    executed: Sequence[str],
+    required: Sequence[str],
+) -> dict[str, Any]:
+    """Describe required-check coverage for one arm.
+
+    ``missing`` names required checks with no executed result. An arm
+    with zero executed required checks is a coverage failure and must
+    be recorded unscorable, never passing.
+    """
+    executed_required = [c for c in required if c in executed]
+    missing = [c for c in required if c not in executed]
+    return {
+        "n_required": len(required),
+        "n_executed": len(executed_required),
+        "missing": missing,
+        "complete": not missing,
+    }
+
+
+def benchmark_version(name: str) -> dict[str, Any]:
+    """Identify one versioned benchmark rerun (code + spec + data pins)."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            cwd=str(REPO_ROOT),
+            timeout=30,
+        )
+        commit = (proc.stdout or "").strip() or "unknown"
+    except Exception:  # noqa: BLE001 -- recorded, not raised
+        commit = "unknown"
+    from engine.core.spec import SPEC_VERSION  # noqa: E402
+
+    manifests = {}
+    for profile_id in ("hylogger", "tabular"):
+        try:
+            manifest = json.loads(
+                (
+                    REPO_ROOT / "profiles" / profile_id / "profile.json"
+                ).read_text(encoding="utf-8")
+            )
+            manifests[profile_id] = manifest.get("version")
+        except OSError:
+            manifests[profile_id] = None
+    try:
+        thresholds_sha256 = sha256_bytes(
+            (REPO_ROOT / "profiles" / "hylogger" / "thresholds.json").read_bytes()
+        )
+    except OSError:
+        thresholds_sha256 = "unknown"
+    return {
+        "name": name,
+        "code_commit": commit,
+        "spec_version": SPEC_VERSION,
+        "manifest_versions": manifests,
+        "thresholds_sha256": thresholds_sha256,
+    }
+
+
 def group_results(
     results: Sequence[Mapping[str, Any] | CheckResult],
     kinds: Mapping[str, str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Aggregate check outcomes into constraint/fidelity/leakage groups.
 
-    A group passes when none of its checks fails (skips permitted, matching
-    the product verdict semantics). Accepts :class:`CheckResult` objects or
-    plain ``{"name": ..., "status": ...}`` mappings (e.g. from stored JSON).
+    A group passes when it executed at least one check and none of its
+    checks fails (skips permitted, matching the product verdict
+    semantics). An EMPTY group fails coverage (R09-harness): zero
+    executed checks can never pass. Accepts :class:`CheckResult`
+    objects or plain ``{"name": ..., "status": ...}`` mappings (e.g.
+    from stored JSON).
     """
 
     def name_of(result: Any) -> str:
@@ -162,7 +269,8 @@ def group_results(
             if name_of(result) in checks and status_of(result) == "skip"
         ]
         outcome[group] = {
-            "pass": not failed,
+            "pass": not failed and bool(checks),
+            "coverage": "ok" if checks else "empty",
             "n_checks": len(checks),
             "n_failed": len(failed),
             "failed": failed,
@@ -211,14 +319,78 @@ def score_samples(
     return report
 
 
+def _save_baseline_invocation(
+    save_dir: Path,
+    *,
+    invocation_id: str,
+    model_name: str,
+    prompt_sha256: str,
+    csv_text: str | None,
+    requested_rows: int,
+    parsed_rows: int,
+    parse_error: str | None,
+    usage: Mapping[str, Any] | None,
+    wall_s: float,
+) -> dict[str, Any]:
+    """Persist one baseline invocation's raw bytes and identity.
+
+    ``baseline.csv`` holds exactly the bytes this invocation returned
+    (absent when the call itself failed, in which case any older file
+    is removed so a later reader can never mistake stale bytes for
+    this invocation's). ``invocation.json`` carries the invocation id,
+    model identity, prompt digest, output digest, usage, and error
+    state. Returns the saved-artifact descriptor for the record.
+    """
+    save_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = save_dir / "baseline.csv"
+    if csv_text is None:
+        if csv_path.is_file():
+            csv_path.unlink()
+        output_sha: str | None = None
+        csv_saved = False
+    else:
+        csv_path.write_bytes(csv_text.encode("utf-8"))
+        output_sha = sha256_bytes(csv_text.encode("utf-8"))
+        csv_saved = True
+    invocation = {
+        "invocation_id": invocation_id,
+        "model": model_name,
+        "prompt_sha256": prompt_sha256,
+        "output_sha256": output_sha,
+        "csv_saved": csv_saved,
+        "requested_rows": requested_rows,
+        "parsed_rows": parsed_rows,
+        "parse_error": parse_error,
+        "usage": dict(usage or {}),
+        "wall_s": wall_s,
+    }
+    (save_dir / "invocation.json").write_text(
+        json.dumps(invocation, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return {
+        "dir": _relative_or_str(save_dir),
+        "csv_saved": csv_saved,
+    }
+
+
 def run_baseline(
     model: StructuredModel,
     profile: Profile,
     source_samples: Sequence[Sample],
     thresholds: Any,
     n_rows: int,
+    *,
+    save_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Run the direct-LLM adversary: one structured call emitting CSV text."""
+    """Run the direct-LLM adversary: one structured call emitting CSV text.
+
+    Every invocation carries a fresh ``invocation_id`` plus the prompt
+    digest, and -- when ``save_dir`` is given -- its raw output bytes
+    land on disk next to an invocation record. A failed invocation
+    (refusal, timeout, unparsable bytes) is unscorable and never reuses
+    a previous invocation's output.
+    """
+    invocation_id = uuid.uuid4().hex
     prompt = (
         build_prompt(profile)
         + f"\nNow emit a synthetic hole directly as CSV text with exactly "
@@ -227,35 +399,59 @@ def run_baseline(
         f"cells). Reply with a JSON object with exactly one key \"csv\" "
         f"holding the full CSV text, header included."
     )
+    prompt_sha256 = sha256_bytes(prompt.encode("utf-8"))
+    model_name = getattr(model, "model", "?")
     started = time.monotonic()
     try:
         completion = model.complete(prompt, BASELINE_SCHEMA)
         wall_s = round(time.monotonic() - started, 1)
     except Exception as exc:  # noqa: BLE001 -- recorded, not raised
-        return {
+        wall_s = round(time.monotonic() - started, 1)
+        record: dict[str, Any] = {
+            "invocation_id": invocation_id,
+            "prompt_sha256": prompt_sha256,
             "requested_rows": n_rows,
             "parsed_rows": 0,
             "parse_error": f"{type(exc).__name__}: {exc}",
-            "model": getattr(model, "model", "?"),
+            "model": model_name,
             "usage_tokens": 0,
-            "wall_s": round(time.monotonic() - started, 1),
+            "wall_s": wall_s,
             "verdict": "error",
+            "unscorable": True,
+            "reason": f"model invocation failed: {type(exc).__name__}",
             "report": None,
             "reproducible": False,
             "reproducibility_note": "no seed exists; not reproducible by construction",
         }
+        if save_dir is not None:
+            record["artifacts"] = _save_baseline_invocation(
+                save_dir,
+                invocation_id=invocation_id,
+                model_name=model_name,
+                prompt_sha256=prompt_sha256,
+                csv_text=None,
+                requested_rows=n_rows,
+                parsed_rows=0,
+                parse_error=record["parse_error"],
+                usage=None,
+                wall_s=wall_s,
+            )
+        return record
     csv_text = completion.data.get("csv", "")
     if not isinstance(csv_text, str):
         csv_text = str(csv_text)
     samples, parsed, error = parse_baseline_csv(csv_text, n_rows)
     usage = usage_dict_tokens(completion.usage)
-    record: dict[str, Any] = {
+    record = {
+        "invocation_id": invocation_id,
+        "prompt_sha256": prompt_sha256,
+        "output_bytes_sha256": sha256_bytes(csv_text.encode("utf-8")),
         "requested_rows": n_rows,
         "parsed_rows": parsed,
         "parse_error": error,
         "model": completion.usage.model
         if hasattr(completion.usage, "model")
-        else getattr(model, "model", "?"),
+        else model_name,
         "usage_tokens": usage,
         "wall_s": wall_s,
         "usage": {
@@ -267,8 +463,23 @@ def run_baseline(
         "reproducible": False,
         "reproducibility_note": "no seed exists; not reproducible by construction",
     }
+    if save_dir is not None:
+        record["artifacts"] = _save_baseline_invocation(
+            save_dir,
+            invocation_id=invocation_id,
+            model_name=record["model"],
+            prompt_sha256=prompt_sha256,
+            csv_text=csv_text,
+            requested_rows=n_rows,
+            parsed_rows=parsed,
+            parse_error=error,
+            usage=record["usage"],
+            wall_s=wall_s,
+        )
     if samples is None:
         record["verdict"] = "error"
+        record["unscorable"] = True
+        record["reason"] = "baseline bytes unparsable; no score computed"
         record["report"] = None
         return record
     report = score_samples(
@@ -294,6 +505,22 @@ def read_run_events(run_dir: Path) -> list[dict[str, Any]]:
     return events
 
 
+def _relative_or_str(path: Path) -> str:
+    """Render ``path`` relative to the repo root, or absolute outside it."""
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _known_run_logs(out_dir: Path) -> set[Path]:
+    """Every ``run.jsonl`` already on disk (evidence of older invocations)."""
+    runs = out_dir / "runs"
+    if not runs.is_dir():
+        return set()
+    return set(runs.glob("*/*/run.jsonl")) | set(runs.glob("*/run.jsonl"))
+
+
 def find_run_dir(out_dir: Path) -> Path:
     """Locate the single product run directory under ``<out>/runs/``."""
     candidates = sorted(
@@ -308,6 +535,20 @@ def find_run_dir(out_dir: Path) -> Path:
     return candidates[-1].parent
 
 
+def _unscorable(
+    record: dict[str, Any], reason: str, *, error: str | None = None
+) -> dict[str, Any]:
+    """Mark an arm record unscorable: never counted as pass or fail."""
+    record["unscorable"] = True
+    record["reason"] = reason
+    if error is not None:
+        record["error"] = error
+    record.pop("verdict", None)
+    record.pop("groups", None)
+    record.pop("report", None)
+    return record
+
+
 def run_pipeline(
     hole: str,
     source: Path,
@@ -315,8 +556,18 @@ def run_pipeline(
     out_dir: Path,
     ruloom: str = ".venv/bin/ruloom",
 ) -> dict[str, Any]:
-    """Run the real product CLI for one hole and record measured evidence."""
+    """Run the real product CLI for one hole and record measured evidence.
+
+    Fresh-invocation binding (R09-harness): only a run directory
+    created by THIS invocation is ever scored. Run directories that
+    predate the invocation are counted as ``stale_ignored`` and never
+    read for verdicts -- a CLI failure (nonzero exit, timeout) over old
+    or missing artifacts records ``unscorable`` with the error instead
+    of re-scoring stale bytes as a fresh result.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
+    invocation_id = uuid.uuid4().hex
+    started_at = datetime.now(timezone.utc).isoformat()
     argv = [
         ruloom,
         "run",
@@ -326,29 +577,50 @@ def run_pipeline(
         "--out",
         str(out_dir),
     ]
-    started = time.monotonic()
-    proc = subprocess.run(
-        argv,
-        input="accept\nStep 14 held-out evaluation accept\n",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        cwd=str(REPO_ROOT),
-        timeout=3600,
-    )
-    wall_s = time.monotonic() - started
     record: dict[str, Any] = {
-        "exit_code": proc.returncode,
-        "wall_s": round(wall_s, 1),
-        "stdout_tail": (proc.stdout or "")[-2000:],
-        "stderr_tail": (proc.stderr or "")[-2000:],
+        "invocation_id": invocation_id,
+        "started_at": started_at,
+        "argv": argv,
     }
+    known_before = _known_run_logs(out_dir)
+    started = time.monotonic()
     try:
-        run_dir = find_run_dir(out_dir)
-    except FileNotFoundError as exc:
-        record["error"] = str(exc)
-        return record
-    record["run_dir"] = str(run_dir.relative_to(REPO_ROOT))
+        proc = subprocess.run(
+            argv,
+            input="accept\nStep 14 held-out evaluation accept\n",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=str(REPO_ROOT),
+            timeout=3600,
+        )
+    except subprocess.TimeoutExpired as exc:
+        record["wall_s"] = round(time.monotonic() - started, 1)
+        record["exit_code"] = None
+        return _unscorable(
+            record,
+            f"invocation {invocation_id} timed out; "
+            f"{len(known_before)} pre-existing run(s) ignored, never scored",
+            error=f"TimeoutExpired: {exc}",
+        )
+    wall_s = time.monotonic() - started
+    record["exit_code"] = proc.returncode
+    record["wall_s"] = round(wall_s, 1)
+    record["stdout_tail"] = (proc.stdout or "")[-2000:]
+    record["stderr_tail"] = (proc.stderr or "")[-2000:]
+    fresh = sorted(set(_known_run_logs(out_dir)) - known_before)
+    record["stale_ignored"] = len(known_before)
+    if not fresh:
+        return _unscorable(
+            record,
+            f"no fresh run dir for invocation {invocation_id} "
+            f"(exit {proc.returncode}); {len(known_before)} pre-existing "
+            "run(s) ignored, never scored",
+            error=(proc.stderr or "")[-500:] or f"exit {proc.returncode}",
+        )
+    run_dir = fresh[-1].parent
+    record["run_dir"] = _relative_or_str(run_dir)
+    record["fresh_invocation"] = True
     events = read_run_events(run_dir)
     attempts = [
         e for e in events if e.get("stage") == "generate_validate_repair"
@@ -372,6 +644,35 @@ def run_pipeline(
         record["report"] = json.loads(validation_path.read_text(encoding="utf-8"))
         record["verdict"] = record["report"].get("verdict")
         record["artifact_sha256"] = record["report"].get("artifact_sha256")
+    else:
+        run_json = run_dir / "run.json"
+        status = None
+        if run_json.is_file():
+            try:
+                status = json.loads(run_json.read_text(encoding="utf-8")).get("status")
+            except ValueError:
+                status = None
+        return _unscorable(
+            record,
+            f"fresh run {record['run_dir']} has no validation report "
+            f"(run status {status!r}, exit {proc.returncode}); "
+            "nothing scored",
+            error=(proc.stderr or "")[-500:] or f"exit {proc.returncode}",
+        )
+    executed = [
+        r.get("name")
+        for r in record["report"].get("results", [])
+        if isinstance(r, dict) and r.get("name")
+    ]
+    images_present = (run_dir / "image-statistics.json").is_file()
+    required = required_check_ids(images_present=images_present)
+    record["coverage"] = coverage_report(executed, required)
+    if record["coverage"]["n_executed"] == 0:
+        return _unscorable(
+            record,
+            f"fresh run {record['run_dir']} executed zero required checks; "
+            "coverage failure, nothing scored",
+        )
     plan_path = run_dir / "plan.json"
     if plan_path.is_file():
         record["plan"] = json.loads(plan_path.read_text(encoding="utf-8"))
@@ -418,6 +719,7 @@ def evaluate_hole(
     out_dir: Path,
     model: StructuredModel | None = None,
     run_pipeline_arm: bool = True,
+    benchmark_name: str = "benchmark-v2-post-rp07",
 ) -> dict[str, Any]:
     """Evaluate one held-out hole with both arms; write the per-hole JSON."""
     source = REPO_ROOT / "data" / "sources" / f"{hole}-scalars.csv"
@@ -432,6 +734,7 @@ def evaluate_hole(
     hole_out = out_dir / hole
     record: dict[str, Any] = {
         "hole": hole,
+        "benchmark": benchmark_version(benchmark_name),
         "source": str(source.relative_to(REPO_ROOT)),
         "source_rows": len(source_samples),
         "source_sha256": sha256_bytes(source.read_bytes()),
@@ -444,24 +747,67 @@ def evaluate_hole(
         record["pipeline"] = {"skipped": True}
     active_model = model if model is not None else MuseCLIModel()
     baseline = run_baseline(active_model, profile, source_samples, thresholds,
-                            baseline_rows)
+                            baseline_rows,
+                            save_dir=hole_out / "baseline")
     record["baseline"] = baseline
     kinds = load_check_kinds()
+    required = required_check_ids()
     for arm in ("pipeline", "baseline"):
-        report = (record.get(arm) or {}).get("report")
+        arm_rec = record.get(arm) or {}
+        if arm_rec.get("skipped") or arm_rec.get("unscorable"):
+            continue
+        report = arm_rec.get("report")
         if isinstance(report, dict):
-            record[arm]["groups"] = group_results(report.get("results", []), kinds)
+            arm_rec["groups"] = group_results(report.get("results", []), kinds)
+            if "coverage" not in arm_rec:
+                executed = [
+                    r.get("name")
+                    for r in report.get("results", [])
+                    if isinstance(r, dict) and r.get("name")
+                ]
+                arm_rec["coverage"] = coverage_report(executed, required)
+            if arm_rec["coverage"]["n_executed"] == 0:
+                _unscorable(
+                    arm_rec,
+                    f"{arm} arm executed zero required checks; "
+                    "coverage failure, nothing scored",
+                )
     with (out_dir / f"{hole}.json").open("w", encoding="utf-8") as handle:
         json.dump(record, handle, indent=2, sort_keys=True)
     return record
 
 
+#: Headline aggregate keys covered by the independent recompute check.
+HEADLINE_KEYS = (
+    "holes",
+    "holes_total",
+    "unscorable",
+    "verdict_pass",
+    "constraints_pass",
+    "fidelity_pass",
+    "leakage_pass",
+    "reproducible",
+    "attempts_total",
+    "usage_tokens_total",
+    "wall_s_total",
+)
+
+
 def summarize(hole_records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Aggregate per-hole records into the summary JSON."""
+    """Aggregate per-hole records into the summary JSON.
+
+    Unscorable arms (invocation failure, coverage failure) never add to
+    pass counts but stay in the ``holes_total`` denominator with an
+    ``unscorable`` count, so a partial run cannot look complete.
+    Deliberately skipped arms (``--skip-pipeline``) stay out of the
+    denominator entirely.
+    """
     summary: dict[str, Any] = {"holes": [], "arms": {}}
     for arm in ("pipeline", "baseline"):
         agg: dict[str, Any] = {
             "holes": 0,
+            "holes_total": 0,
+            "unscorable": 0,
             "verdict_pass": 0,
             "constraints_pass": 0,
             "fidelity_pass": 0,
@@ -473,7 +819,11 @@ def summarize(hole_records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         }
         for record in hole_records:
             arm_rec = record.get(arm) or {}
-            if arm_rec.get("skipped") or arm_rec.get("error"):
+            if arm_rec.get("skipped"):
+                continue
+            agg["holes_total"] += 1
+            if arm_rec.get("unscorable") or arm_rec.get("error"):
+                agg["unscorable"] += 1
                 continue
             agg["holes"] += 1
             if arm_rec.get("verdict") == "pass":
@@ -497,6 +847,91 @@ def summarize(hole_records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     return summary
 
 
+def _load_hole_records(out_dir: Path) -> list[dict[str, Any]]:
+    """Read saved per-hole artifacts from disk (recompute path)."""
+    records = []
+    for path in sorted(out_dir.glob("*.json")):
+        if path.name == "summary.json":
+            continue
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        if isinstance(record, dict) and "hole" in record:
+            records.append(record)
+    return records
+
+
+def recompute_summary(out_dir: Path) -> dict[str, Any]:
+    """Rebuild headline counts purely from saved per-hole artifacts.
+
+    This is the independent recompute path: it reads the ``<hole>.json``
+    files from disk and re-derives every headline key with its own
+    aggregation, so a stored ``summary.json`` that disagrees with its
+    per-hole evidence is caught instead of trusted.
+    """
+    hole_records = _load_hole_records(out_dir)
+    recomputed: dict[str, Any] = {"holes": [], "arms": {}}
+    for arm in ("pipeline", "baseline"):
+        agg: dict[str, Any] = {key: 0 for key in HEADLINE_KEYS}
+        agg["wall_s_total"] = 0.0
+        holes_seen = 0
+        for record in hole_records:
+            arm_rec = record.get(arm) or {}
+            if not isinstance(arm_rec, dict) or arm_rec.get("skipped"):
+                continue
+            holes_seen += 1
+            if arm_rec.get("unscorable") or arm_rec.get("error"):
+                agg["unscorable"] += 1
+                continue
+            agg["holes"] += 1
+            if arm_rec.get("verdict") == "pass":
+                agg["verdict_pass"] += 1
+            groups = arm_rec.get("groups")
+            if isinstance(groups, dict):
+                for key in ("constraints", "fidelity", "leakage"):
+                    cell = groups.get(key)
+                    if isinstance(cell, dict) and cell.get("pass") is True:
+                        agg[f"{key}_pass"] += 1
+            repro = arm_rec.get("reproducible")
+            if isinstance(repro, dict):
+                matched = repro.get("match") is True
+            else:
+                matched = repro is True
+            if matched:
+                agg["reproducible"] += 1
+            attempts = arm_rec.get("attempts_used") or 0
+            tokens = arm_rec.get("usage_tokens") or 0
+            wall = arm_rec.get("wall_s") or 0.0
+            agg["attempts_total"] += int(attempts)
+            agg["usage_tokens_total"] += int(tokens)
+            agg["wall_s_total"] += float(wall)
+        agg["holes_total"] = holes_seen
+        agg["wall_s_total"] = round(agg["wall_s_total"], 1)
+        recomputed["arms"][arm] = agg
+    recomputed["holes"] = [r.get("hole") for r in hole_records]
+    return recomputed
+
+
+def summary_mismatch(out_dir: Path) -> bool:
+    """True when the stored summary disagrees with its per-hole evidence."""
+    summary_path = out_dir / "summary.json"
+    try:
+        stored = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    recomputed = recompute_summary(out_dir)
+    if stored.get("holes") != recomputed.get("holes"):
+        return True
+    for arm in ("pipeline", "baseline"):
+        stored_arm = (stored.get("arms") or {}).get(arm) or {}
+        fresh_arm = recomputed["arms"][arm]
+        for key in HEADLINE_KEYS:
+            if stored_arm.get(key) != fresh_arm.get(key):
+                return True
+    return False
+
+
 def render_results_table(summary: Mapping[str, Any]) -> str:
     """Render the aggregate table (07 section 11 shape) as Markdown."""
     arms = summary.get("arms", {})
@@ -506,6 +941,7 @@ def render_results_table(summary: Mapping[str, Any]) -> str:
         ("Leakage pass", "leakage_pass"),
         ("Reproducible", "reproducible"),
         ("Held-out holes pass", "verdict_pass"),
+        ("Unscorable holes", "unscorable"),
         ("Attempts used (total)", "attempts_total"),
         ("Model tokens (total)", "usage_tokens_total"),
         ("Wall time s (total)", "wall_s_total"),
@@ -537,14 +973,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--baseline-rows", type=int, default=1000)
     parser.add_argument("--out", default=None)
     parser.add_argument("--skip-pipeline", action="store_true")
+    parser.add_argument("--benchmark-name", default="benchmark-v2-post-rp07")
+    parser.add_argument(
+        "--recompute",
+        action="store_true",
+        help="verify a stored out dir: recompute headlines from per-hole "
+        "artifacts and fail loudly on mismatch instead of running",
+    )
     args = parser.parse_args(argv)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     if args.out:
         out_dir = Path(args.out)
         if not out_dir.is_absolute():
             out_dir = REPO_ROOT / out_dir
     else:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         out_dir = REPO_ROOT / "runs" / "evaluation" / stamp
+    if args.recompute:
+        if summary_mismatch(out_dir):
+            print(f"RECOMPUTE MISMATCH in {out_dir}: stored summary "
+                  "disagrees with per-hole artifacts")
+            return 1
+        print(f"recompute OK: stored summary matches per-hole artifacts "
+              f"in {out_dir}")
+        return 0
     out_dir.mkdir(parents=True, exist_ok=True)
     records = []
     for hole in args.holes:
@@ -554,14 +1005,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             baseline_rows=args.baseline_rows,
             out_dir=out_dir,
             run_pipeline_arm=not args.skip_pipeline,
+            benchmark_name=args.benchmark_name,
         )
         records.append(record)
     summary = summarize(records)
-    summary["out"] = str(out_dir.relative_to(REPO_ROOT))
+    summary["benchmark"] = benchmark_version(args.benchmark_name)
+    summary["out"] = _relative_or_str(out_dir)
     summary["holes_detail"] = args.holes
     with (out_dir / "summary.json").open("w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True)
     print(render_results_table(summary))
+    if summary_mismatch(out_dir):
+        print("RECOMPUTE MISMATCH: stored summary disagrees with per-hole "
+              "artifacts (this is a harness bug, not a result)")
+        return 1
+    print("recompute OK: stored summary matches per-hole artifacts")
     return 0
 
 

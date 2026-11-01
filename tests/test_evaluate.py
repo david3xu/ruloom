@@ -20,6 +20,7 @@ from evaluate import (  # noqa: E402
     parse_baseline_csv,
     render_results_table,
     run_baseline,
+    run_pipeline,
     score_samples,
     summarize,
     usage_dict_tokens,
@@ -156,10 +157,20 @@ def test_group_results_accepts_plain_json_mappings():
     stored = [
         {"name": "has_rows", "status": "pass"},
         {"name": "swir_fidelity", "status": "skip"},
+        {"name": "swir_vocabulary", "status": "pass"},
+        {"name": "tir_vocabulary", "status": "pass"},
     ]
     groups = group_results(stored, {"swir_fidelity": "fidelity"})
     assert groups["constraints"]["pass"] is True
     assert groups["fidelity"]["pass"] is True
+    assert groups["leakage"]["pass"] is True
+    # A group with zero executed checks fails coverage (R09-harness):
+    # the old expectation (empty leakage passing) encoded the audit bug.
+    missing = group_results(
+        [{"name": "has_rows", "status": "pass"}], {"has_rows": "constraint"}
+    )
+    assert missing["leakage"]["pass"] is False
+    assert missing["leakage"]["coverage"] == "empty"
 
 
 def test_score_samples_mirrors_validate_step(thresholds, source_samples):
@@ -320,6 +331,180 @@ def test_evaluate_hole_writes_json_with_skipped_pipeline(tmp_path, monkeypatch):
     stored = json.loads((out_dir / "MINI.json").read_text(encoding="utf-8"))
     assert stored["hole"] == "MINI"
     assert stored["baseline"]["requested_rows"] == 40
+
+
+# --- R09-harness integrity (RP-08): stale, coverage, bytes, recompute ---
+
+
+class _Proc:
+    """Stand-in for subprocess.CompletedProcess (returncode/stdout/stderr)."""
+
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _write_stale_run(hole_out: Path) -> Path:
+    """Plant an old product run dir: passing report over old bytes."""
+    stale = hole_out / "runs" / "stale000000000000000000000000000001"
+    stale.mkdir(parents=True)
+    (stale / "run.jsonl").write_text('{"stage": "done"}\n', encoding="utf-8")
+    (stale / "validation-report.json").write_text(
+        json.dumps({
+            "verdict": "pass",
+            "artifact_sha256": "0" * 64,
+            "results": [{"name": "has_rows", "status": "pass"}],
+        }),
+        encoding="utf-8",
+    )
+    (stale / "data.csv").write_text("depth_m,valid\n100.0,true\n",
+                                    encoding="utf-8")
+    return stale
+
+
+def _failing_run(monkeypatch, returncode=2, stderr="error: boom"):
+    def _run(*args, **kwargs):
+        return _Proc(returncode=returncode, stdout="", stderr=stderr)
+    monkeypatch.setattr(evaluate_module.subprocess, "run", _run)
+
+
+def test_pipeline_failure_over_stale_artifacts_is_unscorable(
+    tmp_path, monkeypatch
+):
+    """R09-harness: CLI exit!=0 with no fresh run dir is NEVER scored.
+
+    Regression for the audit violation: a failing CLI run over an old
+    fixture directory was scored as a passing reproducible hole.
+    """
+    hole_out = tmp_path / "hole"
+    hole_out.mkdir()
+    stale = _write_stale_run(hole_out)
+    _failing_run(monkeypatch, returncode=2)
+    source = tmp_path / "hole-src.csv"
+    source.write_text("depth_m,valid\n100.0,true\n", encoding="utf-8")
+    record = run_pipeline("HOLE", source, 3, hole_out)
+    assert record.get("unscorable") is True
+    assert record.get("exit_code") == 2
+    assert record.get("verdict") != "pass"
+    assert "groups" not in record or not any(
+        g.get("pass") for g in record["groups"].values()
+    )
+    assert stale.is_dir()  # stale bytes untouched, just never scored
+
+
+def test_pipeline_failure_with_no_run_dir_is_unscorable(tmp_path, monkeypatch):
+    hole_out = tmp_path / "hole"
+    hole_out.mkdir()
+    _failing_run(monkeypatch, returncode=1, stderr="error: timeout")
+    source = tmp_path / "hole-src.csv"
+    source.write_text("depth_m,valid\n100.0,true\n", encoding="utf-8")
+    record = run_pipeline("HOLE", source, 3, hole_out)
+    assert record.get("unscorable") is True
+    assert record.get("verdict", "error") != "pass"
+
+
+def test_empty_check_group_fails_coverage():
+    """R09-harness: a group with zero executed checks cannot pass."""
+    groups = group_results(
+        [CheckResult("has_rows", "pass", "1 row")], {"has_rows": "constraint"}
+    )
+    assert groups["constraints"]["pass"] is True
+    assert groups["fidelity"]["pass"] is False
+    assert groups["fidelity"]["n_checks"] == 0
+    assert groups["leakage"]["pass"] is False
+    assert groups["leakage"]["n_checks"] == 0
+
+
+def test_baseline_run_saves_raw_bytes_and_invocation(
+    thresholds, source_samples, profile, tmp_path
+):
+    """R09-harness: every baseline invocation saves its raw output bytes,
+    prompt digest, model identity, invocation id, usage, and error state."""
+    save_dir = tmp_path / "baseline"
+    record = run_baseline(
+        FakeModel(_good_csv(6)), profile, source_samples, thresholds, 6,
+        save_dir=save_dir,
+    )
+    assert record.get("unscorable") is not True
+    assert (save_dir / "baseline.csv").is_file()
+    assert (save_dir / "invocation.json").is_file()
+    invocation = json.loads(
+        (save_dir / "invocation.json").read_text(encoding="utf-8")
+    )
+    assert invocation["model"] == "fake-model"
+    assert invocation["invocation_id"] == record["invocation_id"]
+    assert invocation["prompt_sha256"] == record["prompt_sha256"]
+    assert invocation["output_sha256"] == record["output_bytes_sha256"]
+    assert (save_dir / "baseline.csv").read_bytes().decode("utf-8") == (
+        _good_csv(6)
+    )
+
+
+def test_baseline_failure_is_unscorable_and_never_reuses_previous(
+    thresholds, source_samples, profile, tmp_path
+):
+    save_dir = tmp_path / "baseline"
+    first = run_baseline(
+        FakeModel(_good_csv(6)), profile, source_samples, thresholds, 6,
+        save_dir=save_dir,
+    )
+    assert first["report"] is not None
+    second = run_baseline(
+        RefusingModel(), profile, source_samples, thresholds, 6,
+        save_dir=save_dir,
+    )
+    assert second.get("unscorable") is True
+    assert second["report"] is None
+    assert second["verdict"] == "error"
+    assert "invocation_id" in second
+    assert second["invocation_id"] != first["invocation_id"]
+
+
+def test_summarize_counts_unscorable_in_denominator():
+    records = [_hole_record("H1", "pass", True)]
+    records.append({
+        "hole": "H2",
+        "pipeline": {"unscorable": True, "reason": "exit 2, no fresh run"},
+        "baseline": {"unscorable": True, "reason": "refused"},
+    })
+    summary = summarize(records)
+    pipe = summary["arms"]["pipeline"]
+    assert pipe["holes"] == 1
+    assert pipe["holes_total"] == 2
+    assert pipe["unscorable"] == 1
+    assert pipe["verdict_pass"] == 1
+
+
+def test_recompute_from_disk_matches_summary(tmp_path):
+    from evaluate import recompute_summary  # noqa: E402
+
+    out_dir = tmp_path / "eval"
+    out_dir.mkdir()
+    records = [_hole_record("H1", "pass", True)]
+    summary = summarize(records)
+    (out_dir / "H1.json").write_text(json.dumps(records[0]), encoding="utf-8")
+    summary["out"] = "eval"
+    (out_dir / "summary.json").write_text(
+        json.dumps(summary), encoding="utf-8"
+    )
+    recomputed = recompute_summary(out_dir)
+    assert recomputed["arms"]["pipeline"]["verdict_pass"] == 1
+
+
+def test_recompute_detects_tampered_summary(tmp_path):
+    from evaluate import recompute_summary, summary_mismatch  # noqa: E402
+
+    out_dir = tmp_path / "eval"
+    out_dir.mkdir()
+    records = [_hole_record("H1", "fail", False)]
+    summary = summarize(records)
+    (out_dir / "H1.json").write_text(json.dumps(records[0]), encoding="utf-8")
+    summary["arms"]["pipeline"]["verdict_pass"] = 99
+    (out_dir / "summary.json").write_text(
+        json.dumps(summary), encoding="utf-8"
+    )
+    assert summary_mismatch(out_dir)
 
 
 def test_render_results_table_from_summary_json(tmp_path):

@@ -207,3 +207,32 @@ both profile release blocks -- as a release member rendered at pack
 time. `Q-ENGINE-SPEC` and `Q-ENGINE-EVIDENCE` are enforced;
 `Q-EVAL-R09-HARNESS` stays open for RP-08 and the section-9 rules
 stay planned. The PDD446 golden bytes reproduce unchanged.
+
+RP-08 closed the harness side of R09 and reran the held-out benchmark
+once as `benchmark-v2-post-rp07`. `scripts/evaluate.py` now binds
+every score to its own fresh invocation: run directories predating the
+CLI call are counted as stale-ignored and never read, so a CLI failure
+over old or missing artifacts records the arm `unscorable` with the
+error instead of re-scoring stale bytes; empty check groups fail
+coverage and an arm with zero executed required checks is unscorable
+(coverage executed/required is recorded per arm); every baseline
+invocation saves its raw bytes plus an invocation record (model,
+invocation id, prompt/output digests, usage, error), and a failed
+invocation is unscorable without reusing prior output; aggregates
+recompute independently from the saved per-hole artifacts
+(`--recompute` fails loudly on mismatch) with unscorable arms kept in
+the `holes_total` denominator. The live rerun (code `f1ed40d`, spec
+v1, both manifests v1, evidence git-ignored under
+`runs/evaluation/20261101T180552Z-benchmark-v2/`, results in
+`docs/benchmark-v2-post-rp07.md`, Step 14 tables untouched) scored 4/4
+baseline arms with saved bytes (3 pass; HD012 fails fidelity on
+`repeated_depths_masked_out`; 9075234 tokens, 2302.5 s wall) and 4/4
+pipeline arms honestly unscorable: every live planner call fails with
+API 400 because RP-07's `PLAN_SCHEMA` (optional `strategy`) is sent
+verbatim as the model output schema, which the API rejects — a live-only
+product regression fake-model suites cannot catch, left for an
+RP-07-rework slice with no product file changed here. No
+pipeline-vs-baseline comparison is claimed from this round.
+`Q-EVAL-R09-HARNESS` is enforced (`tests/test_evaluate.py`); the
+section-9 rules stay planned. The PDD446 golden bytes reproduce
+unchanged.
