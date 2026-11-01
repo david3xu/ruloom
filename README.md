@@ -33,12 +33,33 @@ Two consequences that are easy to violate by accident:
 - **If repair attempts are exhausted, the run stops and reports the failing
   checks.** It never ships as passing.
 
+## Data
+
+HyLogger source data is **not committed to this repository**, following GSWA
+hackathon guidance and the data licence. Fetch it from the National Virtual
+Core Library (NVCL) WA node, via AuScope — scalar downloads from
+`http://geossdi.dmp.wa.gov.au/NVCLDataServices/downloadscalars.html` — and
+place it under `data/` (git-ignored):
+
+- `data/sources/` — the five continuous holes used as generation sources:
+  `20LCDD003`, `DDG007`, `HD012`, `NCB0003`, `PDD446`.
+- `data/calibration/` — the 38-hole calibration set used to derive the
+  quality thresholds in `profiles/hylogger/thresholds.json`; each hole's
+  file hash is recorded inside that JSON.
+
+Each hole is a `*-scalars.csv` with a sibling `*-source.json` manifest
+recording licence `CC-BY-4.0` and the attribution (Geological Survey of
+Western Australia, National Virtual Core Library (NVCL) WA node, via
+AuScope). Only summary statistics and check results derived from the data
+are committed, plus the synthetic outputs the run releases. Full provenance
+statement: `docs/provenance.md`.
+
 ## Status
 
 New work, written fresh for the Meta Global AI Developer Hackathon
 (Oct 26 – Nov 4, 2026). Nothing here is imported from any prior project;
-source data is public NVCL WA data under CC BY 4.0, used as data only —
-see `docs/provenance.md` once the source intake lands.
+source data is public NVCL WA data under CC BY 4.0, used as fetched data
+only — see `docs/provenance.md`.
 
 ## Layout
 
