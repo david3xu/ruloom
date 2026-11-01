@@ -528,6 +528,47 @@ def test_generated_layout_path_passes_without_existing(tmp_path: Path) -> None:
     assert ok, evidence
 
 
+def test_generated_dir_absent_from_disk_still_ignored_in_git_repo(
+    tmp_path: Path,
+) -> None:
+    # Fresh-clone shape: a real git repo whose .gitignore covers runs/
+    # with no runs/ directory on disk. Bare `git check-ignore -- runs`
+    # misses a directory-only `runs/` pattern here, so the gate must
+    # probe the directory form and/or a synthetic child.
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    _write(tmp_path, "README.md", "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n")
+    _write(tmp_path, ".gitignore", "runs/\n")
+    _write(
+        tmp_path,
+        "docs/quality/rules.json",
+        '{"version": 1, "layout": [{"path": "runs/", "kind": "generated"}]}',
+    )
+    assert not (tmp_path / "runs").exists()
+    assert gate._is_ignored(tmp_path, "runs/")
+    ok, evidence = gate.check_doc1(tmp_path)
+    assert ok, evidence
+
+
+def test_generated_dir_without_ignore_rule_fails_in_git_repo(
+    tmp_path: Path,
+) -> None:
+    # Strict canary: the same fresh-clone shape but .gitignore does not
+    # cover runs/ — the gate must fail, not silently pass.
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    _write(tmp_path, "README.md", "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n")
+    _write(tmp_path, ".gitignore", "__pycache__/\n")
+    _write(
+        tmp_path,
+        "docs/quality/rules.json",
+        '{"version": 1, "layout": [{"path": "runs/", "kind": "generated"}]}',
+    )
+    assert not (tmp_path / "runs").exists()
+    assert not gate._is_ignored(tmp_path, "runs/")
+    ok, evidence = gate.check_doc1(tmp_path)
+    assert not ok
+    assert "runs/" in evidence
+
+
 def test_missing_registry_keeps_old_doc1_behaviour(tmp_path: Path) -> None:
     # Without a registry every Layout path is treated as tracked.
     _write(tmp_path, "README.md", "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n")

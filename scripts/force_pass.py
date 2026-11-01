@@ -170,16 +170,30 @@ def _gitignore_entries(root: Path) -> list[str]:
 
 
 def _is_ignored(root: Path, rel: str) -> bool:
-    """True when a Layout path is covered by .gitignore (generated output)."""
-    proc = subprocess.run(
-        ["git", "-C", str(root), "check-ignore", "-q", "--", rel.rstrip("/")],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode == 0:
-        return True
-    if proc.returncode == 1:
+    """True when a Layout path is covered by .gitignore (generated output).
+
+    Directory Layout paths (``runs/``) are probed both as written and
+    via a synthetic child file: bare ``git check-ignore -- runs``
+    does not match a directory-only ``runs/`` pattern when the
+    directory is absent from disk (a fresh clone/CI checkout), while
+    ``runs/`` itself and ``runs/<child>`` do match.
+    """
+    candidates = [rel]
+    if rel.endswith("/"):
+        candidates.append(rel + ".force-pass-ignore-probe")
+    for candidate in candidates:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-q", "--", candidate],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return True
+        if proc.returncode not in (0, 1):
+            break
+    else:
+        # Every probe ran and none matched: not ignored.
         return False
     # No git metadata (clean archive): fall back to prefix matching.
     top = rel.strip("/").split("/")[0]
