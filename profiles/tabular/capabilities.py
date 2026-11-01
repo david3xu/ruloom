@@ -10,8 +10,10 @@ no model code, so the layer boundary stays intact.
 
 Declared inputs per capability (frozen snapshots; validated writes only):
 
-* ``intake`` (raw-granted): source bytes/path, sibling manifest; stores
-  the source identity and the parsed source frame.
+* ``intake`` (raw-granted): source bytes/path, sibling manifest; verifies
+  the source hash against the manifest record (mismatch refuses loudly)
+  and stores the source identity, the verification evidence, and the
+  parsed source frame.
 * ``profile_source`` (raw-granted): source frame and identity; stores the
   statistics profile.
 * ``plan``/``repair`` (model-granted): statistics profile, latest report;
@@ -99,22 +101,53 @@ def _catalog(ctx: Any) -> dict[str, dict[str, Any]]:
     return {entry["id"]: entry for entry in ctx.declared_checks}
 
 
+def _verify_sibling_manifest(
+    manifest: Path | None, source_sha256: str
+) -> tuple[str | None, str | None, bool]:
+    """Check the source bytes against the sibling manifest record.
+
+    Returns ``(manifest_name, manifest_sha256, hash_verified)``. A recorded
+    ``sha256`` that differs from the measured source hash fails loudly:
+    the source is not the bytes the registry describes, so nothing
+    downstream -- no model call, no release -- may treat its licence or
+    attribution as verified. A missing manifest (or one recording no hash)
+    is not fatal: the run proceeds, but the source stays unverified and
+    the release carries no output-rights claim.
+    """
+    if manifest is None:
+        return None, None, False
+    manifest_bytes = manifest.read_bytes()
+    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    record = json.loads(manifest_bytes.decode("utf-8"))
+    recorded = record.get("sha256")
+    if not isinstance(recorded, str) or not recorded:
+        return manifest.name, manifest_sha256, False
+    if recorded.lower() != source_sha256.lower():
+        raise RuntimeError(
+            f"source hash mismatch: {manifest.name} records "
+            f"sha256 {recorded}, but the source bytes hash to "
+            f"{source_sha256}: refusing (no verified source)"
+        )
+    return manifest.name, manifest_sha256, True
+
+
 def intake(ctx: Any) -> None:
-    """Hash the source, record licence/attribution, parse rows."""
+    """Hash the source, verify it against the registry, parse rows."""
     payload = ctx.raw_bytes()
     source_sha256 = hashlib.sha256(payload).hexdigest()
     manifest = _sibling_manifest(ctx.source_path, ctx.source_config)
+    manifest_name, manifest_sha256, hash_verified = _verify_sibling_manifest(
+        manifest, source_sha256
+    )
     config = ctx.source_config
     licence = config.get("licence") if isinstance(config, dict) else None
     attribution = (
         config.get("attribution") if isinstance(config, dict) else None
     )
-    manifest_name = None
     if manifest is not None:
         record = json.loads(manifest.read_text(encoding="utf-8"))
         licence = record.get("licence")
         attribution = record.get("attribution")
-        manifest_name = manifest.name
     columns, rows = read_tabular_csv(ctx.source_path)
     source_name = ctx.source_path.stem
     ctx.set_source_meta(
@@ -122,6 +155,9 @@ def intake(ctx: Any) -> None:
         sha256=source_sha256,
         licence=licence,
         attribution=attribution,
+        manifest_name=manifest_name,
+        manifest_sha256=manifest_sha256,
+        hash_verified=hash_verified,
     )
     ctx.set_source_frame({"columns": list(columns), "rows": list(rows)})
     ctx.event(
@@ -135,6 +171,8 @@ def intake(ctx: Any) -> None:
             "licence": licence,
             "attribution": attribution,
             "manifest": manifest_name,
+            "manifest_sha256": manifest_sha256,
+            "hash_verified": hash_verified,
         },
     )
     ctx.say(

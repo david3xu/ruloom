@@ -54,8 +54,9 @@ def build_critique_prompt(
     """Build the critique prompt from validation evidence only.
 
     ``report`` is the serialized validation report
-    (:meth:`CheckReport.to_dict`); ``profile_json`` is the profile
-    statistics JSON (:meth:`Profile.to_json`). Neither carries raw rows.
+    (:meth:`CheckReport.to_dict`); ``profile_json`` is the disclosed
+    profile statistics JSON (:meth:`Profile.to_disclosed_json`). Neither
+    carries raw rows or rare literals.
     """
     return (
         "You are an advisory critic for a synthetic-data validation run.\n"

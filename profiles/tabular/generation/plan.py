@@ -2,8 +2,10 @@
 
 The plan is a strict JSON object -- an integer ``seed`` and an integer
 ``n_rows >= 1`` -- and the only source-derived content the model ever sees
-is :meth:`TabularProfile.to_json` statistics. The returned plan is validated
-against :data:`PLAN_SCHEMA`; anything else raises :class:`PlanError`.
+is the disclosed statistics view
+(:meth:`TabularProfile.to_disclosed_json`), which withholds rare text
+literals. The returned plan is validated against :data:`PLAN_SCHEMA`;
+anything else raises :class:`PlanError`.
 """
 
 from __future__ import annotations
@@ -62,7 +64,8 @@ def build_prompt(profile: TabularProfile) -> str:
     """Build the planning prompt for a profile.
 
     The only source-derived content in the prompt is the profile's
-    statistics serialisation; no raw source rows are ever included.
+    disclosed statistics serialisation (rare text literals withheld); no
+    raw source rows are ever included.
     """
     return (
         "Propose a data-generation plan for this tabular dataset.\n"
@@ -72,7 +75,7 @@ def build_prompt(profile: TabularProfile) -> str:
         "Set it to the profile statistics' n_rows so the synthetic "
         "table matches the source table's row count.\n"
         "Profile statistics (the only source-derived content):\n"
-        + profile.to_json()
+        + profile.to_disclosed_json()
     )
 
 
@@ -105,8 +108,8 @@ def build_repair_prompt(
 ) -> str:
     """Build the repair prompt for failed checks.
 
-    Only failed-check JSON, the current plan, and profile statistics are
-    included; no raw source rows are ever embedded.
+    Only failed-check JSON, the current plan, and the disclosed profile
+    statistics are included; no raw source rows are ever embedded.
     """
     import json as _json
 
@@ -124,5 +127,5 @@ def build_repair_prompt(
         + "\nCurrent plan (JSON):\n"
         + _json.dumps(dict(current_plan), sort_keys=True)
         + "\nProfile statistics (the only source-derived content):\n"
-        + profile.to_json()
+        + profile.to_disclosed_json()
     )

@@ -22,3 +22,29 @@ def test_statistics_are_aggregates_only() -> None:
     assert profile.stats["columns"] == COLUMNS
     assert profile.stats["numeric"]["value"]["mean"] == pytest.approx(12.0)
     assert set(profile.stats["text"]["label"]["values"]) == {"a", "b"}
+
+
+def test_disclosed_view_withholds_singleton_literals() -> None:
+    from profiles.tabular.analysis.statistics import disclosed_stats
+
+    columns = ["name", "contact"]
+    rows = [
+        {"name": "Ava Reyes", "contact": "shared@example.com"},
+        {"name": "Bo Chen", "contact": "shared@example.com"},
+        {"name": "Cy Dada", "contact": "solo@example.com"},
+    ]
+    profile = TabularProfile.from_rows(columns, rows, "contacts", "abc123")
+    view = profile.disclosed_stats()
+    assert view["text"]["name"]["values"] == {}
+    assert view["text"]["name"]["suppressed_values"] == 3
+    assert view["text"]["contact"]["values"] == {"shared@example.com": 2}
+    assert view["text"]["contact"]["rates"] == {"shared@example.com": 1.0}
+    assert view["text"]["contact"]["suppressed_values"] == 1
+    blob = profile.to_disclosed_json()
+    assert "Ava Reyes" not in blob
+    assert "solo@example.com" not in blob
+    assert "shared@example.com" in blob
+    # The full code-side record is not mutated by the projection.
+    assert profile.stats["text"]["name"]["values"]["Ava Reyes"] == 1
+    assert "suppressed_values" not in profile.stats["text"]["name"]
+    assert disclosed_stats(profile.stats) == view

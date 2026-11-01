@@ -80,12 +80,25 @@ def test_propose_asks_for_plan_schema() -> None:
 def test_build_prompt_only_source_content_is_statistics() -> None:
     first = build_prompt(_toy_profile("HOLE-A"))
     second = build_prompt(_toy_profile("HOLE-B"))
-    stats_first = _toy_profile("HOLE-A").to_json()
-    stats_second = _toy_profile("HOLE-B").to_json()
+    stats_first = _toy_profile("HOLE-A").to_disclosed_json()
+    stats_second = _toy_profile("HOLE-B").to_disclosed_json()
     assert stats_first in first
     assert stats_second in second
     # Stripping the statistics leaves a profile-independent template.
     assert first.replace(stats_first, "") == second.replace(stats_second, "")
+
+
+def test_build_prompt_withholds_singleton_labels() -> None:
+    samples = [
+        Sample(depth_m=10.0, valid=True, swir_group="Common", tir_group="X"),
+        Sample(depth_m=10.5, valid=True, swir_group="Common", tir_group="X"),
+        Sample(depth_m=11.0, valid=True, swir_group="Singleton", tir_group="X"),
+    ]
+    profile = Profile.from_samples(samples, "HOLE", "0" * 64)
+    prompt = build_prompt(profile)
+    assert profile.to_disclosed_json() in prompt
+    assert "Singleton" not in prompt
+    assert "Common" in prompt
 
 
 class _Proc:

@@ -2,7 +2,8 @@
 
 The plan is a strict JSON object -- an integer ``seed`` and an integer
 ``n_rows >= 1`` -- and the only source-derived content the model ever sees
-is :meth:`Profile.to_json` statistics. The returned plan is validated
+is the disclosed statistics view (:meth:`Profile.to_disclosed_json`),
+which withholds rare group labels. The returned plan is validated
 against :data:`PLAN_SCHEMA`; anything else raises :class:`PlanError`.
 """
 
@@ -64,7 +65,8 @@ def build_prompt(profile: Profile) -> str:
     """Build the planning prompt for a profile.
 
     The only source-derived content in the prompt is the profile's
-    statistics serialisation; no raw source rows are ever included.
+    disclosed statistics serialisation (rare group labels withheld); no
+    raw source rows are ever included.
     """
     return (
         "Propose a data-generation plan for this HyLogger hole.\n"
@@ -74,7 +76,7 @@ def build_prompt(profile: Profile) -> str:
         "Set it to the profile statistics' n_samples so the synthetic "
         "hole matches the source hole's row count.\n"
         "Profile statistics (the only source-derived content):\n"
-        + profile.to_json()
+        + profile.to_disclosed_json()
     )
 
 

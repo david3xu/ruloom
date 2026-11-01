@@ -1,18 +1,33 @@
 """Summary statistics for normalised HyLogger samples.
 
 A :class:`Profile` holds aggregate statistics ONLY -- counts, fractions,
-quantiles and run shapes. It never stores per-sample depths or labels, so
-:func:`Profile.to_json` is the only source-derived content a model may
-ever see.
+quantiles and run shapes. It never stores per-sample depths or labels.
+The model-visible serialisation is the *disclosed* view
+(:meth:`Profile.to_disclosed_json`), which withholds rare group labels;
+:meth:`Profile.to_json` keeps the full aggregate record for code-side use
+(checks, generation, logs) and is never handed to a model.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from ..intake.reader import Sample
+
+#: Minimum source-row support for a group label to appear in the
+#: model-visible view. A label seen only once is indistinguishable from an
+#: identifier for that row: disclosing it would hand the model a value
+#: that singles out one source sample. The disclosed view therefore
+#: carries only labels shared by at least two source rows, and counts how
+#: many distinct labels were withheld per channel. This is a disclosure
+#: floor, not a quality threshold: it never judges a label as good or bad,
+#: it only withholds rare ones. Counts and fractions over the disclosed
+#: labels pass through; the code-side record (checks, seeded generation)
+#: keeps working on the full aggregates.
+MIN_LABEL_COUNT_FOR_MODEL_VIEW = 2
 
 #: Decimals for rounded depth summaries (start/end/span). Rounding keeps
 #: exact source depth values out of the serialised profile.
@@ -216,6 +231,117 @@ def build_stats(samples: Sequence[Sample]) -> dict[str, Any]:
     }
 
 
+def _disclosed_channel(section: Any) -> tuple[dict[str, Any], set[str]]:
+    """Prune a channel section to labels with enough source support.
+
+    Returns the pruned section plus the kept label set. Rare labels leave
+    the marginals together with every transition touching them; fractions,
+    pair counts, and persistence are recomputed over the disclosed pairs,
+    and the number of withheld labels is recorded as an integer (never the
+    labels themselves).
+    """
+    if not isinstance(section, dict):
+        return {}, set()
+    section = copy.deepcopy(section)
+    marginals = section.get("marginals")
+    if not isinstance(marginals, dict):
+        marginals = {}
+    kept = {
+        label
+        for label, count in marginals.items()
+        if isinstance(count, int)
+        and not isinstance(count, bool)
+        and count >= MIN_LABEL_COUNT_FOR_MODEL_VIEW
+    }
+    section["marginals"] = {
+        label: marginals[label] for label in marginals if label in kept
+    }
+    total = sum(section["marginals"].values())
+    section["marginal_fractions"] = (
+        {
+            label: _r(count / total, FRAC_ND)
+            for label, count in section["marginals"].items()
+        }
+        if total
+        else {}
+    )
+    transitions = section.get("transitions")
+    if not isinstance(transitions, dict):
+        transitions = {}
+    pruned: dict[str, dict[str, int]] = {}
+    for source, targets in transitions.items():
+        if source not in kept or not isinstance(targets, dict):
+            continue
+        kept_targets = {
+            target: count for target, count in targets.items() if target in kept
+        }
+        if kept_targets:
+            pruned[source] = kept_targets
+    section["transitions"] = pruned
+    n_pairs = sum(sum(targets.values()) for targets in pruned.values())
+    section["n_pairs"] = n_pairs
+    section["transition_fractions"] = (
+        {
+            source: {
+                target: _r(count / n_pairs, FRAC_ND)
+                for target, count in targets.items()
+            }
+            for source, targets in pruned.items()
+        }
+        if n_pairs
+        else {}
+    )
+    same = sum(targets.get(label, 0) for label, targets in pruned.items())
+    section["persistence"] = _r(same / n_pairs, FRAC_ND) if n_pairs else None
+    section["suppressed_label_count"] = len(marginals) - len(kept)
+    return section, kept
+
+
+def disclosed_stats(stats: Mapping[str, Any]) -> dict[str, Any]:
+    """The model-visible projection of HyLogger statistics.
+
+    Returns a deep copy in which the ``swir``/``tir`` channels and the
+    ``joint`` counts carry only labels shared by at least
+    ``MIN_LABEL_COUNT_FOR_MODEL_VIEW`` source rows. Aggregate counts
+    (``n_valid``, ``n_answered``, coverage) pass through untouched: they
+    name no literal. The input is never mutated.
+    """
+    if not isinstance(stats, Mapping):
+        raise TypeError(f"stats must be a mapping, got {type(stats).__name__}")
+    view = copy.deepcopy(dict(stats))
+    swir, swir_kept = _disclosed_channel(view.get("swir"))
+    tir, tir_kept = _disclosed_channel(view.get("tir"))
+    if isinstance(view.get("swir"), dict):
+        view["swir"] = swir
+    if isinstance(view.get("tir"), dict):
+        view["tir"] = tir
+    joint = view.get("joint")
+    if isinstance(joint, dict):
+        joint_counts = joint.get("joint_counts")
+        if not isinstance(joint_counts, dict):
+            joint_counts = {}
+        pruned: dict[str, dict[str, int]] = {}
+        for swir_label, targets in joint_counts.items():
+            if swir_label not in swir_kept or not isinstance(targets, dict):
+                continue
+            kept_targets = {
+                tir_label: count
+                for tir_label, count in targets.items()
+                if tir_label in tir_kept
+            }
+            if kept_targets:
+                pruned[swir_label] = kept_targets
+        joint["joint_counts"] = pruned
+        total = sum(sum(targets.values()) for targets in pruned.values())
+        same = sum(
+            targets.get(label, 0)
+            for label, targets in pruned.items()
+            if label in tir_kept
+        )
+        joint["agreement"] = _r(same / total, FRAC_ND) if total else None
+    return view
+
+
 @dataclass(frozen=True)
 class Profile:
     """Aggregate statistics for one hole plus its source identity.
@@ -228,12 +354,27 @@ class Profile:
     stats: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> str:
-        """Serialise the profile; the only source-derived content models see."""
+        """Serialise the full profile (code-side record, not for models)."""
         return json.dumps(
             {
                 "source_name": self.source_name,
                 "source_sha256": self.source_sha256,
                 "stats": self.stats,
+            },
+            sort_keys=True,
+        )
+
+    def disclosed_stats(self) -> dict[str, Any]:
+        """The model-visible statistics: rare group labels withheld."""
+        return disclosed_stats(self.stats)
+
+    def to_disclosed_json(self) -> str:
+        """Serialise the disclosed view (the only model-visible content)."""
+        return json.dumps(
+            {
+                "source_name": self.source_name,
+                "source_sha256": self.source_sha256,
+                "stats": self.disclosed_stats(),
             },
             sort_keys=True,
         )

@@ -105,6 +105,33 @@ def test_to_json_carries_source_identity() -> None:
     assert parsed["source_sha256"] == "abc123"
 
 
+def test_disclosed_view_withholds_singleton_labels() -> None:
+    from profiles.hylogger.analysis.statistics import disclosed_stats
+
+    samples = [
+        Sample(depth_m=10.0, valid=True, swir_group="A", tir_group="X"),
+        Sample(depth_m=10.5, valid=True, swir_group="A", tir_group="X"),
+        Sample(depth_m=11.0, valid=True, swir_group="B", tir_group="Y"),
+    ]
+    profile = Profile.from_samples(samples, "HOLE", "abc123")
+    view = profile.disclosed_stats()
+    assert view["swir"]["marginals"] == {"A": 2}
+    assert view["swir"]["suppressed_label_count"] == 1
+    assert view["tir"]["marginals"] == {"X": 2}
+    assert view["tir"]["suppressed_label_count"] == 1
+    # Transitions touching a withheld label are pruned with the label.
+    assert view["swir"]["transitions"] == {"A": {"A": 1}}
+    assert view["joint"]["joint_counts"] == {"A": {"X": 2}}
+    blob = profile.to_disclosed_json()
+    assert '"B"' not in blob
+    assert '"Y"' not in blob
+    assert '"A"' in blob
+    # Aggregate counts pass through; the full record is not mutated.
+    assert view["swir"]["n_answered"] == 3
+    assert profile.stats["swir"]["marginals"] == {"A": 2, "B": 1}
+    assert disclosed_stats(profile.stats) == view
+
+
 def _json_floats(node: object) -> list[float]:
     found: list[float] = []
     if isinstance(node, float):

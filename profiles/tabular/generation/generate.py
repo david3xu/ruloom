@@ -2,8 +2,9 @@
 
 Generation uses a single ``random.Random`` seeded by the plan. Numeric
 columns draw from a gaussian fitted to the profile mean/std and clamp to
-the profile range; text columns draw from the profile value rates. No
-model output ever becomes a data value.
+the profile range; text columns draw from the *disclosed* value rates, so
+a literal too rare to show the model can never be recreated by the
+generator either. No model output ever becomes a data value.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import random
 from typing import Any, Mapping
 
 from ..validation.dataset import to_csv_bytes
-from ..analysis.statistics import TabularProfile
+from ..analysis.statistics import TabularProfile, disclosed_stats
 
 
 def _plan_seed_n_rows(plan: Mapping[str, Any]) -> tuple[int, int]:
@@ -41,9 +42,17 @@ def _weighted_choice(
 def generate_rows(
     profile: TabularProfile, seed: int, n_rows: int
 ) -> list[dict[str, str]]:
-    """Generate ``n_rows`` synthetic rows from profile aggregates."""
+    """Generate ``n_rows`` synthetic rows from profile aggregates.
+
+    Text columns draw from the disclosed vocabulary only: a literal
+    withheld from the model view (fewer than
+    ``MIN_TEXT_COUNT_FOR_MODEL_VIEW`` source rows) is never emitted here
+    either, so a single-row source cannot be recreated exactly. Numeric
+    columns draw from the full aggregate summaries, which are aggregates
+    already.
+    """
     rng = random.Random(seed)
-    stats = profile.stats
+    stats = disclosed_stats(profile.stats)
     columns: list[str] = list(stats.get("columns", []))
     numeric: dict[str, dict[str, float]] = stats.get("numeric", {})
     text: dict[str, dict[str, Any]] = stats.get("text", {})

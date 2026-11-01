@@ -65,8 +65,33 @@ older substituted report fails even when the checksums were re-cut
 around it). Any violation raises loudly; a return means every check
 passed.
 
+## Rights evidence and output terms
+
+Source identity, licence, and attribution are recorded as separate
+fields -- never folded into a single claim -- and the release carries
+the verification outcome with them. Intake checks the measured source
+hash against the sibling `*-source.json` registry record: a mismatch
+fails loudly before any model call, while a missing record (or one
+recording no hash) leaves the source unverified without stopping the
+run. The release `provenance.md` renders the outcome in words, and the
+release manifest carries it as a machine-readable `rights` block
+(`source_sha256`, `source_licence`, `source_attribution`,
+`manifest_name`, `manifest_sha256`, `source_hash_verified`,
+`output_terms`).
+
+Output terms resolve from that evidence only
+(`engine/artifacts/package.py: resolve_output_terms`): the synthetic
+output is dedicated under `CC0-1.0` exactly when the source hash
+verified *and* a source licence was recorded. Every other release --
+unverified source, unconfirmed licence -- states `NOT CLEARED`
+explicitly and carries no public-dedication claim. There is no default
+dedication in `build_provenance`: without an explicit, evidence-backed
+`output_terms` value, the no-clearance statement renders.
+
 ## Feature record
 
 This slice is registered as `F-ENGINE-REVIEWED-RELEASE` under
 `catalogue/features/engine/` (rules `Q-RELEASE-R06` and
-`Q-RELEASE-R04-MEMBERS`).
+`Q-RELEASE-R04-MEMBERS`). The source/rights slice is registered as
+`F-ENGINE-SOURCE-RIGHTS` in the same directory (rules `Q-DATA-R08`
+and `Q-RELEASE-R04-RIGHTS`).

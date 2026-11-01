@@ -290,8 +290,18 @@ class RunContext:
         sha256: str,
         licence: Any,
         attribution: Any,
+        manifest_name: Any = None,
+        manifest_sha256: Any = None,
+        hash_verified: Any = False,
     ) -> None:
-        """Record the source identity measured at intake."""
+        """Record the source identity and rights evidence measured at intake.
+
+        ``manifest_name``/``manifest_sha256`` identify the sibling registry
+        record the source was checked against, and ``hash_verified`` says
+        whether the measured source hash matched that record. Unverified
+        sources are stored as-is: the engine renders them with no
+        output-rights clearance instead of refusing them here.
+        """
         if not isinstance(name, str) or not name:
             raise RunnerError("source name must be a non-empty string")
         if not isinstance(sha256, str) or not sha256:
@@ -302,6 +312,9 @@ class RunContext:
                 "source_sha256": sha256,
                 "licence": licence,
                 "attribution": attribution,
+                "manifest_name": manifest_name,
+                "manifest_sha256": manifest_sha256,
+                "hash_verified": hash_verified is True,
             }
         )
 
@@ -1030,8 +1043,18 @@ class _Runner:
         return artifact_dir
 
     def provenance_record(self) -> str:
-        """Render the release provenance statement from engine state."""
-        from ..artifacts.package import build_provenance as _build
+        """Render the release provenance statement from engine state.
+
+        Output terms resolve from the recorded rights evidence only: a
+        public-dedication sentence appears exactly when the source hash
+        verified against the sibling manifest at intake and a licence was
+        recorded; otherwise the statement carries an explicit
+        no-clearance notice and no dedication is implied.
+        """
+        from ..artifacts.package import (
+            build_provenance as _build,
+            resolve_output_terms as _resolve,
+        )
 
         meta = self._source_meta
         verdict, _ = self.final_decision()
@@ -1042,6 +1065,8 @@ class _Runner:
             plan = dict(self._best.plan_ref)
         else:
             plan = dict(self._plan) if isinstance(self._plan, Mapping) else {}
+        verified = meta.get("hash_verified") is True
+        manifest_name = meta.get("manifest_name")
         return _build(
             source_name=str(meta.get("source_name", "")),
             source_sha256=str(meta.get("source_sha256", "")),
@@ -1051,6 +1076,13 @@ class _Runner:
             plan=plan,
             verdict=verdict,
             run_id=self.log.run_id,
+            output_terms=_resolve(
+                hash_verified=verified, licence=meta.get("licence")
+            ),
+            hash_verified=verified,
+            manifest_name=(
+                str(manifest_name) if isinstance(manifest_name, str) else None
+            ),
         )
 
     def freeze_release_candidates(self) -> dict[str, Any]:
@@ -1229,6 +1261,8 @@ class _Runner:
             entries = _package.candidate_entries(
                 files, attempt=self._frozen_attempt or 0
             )
+            meta = self._source_meta
+            verified = meta.get("hash_verified") is True
             _package.write_release_manifest(
                 run_dir,
                 {
@@ -1237,6 +1271,18 @@ class _Runner:
                     "evidence_digest": self._evidence_digest,
                     "manifest_digest": _package.candidate_digest(entries),
                     "members": entries,
+                    "rights": _package.rights_block(
+                        source_sha256=str(meta.get("source_sha256", "")),
+                        licence=meta.get("licence"),
+                        attribution=meta.get("attribution"),
+                        manifest_name=meta.get("manifest_name"),
+                        manifest_sha256=meta.get("manifest_sha256"),
+                        hash_verified=verified,
+                        output_terms=_package.resolve_output_terms(
+                            hash_verified=verified,
+                            licence=meta.get("licence"),
+                        ),
+                    ),
                 },
             )
             _package.write_detached_hash(run_dir, zip_digest)

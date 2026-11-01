@@ -76,7 +76,7 @@ def _samples() -> list[Sample]:
 def _profile_json() -> str:
     return Profile.from_samples(
         _samples(), "TOY-crit", "00" * 32
-    ).to_json()
+    ).to_disclosed_json()
 
 
 def _report_dict(verdict: str = "pass") -> dict[str, Any]:

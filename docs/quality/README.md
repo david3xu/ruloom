@@ -85,6 +85,23 @@ enforced): `Q-GOV-*`, `Q-STRUCT-*`, `Q-DOC-CLAIM-EVIDENCE`,
 (the in-review mutation probe was made deterministic against the run's
 own directory; no product change).
 
+RP-04 closed R08 and the rights side of R04. Intake verifies the source
+against its sibling `*-source.json` registry record: a recorded hash that
+disagrees with the measured bytes fails loudly before any model call,
+while a missing record leaves the source unverified without stopping the
+run. Prompts (planner, repair, critic) consume only the disclosed
+statistics view, which withholds text literals and group labels shared by
+fewer than two source rows (a declared disclosure floor, not a quality
+threshold); the seeded tabular generator draws from the same disclosed
+vocabulary, so a single-row source cannot be recreated exactly. Output
+terms resolve from the recorded rights evidence alone: the synthetic
+output is dedicated under `CC0-1.0` exactly when the source hash verified
+and a licence was recorded, and every other release states `NOT CLEARED`
+with a separate `rights` evidence block in the release manifest.
+`Q-DATA-R08` and `Q-RELEASE-R04-RIGHTS` are enforced; the section-9 rules
+stay planned. The full suite, the gate, and the clean-archive check pass,
+and the golden PDD446 bytes reproduce unchanged.
+
 RP-03 closed R06 and the membership side of R04. When the run reaches
 the human gate, the engine snapshots every release candidate into a
 frozen store and records a candidate manifest (path, size, sha256,

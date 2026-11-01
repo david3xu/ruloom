@@ -3,10 +3,10 @@
 Each attempt generates synthetic bytes from a plan, reads them back, and
 runs the deterministic checks. On failure (and while attempts remain) the
 model is asked for a revised plan; the repair prompt carries only the
-failed :class:`CheckResult` JSON, the current plan, and the profile
-statistics -- never raw source rows or depths. Revised plans are validated
-with :func:`plan.validate_plan`. Exhaustion returns the last failing
-report unchanged; a failing verdict is never converted to pass.
+failed :class:`CheckResult` JSON, the current plan, and the disclosed
+profile statistics -- never raw source rows or depths. Revised plans are
+validated with :func:`plan.validate_plan`. Exhaustion returns the last
+failing report unchanged; a failing verdict is never converted to pass.
 """
 
 from __future__ import annotations
@@ -56,8 +56,9 @@ def build_repair_prompt(
 ) -> str:
     """Build the repair prompt for failed checks.
 
-    Only failed-check JSON, the current plan, and profile statistics are
-    included; no raw source rows or depths are ever embedded.
+    Only failed-check JSON, the current plan, and the disclosed profile
+    statistics are included; no raw source rows or depths are ever
+    embedded.
     """
     failed_payload = [
         {"name": result.name, "status": result.status, "detail": result.detail}
@@ -73,7 +74,7 @@ def build_repair_prompt(
         + "\nCurrent plan (JSON):\n"
         + json.dumps(dict(current_plan), sort_keys=True)
         + "\nProfile statistics (the only source-derived content):\n"
-        + profile.to_json()
+        + profile.to_disclosed_json()
     )
 
 
