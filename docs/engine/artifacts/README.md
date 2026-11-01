@@ -98,10 +98,29 @@ dedication in `build_provenance`: without an explicit, evidence-backed
 manifest `rights` block records the grant evidence itself as the field
 name (`output_terms`) plus the recorded value.
 
+## Separate publication
+
+Packing writes `release.zip` into the run directory at accept time;
+publication (`engine/artifacts/publication.py`) is the step after
+that, copying the accepted bundle into a separate published area
+with its own durable record (`<base>/publications/`). It ships only
+a `succeeded` dispatch item's reviewed bytes -- the bundle must pass
+consumer verification, the run and zip digests must match the success
+report, and the publishing authority must own the item. The record
+moves `in_progress` before any copy and `complete` only after the
+destination verifies, so an interrupted publication resumes to
+identical bytes and re-publishing is a no-op; unattributed
+destination bytes and second releases for one item are refused.
+`download` verifies the bundle at the destination and removes it when
+verification fails. Corruption inside the deflated bytes is a
+`ReleaseVerificationError` refusal, never a raw decoding crash.
+
 ## Feature record
 
 This slice is registered as `F-ENGINE-REVIEWED-RELEASE` under
 `catalogue/features/engine/` (rules `Q-RELEASE-R06` and
 `Q-RELEASE-R04-MEMBERS`). The source/rights slice is registered as
 `F-ENGINE-SOURCE-RIGHTS` in the same directory (rules `Q-DATA-R08`
-and `Q-RELEASE-R04-RIGHTS`).
+and `Q-RELEASE-R04-RIGHTS`). The separate-publication slice is
+registered as `F-ENGINE-SEPARATE-PUBLICATION` in the same directory
+(rule `Q-RELEASE-PUBLICATION`).

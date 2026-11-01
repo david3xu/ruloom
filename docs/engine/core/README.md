@@ -74,6 +74,23 @@ exhaustion is never swallowed by a broad handler: the engine checks
 the budget before every model call, and the critic policy decides what
 a refusal means.
 
+## Durable dispatch
+
+`dispatch.py` coordinates *which* work runs and *who owns it*, in a
+local durable store beside the per-run history (`<base>/dispatch/`,
+one JSON record per item). Submits are idempotent (the same key
+returns the first item; cross-authority key reuse is refused), claims
+lease an item to one worker with a monotonic fencing token and an
+expiry (a live lease blocks rivals; an expired lease is
+re-dispatchable, which is the launcher-outage path), and every
+lease-holder operation must present the current token, so stale
+workers are fenced off after cancel or supersession. Cancellation and
+publication require the submitting authority; failures return the
+item to the queue until `max_retries` is spent, then it rests
+`exhausted`. Within one launcher process every claim runs under a
+per-store lock (exactly one threaded winner); every record write is
+atomic, so a crash leaves the previous record intact.
+
 ## Feature records
 
 The persistence features implemented here are registered under
@@ -87,6 +104,7 @@ test paths, and the quality rules they satisfy:
 - `F-ENGINE-BUDGET-POLICY` (audit R11, rule `Q-ENGINE-R11`).
 - `F-ENGINE-GENERATION-SPEC` (RP-07, rules `Q-ENGINE-SPEC`,
   `Q-ENGINE-EVIDENCE`).
+- `F-ENGINE-DURABLE-DISPATCH` (RP-09, rule `Q-ENGINE-DISPATCH`).
 
 ## GenerationSpec, bounded plans, and the evidence report
 

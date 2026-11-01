@@ -253,3 +253,33 @@ arms fresh with saved bytes (2 pass; 20LCDD003 and DDG007 fail
 fidelity on `repeated_depths_masked_out`; 4633554 tokens, 1220.2 s
 wall). No general pipeline-vs-baseline superiority is claimed: both
 sides are single-run stochastic samples.
+
+RP-09 closed dispatch and separate publication as local-only durable
+machinery (no platform code imported). Dispatch
+(`engine/core/dispatch.py`, rule `Q-ENGINE-DISPATCH`) holds one JSON
+record per item under `<base>/dispatch/`: idempotent submit (same key
+returns the first item; cross-authority key reuse refused),
+single-winner lease claims with expiry (live leases conflict, expired
+leases re-dispatch with the token moved on — the launcher-outage
+path, also swept by `recover`), fencing tokens refusing every stale
+lease-holder operation, owning-authority-only cancellation that
+fences off in-flight workers, and bounded retries resting
+`exhausted`. Publication (`engine/artifacts/publication.py`, rule
+`Q-RELEASE-PUBLICATION`) ships only a `succeeded` item's reviewed
+bytes into a separate area after consumer verification and digest
+and authority checks, with `in_progress`/`complete` records so an
+interrupted copy resumes to identical bytes, re-publication is a
+no-op, and unattributed destination bytes refuse loudly; `download`
+verifies at the destination and removes unverifiable bundles.
+Consumer verification now refuses undecodable bytes as
+`ReleaseVerificationError` instead of crashing. Evidence:
+`tests/engine/test_dispatch.py` (15 passed),
+`tests/engine/test_publication.py` (11 passed) plus the consumer
+bit-flip regression, and an executed `/tmp` chain
+submit → claim → tabular accept → publish → download whose downloaded
+zip hash equals the reviewed `release.sha256`
+(`f7040fc94e29e702544e2c18c302750bea5030562ef299bd4841dbe208ffc1bf`;
+artifact
+`fda9cf255638a5f3fb274b4d61971ff9a37702fc3f5042a145fb2fc3a4a318e4`),
+recorded in `docs/dispatch-publication-rp09.md`. Full pytest 500
+passed; `force_pass.py` 12/12 exit 0; golden bytes unchanged.

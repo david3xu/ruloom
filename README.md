@@ -239,8 +239,8 @@ them.
 | Path | What lives there |
 |---|---|
 | `engine/` | The generic lifecycle root (`__init__.py` re-exports only; no feature module sits flat here — FP-CODE-8) |
-| `engine/core/` | Graph execution with permission enforcement (`runner.py`), profile manifests (`manifest.py`), strict run records (`records.py`), durable per-run history (`runstore.py`) |
-| `engine/artifacts/` | Content addressing (`hashing.py`), manifest-driven frozen release packaging (`package.py`), consumer-side verification (`consumer.py`) |
+| `engine/core/` | Graph execution with permission enforcement (`runner.py`), profile manifests (`manifest.py`), strict run records (`records.py`), durable per-run history (`runstore.py`), durable dispatch with leases/fencing (`dispatch.py`) |
+| `engine/artifacts/` | Content addressing (`hashing.py`), manifest-driven frozen release packaging (`package.py`), consumer-side verification (`consumer.py`), separate publication of accepted releases (`publication.py`) |
 | `engine/audit/` | The append-only hash-chained log (`runlog.py`) |
 | `engine/cli/` | The profile runner package: `ruloom run --profile <id>` entry (`__init__.py`) plus `__main__.py` so `python -m engine.cli` works too |
 | `profiles/` | Profile registry and loader (`__init__.py`): new profiles arrive as new directories, never as engine edits |

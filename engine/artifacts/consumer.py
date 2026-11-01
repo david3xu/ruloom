@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import tempfile
 import zipfile
+import zlib
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 
@@ -50,6 +51,16 @@ REPORT_REQUIRED_FIELDS = ("artifact_name", "artifact_sha256", "verdict", "result
 
 class ReleaseVerificationError(Exception):
     """A release bundle failed consumer-side verification."""
+
+
+def _read_member(archive: zipfile.ZipFile, name: str) -> bytes:
+    """Read one bundle member; undecodable bytes are a refusal, not a crash."""
+    try:
+        return archive.read(name)
+    except (zipfile.BadZipFile, zlib.error, EOFError, OSError) as exc:
+        raise ReleaseVerificationError(
+            f"release member {name!r} cannot be decoded: refusing ({exc})"
+        ) from exc
 
 
 def _check_entry_name(name: str) -> None:
@@ -189,9 +200,13 @@ def verify_release(
             raise ReleaseVerificationError(
                 f"{archive_path} carries no {CHECKSUMS_NAME}: refusing"
             )
-        expected = _parse_checksums(
-            archive.read(CHECKSUMS_NAME).decode("utf-8")
-        )
+        try:
+            checksums_raw = _read_member(archive, CHECKSUMS_NAME).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ReleaseVerificationError(
+                f"{CHECKSUMS_NAME} is not valid UTF-8: refusing"
+            ) from exc
+        expected = _parse_checksums(checksums_raw)
         for name in names:
             if name == CHECKSUMS_NAME:
                 continue
@@ -224,7 +239,12 @@ def verify_release(
             prefix="ruloom-release-"
         ) as staging:
             stage = Path(staging)
-            archive.extractall(stage)
+            try:
+                archive.extractall(stage)
+            except (zipfile.BadZipFile, zlib.error, EOFError, OSError) as exc:
+                raise ReleaseVerificationError(
+                    f"{archive_path} cannot be extracted: refusing ({exc})"
+                ) from exc
             members: dict[str, bytes] = {}
             for name in names:
                 if name == CHECKSUMS_NAME:

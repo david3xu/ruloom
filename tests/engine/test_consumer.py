@@ -99,6 +99,18 @@ def test_byte_flip_fails(tmp_path: Path) -> None:
         verify_release(path)
 
 
+def test_bit_flip_inside_compressed_data_is_a_refusal(tmp_path: Path) -> None:
+    # Corruption inside the deflated bytes must surface as a verification
+    # refusal, never as a raw decoding crash (zlib.error/BadZipFile).
+    zip_path = _valid_release(tmp_path)
+    raw = bytearray(zip_path.read_bytes())
+    raw[100] ^= 0xFF
+    broken = tmp_path / "broken.zip"
+    broken.write_bytes(bytes(raw))
+    with pytest.raises(ReleaseVerificationError):
+        verify_release(broken)
+
+
 def test_missing_member_fails(tmp_path: Path) -> None:
     files = _files()
     remaining = {k: v for k, v in files.items() if k != "seed.txt"}
