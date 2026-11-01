@@ -1,0 +1,339 @@
+"""Unit tests for scripts/evaluate.py (fake model, fixture CSVs, no network)."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Any, Mapping
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import evaluate as evaluate_module  # noqa: E402
+from evaluate import (  # noqa: E402
+    evaluate_hole,
+    group_results,
+    parse_baseline_csv,
+    render_results_table,
+    run_baseline,
+    score_samples,
+    summarize,
+    usage_dict_tokens,
+)
+from models.base import Completion, ModelError, Usage  # noqa: E402
+from profiles.hylogger.analysis.calibration import load_thresholds  # noqa: E402
+from profiles.hylogger.analysis.statistics import Profile  # noqa: E402
+from profiles.hylogger.intake.reader import Sample  # noqa: E402
+from profiles.hylogger.validation.checks import CheckResult  # noqa: E402
+from profiles.hylogger.validation.dataset import to_csv_bytes  # noqa: E402
+
+
+@pytest.fixture()
+def thresholds():
+    return load_thresholds(REPO_ROOT / "profiles" / "hylogger" / "thresholds.json")
+
+
+@pytest.fixture()
+def source_samples():
+    samples = []
+    depth = 100.0
+    for i in range(40):
+        samples.append(
+            Sample(
+                depth_m=depth,
+                valid=(i % 4 != 0),
+                swir_group="QUARTZ" if i % 2 == 0 else None,
+                tir_group="CHLORITE" if i % 3 else None,
+            )
+        )
+        depth += 0.005 if i % 5 else 0.0
+    return samples
+
+
+@pytest.fixture()
+def profile(source_samples):
+    return Profile.from_samples(source_samples, "fixture", "0" * 64)
+
+
+class FakeModel:
+    """Fake StructuredModel returning canned CSV text (no network)."""
+
+    def __init__(self, csv_text: str):
+        self.csv_text = csv_text
+        self.model = "fake-model"
+        self.calls = 0
+
+    def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
+        self.calls += 1
+        assert "csv" in schema["properties"]
+        return Completion(
+            data={"csv": self.csv_text},
+            usage=Usage(
+                model="fake-model",
+                input_tokens=10,
+                output_tokens=20,
+                reasoning_tokens=5,
+                calls=1,
+            ),
+        )
+
+
+class RefusingModel:
+    """Fake model that always refuses (no network)."""
+
+    model = "fake-refuser"
+
+    def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
+        raise ModelError("refused")
+
+
+def _good_csv(n: int = 6) -> str:
+    samples = [
+        Sample(depth_m=100.0 + 0.005 * i, valid=True,
+               swir_group="QUARTZ", tir_group="CHLORITE")
+        for i in range(n)
+    ]
+    return to_csv_bytes(samples).decode("utf-8")
+
+
+# --- token counting ---
+
+
+def test_usage_dict_tokens_accepts_objects_and_stored_dicts():
+    usage = Usage(model="m", input_tokens=10, output_tokens=20,
+                  reasoning_tokens=5, calls=1)
+    assert usage_dict_tokens(usage) == 35
+    assert usage_dict_tokens({"input_tokens": 10, "output_tokens": 20,
+                              "reasoning_tokens": 5, "calls": 1}) == 35
+    assert usage_dict_tokens({}) == 0
+    assert usage_dict_tokens({"input_tokens": "x", "output_tokens": None}) == 0
+
+
+# --- scoring aggregation ---
+
+
+def test_group_results_pass_and_skip_counts_as_pass():
+    results = [
+        CheckResult("has_rows", "pass", "6 rows"),
+        CheckResult("spacing_median", "skip", "no data"),
+        CheckResult("swir_fidelity", "pass", "close"),
+        CheckResult("swir_vocabulary", "pass", "in vocab"),
+        CheckResult("tir_vocabulary", "pass", "in vocab"),
+    ]
+    kinds = {"spacing_median": "fidelity", "swir_fidelity": "fidelity"}
+    groups = group_results(results, kinds)
+    assert groups["constraints"]["pass"] is True
+    assert groups["fidelity"]["pass"] is True
+    assert groups["fidelity"]["n_skipped"] == 1
+    assert groups["leakage"]["pass"] is True
+    assert groups["leakage"]["n_checks"] == 2
+
+
+def test_group_results_fail_in_group_fails_group_only():
+    results = [
+        CheckResult("has_rows", "pass", "6 rows"),
+        CheckResult("swir_fidelity", "fail", "TVD too big"),
+        CheckResult("swir_vocabulary", "pass", "in vocab"),
+        CheckResult("tir_vocabulary", "fail", "unknown groups: ZZ"),
+    ]
+    kinds = {"swir_fidelity": "fidelity"}
+    groups = group_results(results, kinds)
+    # tir_vocabulary fails: it counts in constraints (its manifest kind)
+    # and in leakage (the harness operationalisation).
+    assert groups["constraints"]["pass"] is False
+    assert groups["constraints"]["failed"] == ["tir_vocabulary"]
+    assert groups["fidelity"]["pass"] is False
+    assert groups["fidelity"]["failed"] == ["swir_fidelity"]
+    assert groups["leakage"]["pass"] is False
+    assert groups["leakage"]["failed"] == ["tir_vocabulary"]
+
+
+def test_group_results_accepts_plain_json_mappings():
+    stored = [
+        {"name": "has_rows", "status": "pass"},
+        {"name": "swir_fidelity", "status": "skip"},
+    ]
+    groups = group_results(stored, {"swir_fidelity": "fidelity"})
+    assert groups["constraints"]["pass"] is True
+    assert groups["fidelity"]["pass"] is True
+
+
+def test_score_samples_mirrors_validate_step(thresholds, source_samples):
+    samples = [
+        Sample(depth_m=100.0 + 0.005 * i, valid=True,
+               swir_group="QUARTZ", tir_group="CHLORITE")
+        for i in range(8)
+    ]
+    report = score_samples(samples, thresholds, source_samples,
+                           artifact_name="fixture")
+    assert report.results[0].name == "csv_schema"
+    assert report.results[0].status == "pass"
+    assert report.verdict in ("pass", "fail")
+    assert report.artifact_name == "fixture"
+
+
+# --- baseline CSV parsing ---
+
+
+def test_parse_good_csv_returns_all_rows():
+    text = _good_csv(6)
+    samples, parsed, error = parse_baseline_csv(text, 6)
+    assert error is None
+    assert parsed == 6
+    assert samples is not None and len(samples) == 6
+
+
+def test_parse_truncated_csv_reports_zero_rows():
+    # A cut-off final row leaves a corrupt cell (csv.DictReader pads a
+    # merely short row with None, so truncation shows up as a bad cell).
+    text = "depth_m,valid,swir_group,tir_group\n100.0,tr\n"
+    samples, parsed, error = parse_baseline_csv(text, 10)
+    assert samples is None
+    assert parsed == 0
+    assert error is not None
+    assert "ValueError" in error
+
+
+def test_parse_garbage_csv_reports_error():
+    samples, parsed, error = parse_baseline_csv("hello world\n", 10)
+    assert samples is None
+    assert parsed == 0
+    assert error is not None
+
+
+def test_baseline_run_scores_and_counts_tokens(thresholds, source_samples, profile):
+    record = run_baseline(FakeModel(_good_csv(6)), profile, source_samples,
+                          thresholds, 6)
+    assert record["requested_rows"] == 6
+    assert record["parsed_rows"] == 6
+    assert record["parse_error"] is None
+    assert record["usage_tokens"] == 35  # 10 + 20 + 5
+    assert record["wall_s"] >= 0.0
+    assert record["reproducible"] is False
+    assert record["report"] is not None
+    assert "groups" not in record  # grouping happens in evaluate_hole
+
+
+def test_baseline_run_refusal_records_error(thresholds, source_samples, profile):
+    record = run_baseline(RefusingModel(), profile, source_samples,
+                          thresholds, 1000)
+    assert record["requested_rows"] == 1000
+    assert record["parsed_rows"] == 0
+    assert "ModelError" in (record["parse_error"] or "")
+    assert record["verdict"] == "error"
+    assert record["report"] is None
+
+
+def test_baseline_run_garbage_csv_records_parse_failure(
+    thresholds, source_samples, profile
+):
+    record = run_baseline(FakeModel("not a csv\n"), profile, source_samples,
+                          thresholds, 1000)
+    assert record["requested_rows"] == 1000
+    assert record["parsed_rows"] == 0
+    assert record["parse_error"] is not None
+    assert record["verdict"] == "error"
+
+
+# --- summary + table rendering ---
+
+
+def _hole_record(hole, verdict, groups_pass, extra=None):
+    arm = {
+        "verdict": verdict,
+        "groups": {
+            "constraints": {"pass": groups_pass},
+            "fidelity": {"pass": groups_pass},
+            "leakage": {"pass": groups_pass},
+        },
+        "reproducible": {"match": groups_pass},
+        "attempts_used": 1,
+        "usage_tokens": 100,
+        "wall_s": 2.5,
+    }
+    baseline = dict(arm)
+    baseline["reproducible"] = False
+    baseline.pop("attempts_used", None)
+    record = {"hole": hole, "pipeline": dict(arm), "baseline": baseline}
+    if extra:
+        record.update(extra)
+    return record
+
+
+def test_summarize_aggregates_both_arms(tmp_path):
+    records = [_hole_record("H1", "pass", True), _hole_record("H2", "fail", False)]
+    summary = summarize(records)
+    pipe, base = summary["arms"]["pipeline"], summary["arms"]["baseline"]
+    assert summary["holes"] == ["H1", "H2"]
+    assert (pipe["verdict_pass"], pipe["holes"]) == (1, 2)
+    assert (pipe["constraints_pass"], pipe["fidelity_pass"]) == (1, 1)
+    assert (pipe["leakage_pass"], pipe["reproducible"]) == (1, 1)
+    assert pipe["attempts_total"] == 2
+    assert pipe["usage_tokens_total"] == 200
+    assert base["verdict_pass"] == 1
+    assert base["reproducible"] == 0
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    loaded = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert loaded["arms"]["pipeline"]["verdict_pass"] == 1
+
+
+def test_evaluate_hole_writes_json_with_skipped_pipeline(tmp_path, monkeypatch):
+    """evaluate_hole creates a fresh out dir and writes the per-hole JSON."""
+    import shutil
+
+    staged = tmp_path / "staged"
+    sources = staged / "data" / "sources"
+    sources.mkdir(parents=True)
+    with (sources / "MINI-scalars.csv").open("w", encoding="utf-8") as handle:
+        handle.write("StartDepth,Final_Mask,Grp1_sTSAS,Grp1_sjCLST\n")
+        for i in range(40):
+            handle.write(
+                f"{100.0 + 0.005 * i},1,QUARTZ,CHLORITE\n"
+            )
+    prof_dir = staged / "profiles" / "hylogger"
+    prof_dir.mkdir(parents=True)
+    shutil.copy(
+        REPO_ROOT / "profiles" / "hylogger" / "thresholds.json",
+        prof_dir / "thresholds.json",
+    )
+    shutil.copy(
+        REPO_ROOT / "profiles" / "hylogger" / "profile.json",
+        prof_dir / "profile.json",
+    )
+    monkeypatch.setattr(evaluate_module, "REPO_ROOT", staged)
+    out_dir = tmp_path / "fresh" / "nested"
+    record = evaluate_hole(
+        "MINI",
+        max_attempts=3,
+        baseline_rows=40,
+        out_dir=out_dir,
+        model=FakeModel(_good_csv(40)),
+        run_pipeline_arm=False,
+    )
+    assert record["pipeline"] == {"skipped": True}
+    assert record["baseline"]["parsed_rows"] == 40
+    stored = json.loads((out_dir / "MINI.json").read_text(encoding="utf-8"))
+    assert stored["hole"] == "MINI"
+    assert stored["baseline"]["requested_rows"] == 40
+
+
+def test_render_results_table_from_summary_json(tmp_path):
+    records = [_hole_record("H1", "pass", True)]
+    summary = summarize(records)
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    table = render_results_table(
+        json.loads(summary_path.read_text(encoding="utf-8"))
+    )
+    assert "H1" in table
+    assert "Constraints pass" in table
+    assert "Fidelity pass" in table
+    assert "Leakage pass" in table
+    assert "Reproducible" in table
+    assert "Held-out holes pass" in table
+    assert "Attempts used (total)" in table
