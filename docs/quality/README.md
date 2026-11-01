@@ -105,6 +105,38 @@ recorded grant value) in the release manifest.
 stay planned. The full suite, the gate, and the clean-archive check pass,
 and the golden PDD446 bytes reproduce unchanged.
 
+RP-05 closed R01 and R02. Twelve required checks judge the HyLogger
+depth/missingness/label/joint-sequence slice, all source-relative or
+structural so the frozen 38-hole calibration is untouched (no band
+added, changed, or relaxed): `depth_finite` and `depth_nonnegative`
+(StartDepth metres are never negative -- minimum 0.0001 m across the
+43 measured holes); `swir_answer_fidelity`/`tir_answer_fidelity`
+(answer-rate drift beyond the source hole's own split-half delta
+plus the cross-hole p95 plus a 2/sqrt(n) finite-sample allowance, so
+the audit's 99% SWIR removal fails while single-digit-row runs survive
+sampling noise); `swir_source_vocabulary`/`tir_source_vocabulary`
+(labels the source hole never answers) and
+`swir_label_richness`/`tir_label_richness` (collapse to one label while
+the source answers two or more); `invalid_label_rate` (labelling
+invalid rows more often than the source hole does -- four real holes
+do label some invalid rows, so the rule is relative, not zero);
+`row_count_match`, `depth_start_match`, and
+`depth_end_within_requested` (the artifact carries the plan's row
+count, start, and extent, wired through the validate capability).
+A split-half TVD tolerance at the 1.0 maximum is reported unsupported
+(skip), never a fidelity pass -- measured real maximum is 0.895, so
+the skip never fires on real sources. The vacuous `swir_answer_rate`
+band stays required:false with its manifest note. Evidence:
+`tests/audit/test_r01_answer_loss.py` and
+`tests/audit/test_r02_depth_geometry.py` pass without xfail (each
+corruption fails at the responsible check); `scripts/scorecard_rp05.py`
+regenerates `docs/quality/scorecard-rp05.md` (15/15 multi-seed
+synthetics pass across PDD446 plus the four held-out holes, with one
+disclosed limitation: TIR persistence runs lower in synthetics because
+joint-conditioned draws reset TIR runs -- the generator stays
+byte-identical, so the golden PDD446 bytes reproduce unchanged).
+`Q-DATA-R01` and `Q-DATA-R02` are enforced; R03 stays open for RP-06.
+
 RP-03 closed R06 and the membership side of R04. When the run reaches
 the human gate, the engine snapshots every release candidate into a
 frozen store and records a candidate manifest (path, size, sha256,

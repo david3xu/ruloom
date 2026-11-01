@@ -276,6 +276,39 @@ def generate(ctx: Any) -> None:
     ctx.record_artifact("data.csv", "text/csv", payload)
 
 
+def _expected_geometry(ctx: Any) -> dict[str, Any] | None:
+    """The requested plan geometry for the plan-binding checks.
+
+    The plan carries the requested row count and the profile carries
+    the fitted start depth and spacing step (the same step selection
+    the seeded generator uses), so validation can refuse an artifact
+    whose row count, start depth, or end extent does not match what
+    was requested. ``None`` when the plan or profile cannot supply
+    all three numbers; the checks then skip as unsupported.
+    """
+    plan = ctx.plan()
+    stats = getattr(ctx.profile(), "stats", None)
+    if not isinstance(plan, dict) or not isinstance(stats, dict):
+        return None
+    geometry = stats.get("geometry")
+    spacing = geometry.get("spacing_m") if isinstance(geometry, dict) else None
+    step = None
+    if isinstance(spacing, dict):
+        step = spacing.get("p50") or spacing.get("mean")
+    n_rows = plan.get("n_rows")
+    start = geometry.get("depth_start_m") if isinstance(geometry, dict) else None
+    if (
+        isinstance(n_rows, bool)
+        or not isinstance(n_rows, int)
+        or not isinstance(start, (int, float))
+        or isinstance(start, bool)
+        or not isinstance(step, (int, float))
+        or isinstance(step, bool)
+    ):
+        return None
+    return {"n_rows": n_rows, "start_m": float(start), "step_m": float(step)}
+
+
 def validate(ctx: Any) -> None:
     """Read the artifact back and run the deterministic checks."""
     artifact = ctx.latest_artifact()
@@ -292,6 +325,7 @@ def validate(ctx: Any) -> None:
         samples,
         thresholds,
         source_reference=ctx.reference_stats(),
+        expected_geometry=_expected_geometry(ctx),
         artifact_name=(
             f"{meta['source_name']}:attempt-{ctx.attempt_number}"
         ),

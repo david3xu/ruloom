@@ -146,6 +146,23 @@
       "required": true
     },
     {
+      "id": "depth_finite",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      },
+      "required": true
+    },
+    {
+      "id": "depth_nonnegative",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      },
+      "required": true,
+      "note": "StartDepth metres are never negative (minimum 0.0001 m across the 43 measured holes); R02."
+    },
+    {
       "id": "spacing_median",
       "kind": "fidelity",
       "threshold": {
@@ -178,6 +195,15 @@
       "required": true
     },
     {
+      "id": "invalid_label_rate",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "split_half_reference"
+      },
+      "required": true,
+      "note": "The artifact must not label invalid rows more often than its source hole does; R01."
+    },
+    {
       "id": "swir_answer_rate",
       "kind": "fidelity",
       "threshold": {
@@ -195,6 +221,23 @@
       "required": true
     },
     {
+      "id": "swir_answer_fidelity",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "split_half_reference"
+      },
+      "required": true,
+      "note": "The SWIR band is vacuous, so severe answer loss is judged against the source hole's own rate (tolerance: source split-half delta, cross-hole p95, plus a 2/sqrt(n) finite-sample allowance); R01."
+    },
+    {
+      "id": "tir_answer_fidelity",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "split_half_reference"
+      },
+      "required": true
+    },
+    {
       "id": "swir_vocabulary",
       "kind": "constraint",
       "threshold": {
@@ -204,6 +247,40 @@
     },
     {
       "id": "tir_vocabulary",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      },
+      "required": true
+    },
+    {
+      "id": "swir_source_vocabulary",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      },
+      "required": true,
+      "note": "The artifact must not answer labels its source hole never answers; R01."
+    },
+    {
+      "id": "tir_source_vocabulary",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      },
+      "required": true
+    },
+    {
+      "id": "swir_label_richness",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      },
+      "required": true,
+      "note": "Collapse to a single label while the source answers two or more fails; R01."
+    },
+    {
+      "id": "tir_label_richness",
       "kind": "constraint",
       "threshold": {
         "source": "literal"
@@ -225,6 +302,33 @@
         "source": "split_half_reference"
       },
       "required": true
+    },
+    {
+      "id": "row_count_match",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      },
+      "required": true,
+      "note": "The artifact carries exactly the plan's requested row count; R02."
+    },
+    {
+      "id": "depth_start_match",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      },
+      "required": true,
+      "note": "The artifact starts at the profile's fitted start depth; R02."
+    },
+    {
+      "id": "depth_end_within_requested",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      },
+      "required": true,
+      "note": "The artifact end stays within the requested start-plus-step-times-rows extent; R02."
     },
     {
       "id": "csv_schema",

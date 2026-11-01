@@ -9,6 +9,7 @@ tolerance) is recorded as a skip, never as a pass. The report verdict is
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
@@ -23,6 +24,43 @@ from ..intake.reader import Sample
 
 PASS, FAIL, SKIP = "pass", "fail", "skip"
 
+#: A split-half TVD tolerance at the mathematical maximum carries no
+#: information: every marginal is within 1.0 of every other, so no
+#: composition can fail. Fidelity against such a source is reported
+#: unsupported (skip), never a pass. Measured across the 43 real holes
+#: the largest split-half TVD is 0.895, so this skip never fires on
+#: real sources -- only on pathological fixtures.
+TVD_VACUOUS_TOLERANCE = 1.0
+
+#: Slack for the requested-extent bound below. Synthetic depths
+#: accumulate ``start + k * step`` in float arithmetic, so the final
+#: depth can sit a few ULPs above the exact requested end; 1e-6 m is
+#: orders of magnitude below any real spacing step while covering the
+#: worst-case accumulation over the manifest row maximum.
+END_FLOAT_EPS_M = 1e-6
+
+
+def _source_labels(samples: Sequence[Sample], channel: str) -> frozenset:
+    """Distinct answered labels on valid rows."""
+    key = f"{channel}_group"
+    return frozenset(
+        getattr(s, key) for s in samples if s.valid and getattr(s, key) is not None
+    )
+
+
+def _invalid_label_rate(samples: Sequence[Sample]) -> float | None:
+    """Fraction of invalid rows carrying any group label.
+
+    ``None`` when the artifact has no invalid rows (nothing to judge).
+    """
+    invalid = [s for s in samples if not s.valid]
+    if not invalid:
+        return None
+    labelled = sum(
+        1 for s in invalid if s.swir_group is not None or s.tir_group is not None
+    )
+    return labelled / len(invalid)
+
 
 def source_fidelity_reference(
     source_samples: Sequence[Sample],
@@ -32,11 +70,14 @@ def source_fidelity_reference(
     The engine hands only statistics views to capabilities without raw
     access, so the granted profiling step computes these once from the
     source samples: per-channel full-source marginals plus the
-    split-half tolerance. The numbers are identical to the ones the
+    split-half tolerance, the source answer rate with its split-half
+    delta, the source answered-label set, and the source
+    invalid-label rate. The numbers are identical to the ones the
     checks would compute inline from the same samples.
     """
     source = list(source_samples)
     first, second = source[: len(source) // 2], source[len(source) // 2 :]
+    hole = hole_scalars(source)
     reference: dict[str, dict[str, Any]] = {}
     for channel in ("swir", "tir"):
         key = f"{channel}_group"
@@ -47,7 +88,13 @@ def source_fidelity_reference(
         reference[channel] = {
             "marginals": channel_marginals(source, key),
             "tolerance": tolerance,
+            "answer_rate": hole.summary[f"{channel}_answer_rate"],
+            "answer_rate_tolerance": hole.split_half_delta[
+                f"{channel}_answer_rate"
+            ],
+            "labels": sorted(_source_labels(source, channel)),
         }
+    reference["invalid_label_rate"] = _invalid_label_rate(source)
     return reference
 
 
@@ -134,16 +181,48 @@ def _band_check(name: str, value: float | None, lo: float, hi: float) -> CheckRe
     return CheckResult(name, FAIL, f"{value} outside [{lo}, {hi}]", position)
 
 
+def _source_channel(
+    reference: Mapping[str, Any] | None, channel: str
+) -> Mapping[str, Any] | None:
+    """The per-channel source reference mapping, or ``None`` when absent."""
+    if not isinstance(reference, Mapping):
+        return None
+    ref = reference.get(channel)
+    return ref if isinstance(ref, Mapping) else None
+
+
+def _expected_number(
+    expected: Mapping[str, Any] | None, key: str
+) -> float | None:
+    """A finite requested-geometry number, or ``None`` when not plannable."""
+    if not isinstance(expected, Mapping):
+        return None
+    value = expected.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
 def run_checks(
     samples: Sequence[Sample],
     thresholds: Thresholds,
     *,
     source_samples: Sequence[Sample] | None = None,
     source_reference: Mapping[str, Any] | None = None,
+    expected_geometry: Mapping[str, Any] | None = None,
     artifact_name: str = "",
     artifact_sha256: str = "",
 ) -> CheckReport:
-    """Run schema, invariant-band and fidelity checks on samples."""
+    """Run schema, invariant-band and fidelity checks on samples.
+
+    ``source_reference`` (or, failing that, ``source_samples``) carries
+    the source hole's own answer rates, label sets and split-half
+    tolerances; without either, the source-relative checks report
+    ``skip`` (unsupported), never a pass. ``expected_geometry``
+    optionally binds the requested plan geometry (``n_rows``,
+    ``start_m``, ``step_m``); without it the plan-binding checks skip.
+    """
     samples = list(samples)
     sha = artifact_sha256 or hashlib.sha256(to_csv_bytes(samples)).hexdigest()
     report = CheckReport(artifact_name=artifact_name, artifact_sha256=sha)
@@ -153,6 +232,9 @@ def run_checks(
         add(CheckResult("has_rows", FAIL, "empty artifact"))
         return report
     add(CheckResult("has_rows", PASS, f"{len(samples)} rows"))
+
+    if source_reference is None and source_samples is not None:
+        source_reference = source_fidelity_reference(source_samples)
 
     observed = hole_scalars(samples).summary
     bands = thresholds.bands
@@ -172,6 +254,26 @@ def run_checks(
             )
         )
 
+    n_non_finite = sum(1 for s in samples if not math.isfinite(s.depth_m))
+    if n_non_finite == 0:
+        add(CheckResult("depth_finite", PASS, "all depths finite"))
+    else:
+        add(CheckResult(
+            "depth_finite", FAIL, f"{n_non_finite} non-finite depths"))
+
+    n_negative = sum(
+        1 for s in samples if math.isfinite(s.depth_m) and s.depth_m < 0
+    )
+    if n_negative == 0:
+        add(CheckResult(
+            "depth_nonnegative", PASS,
+            "all depths use the documented nonnegative convention"))
+    else:
+        add(CheckResult(
+            "depth_nonnegative", FAIL,
+            f"{n_negative} negative depths (documented convention: "
+            "StartDepth metres are never negative)"))
+
     add(_band_check("spacing_median", observed["spacing_median_m"],
                     bands["spacing_median_m"].lo, bands["spacing_median_m"].hi))
     add(_band_check("repeated_depth_fraction", observed["repeated_depth_fraction"],
@@ -189,6 +291,30 @@ def run_checks(
                         bands["repeated_valid_fraction"].lo,
                         bands["repeated_valid_fraction"].hi))
 
+    artifact_invalid_rate = _invalid_label_rate(samples)
+    if artifact_invalid_rate is None:
+        add(CheckResult("invalid_label_rate", PASS, "no invalid rows"))
+    elif not isinstance(source_reference, Mapping):
+        add(CheckResult("invalid_label_rate", SKIP,
+                        "no source samples provided"))
+    else:
+        source_rate = source_reference.get("invalid_label_rate")
+        if not isinstance(source_rate, (int, float)) or isinstance(
+            source_rate, bool
+        ):
+            add(CheckResult("invalid_label_rate", SKIP,
+                            "source cannot establish invalid-label rate"))
+        elif artifact_invalid_rate <= float(source_rate):
+            add(CheckResult(
+                "invalid_label_rate", PASS,
+                f"invalid-label rate {artifact_invalid_rate:.6f} <= source "
+                f"{float(source_rate):.6f}"))
+        else:
+            add(CheckResult(
+                "invalid_label_rate", FAIL,
+                f"invalid-label rate {artifact_invalid_rate:.6f} > source "
+                f"{float(source_rate):.6f}"))
+
     for channel in ("swir", "tir"):
         band = bands[f"{channel}_answer_rate"]
         if band.vacuous:
@@ -197,6 +323,57 @@ def run_checks(
         else:
             add(_band_check(f"{channel}_answer_rate", observed[f"{channel}_answer_rate"],
                             band.lo, band.hi))
+
+    for channel in ("swir", "tir"):
+        name = f"{channel}_answer_fidelity"
+        ref = _source_channel(source_reference, channel)
+        if ref is None:
+            add(CheckResult(name, SKIP, "no source samples provided"))
+            continue
+        source_rate = ref.get("answer_rate")
+        delta = ref.get("answer_rate_tolerance")
+        if (
+            not isinstance(source_rate, (int, float))
+            or isinstance(source_rate, bool)
+            or not isinstance(delta, (int, float))
+            or isinstance(delta, bool)
+        ):
+            add(CheckResult(
+                name, SKIP, "source cannot establish answer-rate tolerance"))
+            continue
+        # Tolerance is three measured terms: the source hole's own
+        # split-half delta (its spatial heterogeneity), the cross-hole
+        # p95 widening from the frozen calibration, and a finite-sample
+        # allowance for the artifact. A Bernoulli rate over n valid rows
+        # has standard error at most 0.5/sqrt(n), so 2/sqrt(n) covers
+        # four sigma of sampling noise: without it, single-digit-row
+        # runs fail on sampling luck (drift 0.29 at n=7) while the
+        # audit's severe removal (drift 0.99 at n=1200) still fails
+        # with a factor-two margin.
+        n_valid = sum(1 for s in samples if s.valid)
+        tolerance = (
+            abs(float(delta))
+            + thresholds.split_half_p95.get(f"{channel}_answer_rate", 0.0)
+            + (2.0 / math.sqrt(n_valid) if n_valid else float("inf"))
+        )
+        observed_rate = observed[f"{channel}_answer_rate"]
+        if observed_rate is None:
+            add(CheckResult(name, SKIP, "no valid rows to compare"))
+            continue
+        drift = abs(float(observed_rate) - float(source_rate))
+        position = band_position(drift, 0.0, tolerance)
+        if drift <= tolerance:
+            add(CheckResult(
+                name, PASS,
+                f"answer-rate drift {drift:.6f} <= {tolerance:.6f}",
+                position,
+            ))
+        else:
+            add(CheckResult(
+                name, FAIL,
+                f"answer-rate drift {drift:.6f} > {tolerance:.6f}",
+                position,
+            ))
 
     labels = {
         channel: {getattr(s, channel) for s in samples if getattr(s, channel) is not None}
@@ -216,33 +393,75 @@ def run_checks(
                             f"{len(labels[f'{channel}_group'])} {channel} groups in vocabulary"))
 
     for channel in ("swir", "tir"):
-        name = f"{channel}_fidelity"
-        if source_reference is not None:
-            # Statistics view computed by the granted profiling step from
-            # the same source samples; the numbers below are identical to
-            # the inline path. No raw source reaches this capability.
-            channel_ref = source_reference.get(channel)
-            if not isinstance(channel_ref, Mapping):
-                add(CheckResult(name, SKIP, "no source samples provided"))
-                continue
-            source_marginals = channel_ref.get("marginals")
-            tolerance = channel_ref.get("tolerance")
+        name = f"{channel}_source_vocabulary"
+        ref = _source_channel(source_reference, channel)
+        artifact_labels = _source_labels(samples, channel)
+        if ref is None:
+            add(CheckResult(name, SKIP, "no source samples provided"))
         else:
-            if source_samples is None:
-                add(CheckResult(name, SKIP, "no source samples provided"))
-                continue
-            source = list(source_samples)
-            first, second = (
-                source[: len(source) // 2], source[len(source) // 2 :]
-            )
-            tolerance = marginal_tvd(
-                channel_marginals(first, f"{channel}_group"),
-                channel_marginals(second, f"{channel}_group"),
-            )
-            source_marginals = channel_marginals(source, f"{channel}_group")
+            raw_labels = ref.get("labels")
+            if not isinstance(raw_labels, list) or any(
+                not isinstance(label, str) for label in raw_labels
+            ):
+                add(CheckResult(
+                    name, SKIP, "source cannot establish label support"))
+            else:
+                source_labels = set(raw_labels)
+                foreign = sorted(artifact_labels - source_labels)
+                if not foreign:
+                    add(CheckResult(
+                        name, PASS,
+                        f"{len(artifact_labels)} {channel} groups answered "
+                        "by the source"))
+                else:
+                    shown = ", ".join(foreign[:5])
+                    add(CheckResult(
+                        name, FAIL,
+                        f"foreign {channel} groups the source never "
+                        f"answers: {shown}"))
+        name = f"{channel}_label_richness"
+        ref = _source_channel(source_reference, channel)
+        if ref is None:
+            add(CheckResult(name, SKIP, "no source samples provided"))
+        else:
+            raw_labels = ref.get("labels")
+            if not isinstance(raw_labels, list) or any(
+                not isinstance(label, str) for label in raw_labels
+            ):
+                add(CheckResult(
+                    name, SKIP, "source cannot establish label support"))
+            elif len(artifact_labels) == 1 and len(set(raw_labels)) >= 2:
+                only = sorted(artifact_labels)[0]
+                add(CheckResult(
+                    name, FAIL,
+                    f"vocabulary collapse: only {only!r} answers while the "
+                    f"source answers {len(set(raw_labels))} {channel} groups"))
+            else:
+                add(CheckResult(
+                    name, PASS,
+                    f"{len(artifact_labels)} {channel} groups answer"))
+
+    for channel in ("swir", "tir"):
+        name = f"{channel}_fidelity"
+        # Statistics view computed by the granted profiling step from
+        # the same source samples (or, failing that, built inline from
+        # source_samples above); the numbers are identical either way.
+        # No raw source reaches this capability.
+        channel_ref = _source_channel(source_reference, channel)
+        if channel_ref is None:
+            add(CheckResult(name, SKIP, "no source samples provided"))
+            continue
+        source_marginals = channel_ref.get("marginals")
+        tolerance = channel_ref.get("tolerance")
         if tolerance is None:
             add(CheckResult(name, SKIP,
                             "source cannot establish split-half tolerance"))
+            continue
+        if tolerance >= TVD_VACUOUS_TOLERANCE:
+            add(CheckResult(
+                name, SKIP,
+                f"source split-half tolerance {tolerance:.6f} is vacuous: "
+                "composition unfalsifiable for this source"))
             continue
         distance = marginal_tvd(
             channel_marginals(samples, f"{channel}_group"),
@@ -263,6 +482,55 @@ def run_checks(
                 name, FAIL, f"TVD {distance:.6f} > {tolerance:.6f}",
                 band_position(distance, 0.0, tolerance),
             ))
+
+    n_expected = _expected_number(expected_geometry, "n_rows")
+    n_int = (
+        int(n_expected)
+        if n_expected is not None and n_expected.is_integer()
+        and n_expected >= 1
+        else None
+    )
+    if n_int is None:
+        add(CheckResult("row_count_match", SKIP, "no requested row count"))
+    elif len(samples) == n_int:
+        add(CheckResult(
+            "row_count_match", PASS, f"{len(samples)} rows as requested"))
+    else:
+        add(CheckResult(
+            "row_count_match", FAIL,
+            f"{len(samples)} rows, requested {n_int}"))
+
+    start_expected = _expected_number(expected_geometry, "start_m")
+    if start_expected is None:
+        add(CheckResult("depth_start_match", SKIP, "no requested start"))
+    elif samples[0].depth_m == start_expected:
+        add(CheckResult(
+            "depth_start_match", PASS,
+            f"start {samples[0].depth_m} as requested"))
+    else:
+        add(CheckResult(
+            "depth_start_match", FAIL,
+            f"start {samples[0].depth_m}, requested {start_expected}"))
+
+    step_expected = _expected_number(expected_geometry, "step_m")
+    if n_int is None or start_expected is None or step_expected is None:
+        add(CheckResult(
+            "depth_end_within_requested", SKIP, "no requested geometry"))
+    else:
+        bound = (
+            start_expected
+            + step_expected * (n_int - 1)
+            + END_FLOAT_EPS_M
+        )
+        end = samples[-1].depth_m
+        if end <= bound:
+            add(CheckResult(
+                "depth_end_within_requested", PASS,
+                f"end {end} within requested extent {bound}"))
+        else:
+            add(CheckResult(
+                "depth_end_within_requested", FAIL,
+                f"end {end} beyond requested extent {bound}"))
     return report
 
 

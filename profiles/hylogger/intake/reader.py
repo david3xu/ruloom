@@ -10,6 +10,13 @@ Source column mapping (column order varies between files, names do not):
 - ``Grp1 sTSAS`` -> SWIR group label
 - ``Grp1 sjCLST`` -> TIR group label
 
+Depth convention: ``StartDepth`` metres are never negative. Measured
+over all 43 real holes (5 sources plus 38 calibration) the minimum
+depth is 0.0001 m; the ``depth_nonnegative`` validation check refuses
+any artifact with a negative depth, and the ``depth_finite`` check
+refuses non-finite depths (the parser already drops unusable source
+depth cells, including NaN and infinities).
+
 Cells that carry no answer -- empty, ``null``, ``INVALID``, ``ASPECTRAL``,
 ``NOTAROK`` (any letter case, surrounding whitespace ignored) -- become
 ``None``. Rows without a usable depth are dropped.

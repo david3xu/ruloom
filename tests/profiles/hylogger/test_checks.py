@@ -39,12 +39,24 @@ def _base() -> list[Sample]:
 
 
 def test_clean_artifact_passes() -> None:
-    report = run_checks(_base(), _thresholds(), source_samples=_base(),
-                        artifact_name="base")
+    report = run_checks(
+        _base(), _thresholds(), source_samples=_base(),
+        expected_geometry={"n_rows": 8, "start_m": 10.0, "step_m": 0.0078},
+        artifact_name="base")
     assert report.verdict == "pass"
     assert report.failed == []
     assert report.skipped == ["swir_answer_rate"]  # vacuous band
     assert len(report.artifact_sha256) == 64
+    for name in (
+        "depth_finite", "depth_nonnegative", "invalid_label_rate",
+        "swir_answer_fidelity", "tir_answer_fidelity",
+        "swir_source_vocabulary", "tir_source_vocabulary",
+        "swir_label_richness", "tir_label_richness",
+        "row_count_match", "depth_start_match",
+        "depth_end_within_requested",
+    ):
+        assert next(
+            r for r in report.results if r.name == name).status == "pass"
 
 
 def test_skip_is_not_pass() -> None:
@@ -130,6 +142,132 @@ def test_fidelity_skip_without_source() -> None:
     assert {r.name for r in report.results if r.status == "skip"} >= {
         "swir_answer_rate", "swir_fidelity", "tir_fidelity"}
     assert report.verdict == "pass"
+
+
+def test_rp05_checks_skip_without_source_or_plan() -> None:
+    """Source-relative and plan-binding checks skip (never pass) unevidenced."""
+    report = run_checks(_base(), _thresholds())
+    skipped = {r.name for r in report.results if r.status == "skip"}
+    assert skipped >= {
+        "swir_answer_rate",
+        "invalid_label_rate",
+        "swir_answer_fidelity", "tir_answer_fidelity",
+        "swir_source_vocabulary", "tir_source_vocabulary",
+        "swir_label_richness", "tir_label_richness",
+        "swir_fidelity", "tir_fidelity",
+        "row_count_match", "depth_start_match",
+        "depth_end_within_requested",
+    }
+    # Absolute depth checks need no source and still judge.
+    assert next(
+        r for r in report.results if r.name == "depth_finite").status == "pass"
+    assert next(
+        r for r in report.results if r.name == "depth_nonnegative").status == "pass"
+    assert report.verdict == "pass"
+
+
+def test_non_finite_and_negative_depths_fail() -> None:
+    bad = list(_base())
+    bad[0] = Sample(depth_m=float("inf"), valid=True,
+                    swir_group="A", tir_group="X")
+    bad[1] = Sample(depth_m=-3.25, valid=True,
+                    swir_group="B", tir_group="X")
+    report = run_checks(bad, _thresholds(), source_samples=_base())
+    assert report.verdict == "fail"
+    assert "depth_finite" in report.failed
+    assert "depth_nonnegative" in report.failed
+
+
+def test_vacuous_fidelity_tolerance_skips_never_passes() -> None:
+    """A split-half tolerance of 1.0 is unsupported, not a fidelity pass."""
+    first = [
+        Sample(depth_m=1.0 + i * 0.005, valid=True,
+               swir_group="A", tir_group="X")
+        for i in range(4)
+    ]
+    second = [
+        Sample(depth_m=2.0 + i * 0.005, valid=True,
+               swir_group="B", tir_group="X")
+        for i in range(4)
+    ]
+    source = first + second
+    report = run_checks(source, _thresholds(), source_samples=source)
+    swir_fid = next(r for r in report.results if r.name == "swir_fidelity")
+    assert swir_fid.status == "skip"
+    assert "vacuous" in swir_fid.detail
+
+
+def test_source_reference_path_matches_samples_path() -> None:
+    """The granted statistics view judges identically to inline samples."""
+    from profiles.hylogger.validation.checks import source_fidelity_reference
+
+    reference = source_fidelity_reference(_base())
+    direct = run_checks(_base(), _thresholds(), source_samples=_base())
+    via_ref = run_checks(_base(), _thresholds(), source_reference=reference)
+    assert via_ref.verdict == direct.verdict == "pass"
+    assert [(r.name, r.status) for r in via_ref.results] == [
+        (r.name, r.status) for r in direct.results]
+
+
+def test_invalid_label_rate_is_source_relative() -> None:
+    """Invalid labelling fails only above the source hole's own rate."""
+    source = [
+        Sample(depth_m=10.0 + i * 0.0078, valid=(i != 3),
+               swir_group=None, tir_group=None)
+        for i in range(8)
+    ]
+    assert "invalid_label_rate" not in [
+        r.name for r in run_checks(
+            source, _thresholds(), source_samples=source).results
+        if r.status == "fail"
+    ]
+    bad = list(source)
+    bad[3] = Sample(depth_m=bad[3].depth_m, valid=False,
+                    swir_group="A", tir_group="X")
+    report = run_checks(bad, _thresholds(), source_samples=source)
+    assert report.verdict == "fail"
+    assert "invalid_label_rate" in report.failed
+
+
+def test_foreign_label_and_collapse_fail() -> None:
+    bad = list(_base())
+    bad[1] = Sample(depth_m=bad[1].depth_m, valid=True,
+                    swir_group="ZZZ", tir_group="X")
+    report = run_checks(bad, _thresholds(), source_samples=_base())
+    assert "swir_source_vocabulary" in report.failed
+    collapsed = [
+        Sample(depth_m=s.depth_m, valid=s.valid,
+               swir_group=("A" if s.swir_group else None),
+               tir_group=s.tir_group)
+        for s in _base()
+    ]
+    report = run_checks(collapsed, _thresholds(), source_samples=_base())
+    assert report.verdict == "fail"
+    assert "swir_label_richness" in report.failed
+
+
+def test_geometry_binding_variants() -> None:
+    expected = {"n_rows": 8, "start_m": 10.0, "step_m": 0.0078}
+    report = run_checks(_base(), _thresholds(), source_samples=_base(),
+                        expected_geometry=expected)
+    assert report.verdict == "pass"
+    short = run_checks(_base()[:4], _thresholds(), source_samples=_base(),
+                       expected_geometry=expected)
+    assert "row_count_match" in short.failed
+    moved = [
+        Sample(depth_m=s.depth_m + 1.0, valid=s.valid,
+               swir_group=s.swir_group, tir_group=s.tir_group)
+        for s in _base()
+    ]
+    report = run_checks(moved, _thresholds(), source_samples=_base(),
+                        expected_geometry=expected)
+    assert "depth_start_match" in report.failed
+    # Malformed plan context degrades to skip, never to a pass-or-fail claim.
+    report = run_checks(_base(), _thresholds(), source_samples=_base(),
+                        expected_geometry={"n_rows": "eight"})
+    assert {r.name for r in report.results if r.status == "skip"} >= {
+        "row_count_match", "depth_start_match",
+        "depth_end_within_requested"}
 
 
 def test_fidelity_skip_when_source_cannot_establish() -> None:
