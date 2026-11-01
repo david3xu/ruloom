@@ -63,3 +63,53 @@ def test_generated_artifact_passes_checks() -> None:
         artifact_name="generate-test", artifact_sha256=hashlib.sha256(payload).hexdigest(),
     )
     assert report.verdict == "pass", [r for r in report.results if r.status == "fail"]
+
+
+def test_synthetic_png_is_byte_deterministic() -> None:
+    """Same image statistics + same seed give identical PNG bytes."""
+    from profiles.hylogger.imaging.generate import (
+        make_fixture_png,
+        synthesize,
+    )
+    from profiles.hylogger.imaging.statistics import compute_statistics
+
+    payload = make_fixture_png(
+        24, 12, [(200, 30, 30), (30, 200, 30), (30, 30, 200), (220, 220, 220)]
+    )
+    stats = compute_statistics(payload, "fixture.png").to_dict()
+    first = synthesize(stats, 7)
+    second = synthesize(stats, 7)
+    assert hashlib.sha256(first).hexdigest() == hashlib.sha256(second).hexdigest()
+    assert first[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_synthetic_png_seed_sensitivity() -> None:
+    """Different seeds give different PNG bytes (seed matters)."""
+    from profiles.hylogger.imaging.generate import (
+        make_fixture_png,
+        synthesize,
+    )
+    from profiles.hylogger.imaging.statistics import compute_statistics
+
+    payload = make_fixture_png(
+        24, 12, [(200, 30, 30), (30, 200, 30), (30, 30, 200), (220, 220, 220)]
+    )
+    stats = compute_statistics(payload, "fixture.png").to_dict()
+    assert synthesize(stats, 7) != synthesize(stats, 8)
+
+
+def test_synthetic_png_matches_dimensions() -> None:
+    """The synthetic image honours the reference dimensions."""
+    from profiles.hylogger.imaging.codec import decode_png
+    from profiles.hylogger.imaging.generate import (
+        make_fixture_png,
+        synthesize,
+    )
+    from profiles.hylogger.imaging.statistics import compute_statistics
+
+    payload = make_fixture_png(
+        20, 12, [(10, 10, 10), (120, 60, 200), (45, 200, 90), (250, 240, 230)]
+    )
+    stats = compute_statistics(payload, "fixture.png").to_dict()
+    width, height, _rows = decode_png(synthesize(stats, 3))
+    assert (width, height) == (20, 12)

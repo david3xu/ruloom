@@ -44,7 +44,9 @@ any `FAIL`.
   `__init__.py` and `capabilities.py` as manifest/wiring at a profile
   root). Engine features live in `core/`, `artifacts/`, `audit/`, `cli/`;
   profile features live in `intake/`, `analysis/`, `generation/`,
-  `validation/`.
+  `validation/` (plus `imaging/` for the HyLogger image extension:
+  `codec.py`, `intake.py`, `statistics.py`, `generate.py`, `checks.py`,
+  `critic.py`).
 
 ## Review
 

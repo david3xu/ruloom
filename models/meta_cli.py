@@ -36,7 +36,12 @@ class MuseCLIModel:
     cli: str = "muse"
     timeout_s: float = 1200.0
 
-    def _argv(self, schema_file: str, prompt: str) -> list[str]:
+    def _argv(
+        self,
+        schema_file: str,
+        prompt: str,
+        image_paths: "list[str | Path] | None" = None,
+    ) -> list[str]:
         argv = [
             self.cli,
             "exec",
@@ -48,10 +53,27 @@ class MuseCLIModel:
             "--output-schema",
             schema_file,
         ]
+        for image_path in image_paths or []:
+            argv += ["--image", str(image_path)]
         if self.allowed_root is not None:
             argv += ["--workspace", str(self.allowed_root)]
         argv += ["--contributor-mode", "on" if self.contributor else "off", prompt]
         return argv
+
+    def _run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        """Run one ``muse exec`` argv; transport failures raise ModelError."""
+        try:
+            return subprocess.run(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=self.timeout_s,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ModelError(f"muse exec timed out: {exc}") from exc
+        except OSError as exc:
+            raise ModelError(f"muse exec failed to start: {exc}") from exc
 
     def complete(
         self, prompt: str, schema: Mapping[str, Any]
@@ -64,22 +86,41 @@ class MuseCLIModel:
             json.dump(schema_dict, handle)
             schema_file = handle.name
         try:
-            argv = self._argv(schema_file, prompt)
-            try:
-                proc = subprocess.run(
-                    argv,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=self.timeout_s,
-                )
-            except subprocess.TimeoutExpired as exc:
-                raise ModelError(f"muse exec timed out: {exc}") from exc
-            except OSError as exc:
-                raise ModelError(f"muse exec failed to start: {exc}") from exc
+            proc = self._run(self._argv(schema_file, prompt))
         finally:
             Path(schema_file).unlink(missing_ok=True)
+        return self._parse(proc, schema_dict)
 
+    def complete_with_image(
+        self,
+        prompt: str,
+        schema: Mapping[str, Any],
+        image_path: str | Path,
+    ) -> Completion:
+        """Run ``prompt`` with one attached image under ``schema``.
+
+        The image is attached with ``muse exec --image <PATH>``; callers
+        must only ever attach rendered synthetic artifacts, never raw
+        source imagery. Parsing, usage, and errors match :meth:`complete`.
+        """
+        if not Path(image_path).is_file():
+            raise ModelError(f"image file not found: {image_path}")
+        schema_dict = dict(schema)
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as handle:
+            json.dump(schema_dict, handle)
+            schema_file = handle.name
+        try:
+            proc = self._run(self._argv(schema_file, prompt, [image_path]))
+        finally:
+            Path(schema_file).unlink(missing_ok=True)
+        return self._parse(proc, schema_dict)
+
+    def _parse(
+        self, proc: "subprocess.CompletedProcess[str]", schema_dict: dict
+    ) -> Completion:
+        """Parse ``muse exec`` JSONL output into a structured Completion."""
         if proc.returncode != 0:
             tail = (proc.stderr or "").strip()[-2000:]
             raise ModelError(f"muse exec exited {proc.returncode}: {tail}")

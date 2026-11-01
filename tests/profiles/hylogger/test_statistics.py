@@ -9,6 +9,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from profiles.hylogger.validation.dataset import read_csv_bytes, to_csv_bytes
 from profiles.hylogger.intake.reader import Sample, read_scalar_csv
 from profiles.hylogger.analysis.statistics import Profile, build_stats
@@ -182,3 +184,56 @@ def test_profile_survives_synthetic_csv_round_trip() -> None:
     samples = _toy_samples()
     replayed = read_csv_bytes(to_csv_bytes(samples))
     assert build_stats(replayed) == build_stats(samples)
+
+
+def test_image_statistics_from_fixture_png() -> None:
+    """Image statistics are code-only: histograms, means, texture, strips."""
+    from profiles.hylogger.imaging.generate import make_fixture_png
+    from profiles.hylogger.imaging.statistics import (
+        N_BINS,
+        N_STRIPS,
+        compute_statistics,
+    )
+
+    payload = make_fixture_png(
+        16, 8, [(200, 30, 30), (30, 200, 30), (30, 30, 200), (220, 220, 220)]
+    )
+    stats = compute_statistics(payload, "fixture.png")
+    assert (stats.width, stats.height) == (16, 8)
+    for channel in ("r", "g", "b"):
+        assert len(stats.histograms[channel]) == N_BINS
+        assert sum(stats.histograms[channel]) == 16 * 8
+    assert len(stats.strips) == N_STRIPS
+    assert stats.strips[0]["mean_r"] == 200.0
+    assert stats.strips[0]["mean_g"] == 30.0
+    # Solid-colour strips carry no within-strip texture.
+    assert stats.texture_h == {"r": 0.0, "g": 0.0, "b": 0.0}
+    assert stats.texture_v == {"r": 0.0, "g": 0.0, "b": 0.0}
+    assert stats.sha256 == hashlib.sha256(payload).hexdigest()
+
+
+def test_image_statistics_reject_jpeg_without_decoder() -> None:
+    """JPEG has no stdlib decoder: statistics raise instead of guessing."""
+    from profiles.hylogger.imaging.statistics import compute_statistics
+
+    with pytest.raises(ValueError):
+        compute_statistics(b"\xff\xd8\xff\xe0fake", "photo.jpg", "image/jpeg")
+
+
+def test_image_statistics_survive_dict_round_trip() -> None:
+    from profiles.hylogger.imaging.generate import make_fixture_png
+    from profiles.hylogger.imaging.statistics import (
+        ImageStats,
+        compute_statistics,
+        summarize_for_prompt,
+    )
+
+    payload = make_fixture_png(
+        8, 8, [(10, 20, 30), (40, 50, 60), (70, 80, 90), (100, 110, 120)]
+    )
+    stats = compute_statistics(payload, "fixture.png")
+    replayed = ImageStats.from_dict(stats.to_dict())
+    assert replayed.to_dict() == stats.to_dict()
+    summary = summarize_for_prompt(stats)
+    assert summary["width"] == 8
+    assert len(summary["strips"]) == 4

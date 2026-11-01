@@ -154,3 +154,89 @@ def test_fidelity_fail_beyond_source_tolerance() -> None:
     assert swir_fid.status == "fail"
     tir_fid = next(r for r in report.results if r.name == "tir_fidelity")
     assert tir_fid.status == "pass"
+
+
+def _image_reference():
+    from profiles.hylogger.imaging.generate import make_fixture_png
+    from profiles.hylogger.imaging.statistics import compute_statistics
+
+    payload = make_fixture_png(
+        24, 12, [(200, 30, 30), (30, 200, 30), (30, 30, 200), (220, 220, 220)]
+    )
+    return compute_statistics(payload, "fixture.png")
+
+
+def test_image_checks_pass_for_fitted_synthetic() -> None:
+    """A synthetic fitted to the reference passes all three image checks."""
+    from profiles.hylogger.imaging.checks import (
+        HISTOGRAM_DISTANCE_MAX,
+        run_image_checks,
+    )
+    from profiles.hylogger.imaging.generate import synthesize
+
+    reference = _image_reference()
+    synthetic = synthesize(reference.to_dict(), 7)
+    report = run_image_checks(
+        reference, synthetic, artifact_name="synthetic.png"
+    )
+    assert report.verdict == "pass", [
+        (r.name, r.status, r.detail) for r in report.results
+    ]
+    assert [r.name for r in report.results] == [
+        "image_histogram_distance",
+        "image_dimensions",
+        "image_strip_alignment",
+    ]
+    distance = next(
+        r for r in report.results if r.name == "image_histogram_distance"
+    )
+    assert "literal" in distance.detail
+    assert float(distance.detail.split()[0]) <= HISTOGRAM_DISTANCE_MAX
+
+
+def test_image_checks_fail_for_foreign_synthetic() -> None:
+    """A synthetic fitted to other statistics fails the distance check."""
+    from profiles.hylogger.imaging.checks import run_image_checks
+    from profiles.hylogger.imaging.generate import (
+        make_fixture_png,
+        synthesize,
+    )
+    from profiles.hylogger.imaging.statistics import compute_statistics
+
+    reference = _image_reference()
+    other = compute_statistics(
+        make_fixture_png(
+            24, 12, [(5, 5, 5), (250, 5, 5), (5, 250, 5), (5, 5, 250)]
+        ),
+        "other.png",
+    )
+    synthetic = synthesize(other.to_dict(), 7)
+    report = run_image_checks(
+        reference, synthetic, artifact_name="synthetic.png"
+    )
+    assert report.verdict == "fail"
+    assert "image_histogram_distance" in report.failed
+
+
+def test_image_checks_fail_for_wrong_dimensions() -> None:
+    """A synthetic with different dimensions fails the dimension check."""
+    from profiles.hylogger.imaging.checks import run_image_checks
+    from profiles.hylogger.imaging.generate import (
+        make_fixture_png,
+        synthesize,
+    )
+    from profiles.hylogger.imaging.statistics import compute_statistics
+
+    reference = _image_reference()
+    small = compute_statistics(
+        make_fixture_png(
+            12, 6, [(200, 30, 30), (30, 200, 30), (30, 30, 200), (220, 220, 220)]
+        ),
+        "small.png",
+    )
+    synthetic = synthesize(small.to_dict(), 7)
+    report = run_image_checks(
+        reference, synthetic, artifact_name="synthetic.png"
+    )
+    assert report.verdict == "fail"
+    assert "image_dimensions" in report.failed

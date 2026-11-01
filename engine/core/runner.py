@@ -209,6 +209,11 @@ class RunContext:
         return self._runner.source
 
     @property
+    def images_dir(self) -> Path | None:
+        """Optional directory of companion source files (``None`` unset)."""
+        return self._runner.images_dir
+
+    @property
     def out_dir(self) -> Path:
         """Base output directory for run artifacts."""
         return self._runner.out
@@ -262,6 +267,7 @@ class _Runner:
         out: Path,
         say: Callable[[str], None],
         ask: Callable[[str], str],
+        images_dir: Path | None = None,
     ) -> None:
         if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
             raise TypeError(
@@ -277,6 +283,13 @@ class _Runner:
         self.manifest = manifest
         self.registry = dict(registry)
         self.source = source
+        if images_dir is not None:
+            images_dir = Path(images_dir)
+            if not images_dir.is_dir():
+                raise RunnerError(
+                    f"images directory not found: {images_dir}"
+                )
+        self.images_dir = images_dir
         self.max_attempts = max_attempts
         self.model_factory = model_factory
         self.out = out
@@ -300,6 +313,11 @@ class _Runner:
                 "source": str(source),
                 "max_attempts": max_attempts,
                 "out": str(out),
+                **(
+                    {"images_dir": str(images_dir)}
+                    if images_dir is not None
+                    else {}
+                ),
             },
             limits=dict(manifest.limits),
         )
@@ -513,6 +531,7 @@ def execute(
     out: Path,
     say: Callable[[str], None] | None = None,
     ask: Callable[[str], str] | None = None,
+    images_dir: Path | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """Execute a manifest graph; return (exit code, outcome summary).
 
@@ -548,6 +567,7 @@ def execute(
         out=Path(out),
         say=_say,
         ask=_ask,
+        images_dir=images_dir,
     )
     runner.log.append("run_start", "ok", {"run": runner.run.to_dict()})
     gate_id = ""

@@ -22,7 +22,12 @@ from ..core.runner import execute
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """CLI parser: ``ruloom run [--profile ID] SOURCE --max-attempts N``."""
+    """CLI parser: ``ruloom run [--profile ID] SOURCE --max-attempts N``.
+
+    ``--images DIR`` is optional: a directory of companion image files
+    for profiles declaring image capabilities. Without it the run is
+    unchanged (no image step does any work).
+    """
     parser = argparse.ArgumentParser(prog="ruloom")
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="run a profile synthesis lifecycle")
@@ -44,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--out",
         default=".",
         help="base output directory (artifact goes to <out>/runs/<sha>/)",
+    )
+    run.add_argument(
+        "--images",
+        default=None,
+        help="optional directory of companion image files",
     )
     return parser
 
@@ -114,6 +124,7 @@ def main(
             max_attempts=args.max_attempts,
             model_factory=factory,
             out=Path(args.out),
+            images_dir=Path(args.images) if args.images is not None else None,
         )
         return code
     return 1

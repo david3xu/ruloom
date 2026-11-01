@@ -54,6 +54,21 @@ AuScope). Only summary statistics and check results derived from the data
 are committed, plus the synthetic outputs the run releases. Full provenance
 statement: `docs/provenance.md`.
 
+Core imagery is a separate, optional source. Real HyLogger core images
+live in the TSG packages behind the same NVCL node (scalar service above
+serves values only; imagery downloads come from the NVCL imagery service,
+and the `pytsg` package reads TSG files). No image files are committed
+here and none were available locally when the machinery was built, so the
+image extension is proven on deterministic fixture PNGs only — no claim
+about real images is made. To run with real imagery, export the tray
+images to PNG and point `ruloom run --profile hylogger SOURCE --images DIR`
+at the directory (one `*-source.json` sibling manifest per image for
+licence/attribution, same pattern as the scalars). JPEG files are
+inventoried at intake but carry no statistics (no stdlib JPEG decoder);
+only PNG is decoded, statistics are computed by code, the synthetic
+render is seeded code fitted to those statistics, and a vision model may
+look at the synthetic render as an advisory critic only.
+
 ## Status
 
 New work, written fresh for the Meta Global AI Developer Hackathon
@@ -89,6 +104,7 @@ the HyLogger profile and the common tabular profile
 | `engine/cli/` | The profile runner package: `ruloom run --profile <id>` entry (`__init__.py`) plus `__main__.py` so `python -m engine.cli` works too |
 | `profiles/` | Profile registry and loader (`__init__.py`): new profiles arrive as new directories, never as engine edits |
 | `profiles/hylogger/` | The first domain profile: `profile.json` (manifest: capabilities, permissions, checks, graph), `thresholds.json`, `capabilities.py` (manifest step implementations); features in `intake/` (`reader.py`), `analysis/` (`statistics.py`, `calibration.py`), `generation/` (`generate.py`, `plan.py`, `repair.py`), `validation/` (`checks.py`, `dataset.py`) |
+| `profiles/hylogger/imaging/` | The HyLogger image extension (optional `--images DIR` branch after validate, before the human gate): `codec.py` (stdlib PNG encode/decode), `intake.py` (image hashing/attribution), `statistics.py` (code-only histograms/texture/strips), `generate.py` (seeded synthetic PNGs), `checks.py` (deterministic image checks), `critic.py` (advisory vision note over synthetic renders only) |
 | `profiles/tabular/` | The second profile (common CSV proof): same root wiring (`profile.json`, `thresholds.json`, `capabilities.py`); features in `intake/` (`reader.py`), `analysis/` (`statistics.py`, `calibration.py`), `generation/` (`generate.py`, `plan.py`), `validation/` (`checks.py`, `dataset.py`) |
 | `models/` | Model adapters — the only code that talks to a model (`base.py`, `meta_cli.py`) |
 | `tests/` | Mirrors the tree: `tests/engine/`, `tests/profiles/hylogger/`, `tests/profiles/tabular/` (one `test_<feature>.py` per feature module), gate tests at the root |
