@@ -263,7 +263,7 @@ def test_images_end_to_end_releases_with_advisory_note(
         (artifact / "image-validation.json").read_text(encoding="utf-8")
     )
     assert image_report["verdict"] == "pass"
-    assert len(image_report["results"]) == 3
+    assert len(image_report["results"]) == 5
     run_log = RunLog.read_jsonl(artifact / "run.jsonl")
     assert run_log.verify()
     advisories = [

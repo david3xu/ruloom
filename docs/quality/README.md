@@ -156,3 +156,22 @@ are enforced; the rights/claims side of R04 stays open as
 `Q-RELEASE-R04-RIGHTS` for RP-06, and the section-9 rules stay
 planned. The full suite, the gate, and the clean-archive check pass,
 and the golden PDD446 bytes reproduce unchanged.
+
+RP-06 closed R03, schematic-only. One shared scene record (sample
+id, depth interval, image id, pixel row band, orientation) drives
+both the table view and the image view, and the image checks prove
+registration in both directions: `image_strip_order` rejects
+reversed and interleaved strips by ordered per-strip mean agreement
+(literal 32.0 band; fitted synthetics drift by <1 unit while the
+audit fixtures differ by 50+), and `image_scene_alignment`
+validates the scene record itself (missing region, out-of-bounds,
+duplicate/missing sample, wrong order/orientation, geometry
+mismatch all fail) with the scene geometry bound to both the
+reference and the candidate. The scene ships inside the existing
+`image-statistics.json` member, so release membership is unchanged
+and consumer verification still passes. Schematic-only: the bands
+are the encoder's own strip layout with schematic depths, never
+measured core-photo alignment; real NVCL core-photo registration is
+unclaimed (`docs/quality/image-registration-rp06.md`).
+`Q-DATA-R03` is enforced. The PDD446 golden bytes reproduce
+unchanged.

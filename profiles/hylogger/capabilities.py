@@ -55,6 +55,7 @@ from .imaging.checks import run_image_checks
 from .imaging.critic import critique_synthetic
 from .imaging.generate import synthesize as synthesize_image
 from .imaging.intake import inventory_images
+from .imaging.scene import build_schematic_scene
 from .imaging.statistics import (
     ImageStats,
     read_statistics,
@@ -414,7 +415,13 @@ def image_intake(ctx: Any) -> None:
 
 
 def image_synthesize(ctx: Any) -> None:
-    """Render the synthetic PNG from reference statistics and plan seed."""
+    """Render the synthetic PNG from reference statistics and plan seed.
+
+    Also builds the shared schematic scene record (one entry per
+    strip: sample id, schematic depth interval, image id, pixel band,
+    orientation) that the table and image views both derive from;
+    schematic-only, never a real core-photo claim.
+    """
     bundle = ctx.companion()
     reference = bundle.get("reference")
     if reference is None:
@@ -424,6 +431,11 @@ def image_synthesize(ctx: Any) -> None:
     payload = synthesize_image(reference, int(seed))
     artifact = ctx.record_artifact("synthetic.png", "image/png", payload)
     bundle["image_artifact_sha"] = artifact.sha256
+    records = bundle.get("records") or []
+    image_id = records[0]["name"] if records else "synthetic.png"
+    bundle["scene"] = build_schematic_scene(
+        reference, image_id
+    ).to_dict()
     ctx.set_companion(bundle)
     ctx.event(
         "image_synthesize",
@@ -453,6 +465,7 @@ def image_validate(ctx: Any) -> None:
         payload,
         artifact_name="synthetic.png",
         artifact_sha256=sha,
+        scene=bundle.get("scene"),
     )
     bundle["report"] = report.to_dict()
     ctx.set_companion(bundle)
@@ -557,6 +570,8 @@ def package_artifact(ctx: Any) -> None:
                 {
                     "reference": bundle.get("reference"),
                     "skipped": bundle.get("skipped", []),
+                    "scene": bundle.get("scene"),
+                    "schematic_only": True,
                 },
                 indent=2,
                 sort_keys=True,

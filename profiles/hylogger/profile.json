@@ -365,6 +365,27 @@
       },
       "required": true,
       "applicable_when": "images_present"
+    },
+    {
+      "id": "image_strip_order",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "literal",
+        "max_mean_abs": 32.0
+      },
+      "required": true,
+      "applicable_when": "images_present",
+      "note": "Ordered per-strip mean agreement; reversed/interleaved strips fail even when unordered histograms match; R03 schematic-only."
+    },
+    {
+      "id": "image_scene_alignment",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      },
+      "required": true,
+      "applicable_when": "images_present",
+      "note": "Shared schematic scene record validates with no missing/out-of-bounds/duplicate/order defect and matches reference/candidate geometry; R03 schematic-only, never a real core-photo claim."
     }
   ],
   "release": {

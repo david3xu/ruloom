@@ -330,6 +330,8 @@ def test_image_checks_pass_for_fitted_synthetic() -> None:
         "image_histogram_distance",
         "image_dimensions",
         "image_strip_alignment",
+        "image_strip_order",
+        "image_scene_alignment",
     ]
     distance = next(
         r for r in report.results if r.name == "image_histogram_distance"
