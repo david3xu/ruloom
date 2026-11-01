@@ -16,6 +16,11 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PDD446 = REPO_ROOT / "data" / "sources" / "PDD446-scalars.csv"
 THRESHOLDS = REPO_ROOT / "profiles" / "hylogger" / "thresholds.json"
 
+requires_source_data = pytest.mark.skipif(
+    not PDD446.is_file(),
+    reason="requires git-ignored NVCL source data under data/ (absent in clean checkout)",
+)
+
 
 def _pdd446_profile() -> Profile:
     samples = read_scalar_csv(PDD446)
@@ -24,12 +29,14 @@ def _pdd446_profile() -> Profile:
     )
 
 
+@requires_source_data
 def test_determinism_same_seed_identical_bytes() -> None:
     profile = _pdd446_profile()
     plan = {"seed": 446, "n_rows": 2000}
     assert generate(profile, plan) == generate(profile, plan)
 
 
+@requires_source_data
 def test_different_seed_differs() -> None:
     profile = _pdd446_profile()
     first = generate(profile, {"seed": 446, "n_rows": 2000})
@@ -37,6 +44,7 @@ def test_different_seed_differs() -> None:
     assert first != second
 
 
+@requires_source_data
 def test_plan_validation() -> None:
     profile = _pdd446_profile()
     with pytest.raises(ValueError):
@@ -51,6 +59,7 @@ def test_plan_validation() -> None:
         generate(profile, {"seed": 446})
 
 
+@requires_source_data
 def test_generated_artifact_passes_checks() -> None:
     profile = _pdd446_profile()
     payload = generate(profile, {"seed": 446, "n_rows": 5000})

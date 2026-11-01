@@ -2,9 +2,9 @@
 
 **Synthetic data, woven from reality. Backed by evidence.**
 
-A plain-language dataset requirement becomes reproducible synthetic data,
-calibrated against real data, proven by executed checks, delivered as a CC0
-package with its evidence.
+A supported source profile becomes reproducible synthetic data,
+calibrated against real data, proven by executed checks, and delivered
+with its evidence under the terms recorded in each release.
 
 Synthetic data is easy to generate and hard to trust. Ruloom's answer is
 calibration: quality thresholds are derived from how real datasets differ from
@@ -29,7 +29,8 @@ Every design decision in this repository traces to one of these.
 Two consequences that are easy to violate by accident:
 
 - **No raw source rows ever reach a model.** The profile stage passes summary
-  statistics only — a leakage control and a licence control at once.
+  statistics only — a scoping control, not an anonymity guarantee (see
+  Supported scope below).
 - **If repair attempts are exhausted, the run stops and reports the failing
   checks.** It never ships as passing.
 
@@ -171,6 +172,23 @@ the HyLogger profile and the common tabular profile
 .venv/bin/ruloom run --profile tabular <source>.csv --max-attempts 3
 ```
 
+## Supported scope
+
+The supported product is the categorical scalar profile (HyLogger
+scalars and the common tabular profile): seeded generation from
+statistics, deterministic checks, and a human-gated release. Image
+support is fixture-proven machinery that renders procedural schematics
+from statistics; it is not registered core photography and proves no
+sample-to-image alignment. There is no dispatch, lease, or publication
+service in this tree — the CLI runs one local lifecycle. The CLI takes
+a source file and options, not a plain-language requirement, and there
+is no requirement-clarification step. Statistics-only prompts limit
+what a model sees; they are not an anonymity guarantee. Output terms
+are recorded per release (`provenance.md` plus the release manifest);
+no blanket licence promise is made here. Historical results in
+`docs/results.md` stay tied to the revisions and runs that produced
+them.
+
 ## Layout
 
 | Path | What lives there |
@@ -186,4 +204,4 @@ the HyLogger profile and the common tabular profile
 | `profiles/tabular/` | The second profile (common CSV proof): same root wiring (`profile.json`, `thresholds.json`, `capabilities.py`); features in `intake/` (`reader.py`), `analysis/` (`statistics.py`, `calibration.py`), `generation/` (`generate.py`, `plan.py`), `validation/` (`checks.py`, `dataset.py`) |
 | `models/` | Model adapters — the only code that talks to a model (`base.py`, `meta_cli.py`, `glimmer.py` — local OpenAI-compatible text adapter; role bindings select it with `"adapter": "glimmer_local"`) |
 | `tests/` | Mirrors the tree: `tests/engine/`, `tests/profiles/hylogger/`, `tests/profiles/tabular/` (one `test_<feature>.py` per feature module), gate tests at the root |
-| `runs/` | Run artifacts, addressed by SHA-256 |
+| `runs/` | Run artifacts, addressed by SHA-256 (generated at runtime, git-ignored — absent in a fresh clone) |

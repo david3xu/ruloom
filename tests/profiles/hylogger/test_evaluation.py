@@ -11,6 +11,8 @@ import glob
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from profiles.hylogger.analysis.calibration import load_thresholds
 from profiles.hylogger.validation.checks import run_checks
 from profiles.hylogger.intake.reader import Sample, read_scalar_csv
@@ -18,6 +20,11 @@ from profiles.hylogger.intake.reader import Sample, read_scalar_csv
 REPO_ROOT = Path(__file__).resolve().parents[3]
 THRESHOLDS = REPO_ROOT / "profiles" / "hylogger" / "thresholds.json"
 HD012 = REPO_ROOT / "data" / "sources" / "HD012-scalars.csv"
+
+pytestmark = pytest.mark.skipif(
+    not HD012.is_file(),
+    reason="requires git-ignored NVCL source data under data/ (absent in clean checkout)",
+)
 
 
 def _all_hole_paths() -> list[str]:

@@ -106,8 +106,18 @@ def test_script_entry_point_passes() -> None:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
-    assert len(lines) == 12
-    assert all("PASS" in line for line in lines)
+    fp_lines = [line for line in lines if line.startswith("FP-")]
+    assert len(fp_lines) == 12
+    assert all("PASS" in line for line in fp_lines)
+    registry_lines = [line for line in lines if line.startswith("REGISTRY")]
+    assert len(registry_lines) == 1
+    assert "v1" in registry_lines[0]
+    q_lines = [line for line in lines if line.startswith("Q-")]
+    assert len(q_lines) == 12
+    assert all(
+        "OPEN_FINDING" in line or "ENFORCED" in line or "PLANNED" in line
+        for line in q_lines
+    )
 
 
 # --- planted violations must fail --------------------------------------------
@@ -441,6 +451,71 @@ def test_planted_enabled_reporter_fails(tmp_path: Path) -> None:
     ok, evidence = gate.check_code10(tmp_path)
     assert not ok
     assert "reporter" in evidence
+
+
+def test_registry_loads_and_covers_every_fp_rule() -> None:
+    payload = gate.load_registry(REPO_ROOT)
+    assert payload is not None
+    assert payload.get("version") == 1
+    by_id = {rule["id"]: rule for rule in payload["rules"]}
+    for rule_id, _ in gate.CHECKS:
+        assert rule_id in by_id, rule_id
+        assert by_id[rule_id]["status"] == "enforced"
+        assert by_id[rule_id]["checker"].startswith("scripts/force_pass.py:")
+
+
+def test_registry_maps_every_audit_finding() -> None:
+    payload = gate.load_registry(REPO_ROOT)
+    assert payload is not None
+    q_rules = [rule for rule in payload["rules"] if rule["id"].startswith("Q-")]
+    refs = sorted(rule.get("audit_ref") for rule in q_rules)
+    assert refs == [f"R{i:02d}" for i in range(1, 13)]
+    for rule in q_rules:
+        assert rule["status"] in ("enforced", "open_finding", "planned")
+        for field in (
+            "id", "scope", "requirement", "checker", "positive_fixture",
+            "violation_fixture", "required_proof", "owner", "status",
+        ):
+            assert field in rule, (rule.get("id"), field)
+        if rule["status"] == "open_finding":
+            assert rule["audit_ref"] is not None
+
+
+def test_registry_implemented_checkers_exist() -> None:
+    payload = gate.load_registry(REPO_ROOT)
+    assert payload is not None
+    for rule in payload["rules"]:
+        if not rule.get("checker_implemented"):
+            continue
+        checker = str(rule["checker"])
+        target, _, _ = checker.partition(":")
+        assert (REPO_ROOT / target).exists(), checker
+
+
+def test_registry_layout_marks_runs_generated() -> None:
+    kinds = gate.registry_layout_kinds(REPO_ROOT)
+    assert kinds is not None
+    assert kinds.get("runs/") == "generated"
+    assert all(kind in ("tracked", "generated") for kind in kinds.values())
+
+
+def test_generated_layout_path_passes_without_existing(tmp_path: Path) -> None:
+    _write(tmp_path, "README.md", "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n")
+    _write(tmp_path, ".gitignore", "runs/\n")
+    _write(
+        tmp_path,
+        "docs/quality/rules.json",
+        '{"version": 1, "layout": [{"path": "runs/", "kind": "generated"}]}',
+    )
+    ok, evidence = gate.check_doc1(tmp_path)
+    assert ok, evidence
+
+
+def test_missing_registry_keeps_old_doc1_behaviour(tmp_path: Path) -> None:
+    # Without a registry every Layout path is treated as tracked.
+    _write(tmp_path, "README.md", "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n")
+    ok, _ = gate.check_doc1(tmp_path)
+    assert not ok
 
 
 def test_planted_engine_max_attempts_default_fails(tmp_path: Path) -> None:

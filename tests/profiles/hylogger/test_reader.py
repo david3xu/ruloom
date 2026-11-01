@@ -16,6 +16,11 @@ from profiles.hylogger.intake.reader import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PDD446 = REPO_ROOT / "data" / "sources" / "PDD446-scalars.csv"
 
+requires_source_data = pytest.mark.skipif(
+    not PDD446.is_file(),
+    reason="requires git-ignored NVCL source data under data/ (absent in clean checkout)",
+)
+
 
 def _write_csv(path: Path, header: list[str], rows: list[list[str]]) -> Path:
     with open(path, "w", newline="") as handle:
@@ -107,6 +112,7 @@ def test_missing_column_raises(tmp_path: Path) -> None:
         read_scalar_csv(path)
 
 
+@requires_source_data
 def test_pdd446_reads_and_normalizes() -> None:
     samples = read_scalar_csv(PDD446)
     assert len(samples) == 39300

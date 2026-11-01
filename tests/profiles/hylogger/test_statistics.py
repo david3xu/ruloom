@@ -19,6 +19,11 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PDD446 = REPO_ROOT / "data" / "sources" / "PDD446-scalars.csv"
 PDD446_MANIFEST = REPO_ROOT / "data" / "sources" / "PDD446-source.json"
 
+requires_source_data = pytest.mark.skipif(
+    not PDD446.is_file(),
+    reason="requires git-ignored NVCL source data under data/ (absent in clean checkout)",
+)
+
 
 def _toy_samples() -> list[Sample]:
     return [
@@ -113,6 +118,7 @@ def _json_floats(node: object) -> list[float]:
     return found
 
 
+@requires_source_data
 def test_pdd446_profile_has_no_source_depth_value() -> None:
     samples = read_scalar_csv(PDD446)
     source_depths = {s.depth_m for s in samples}
@@ -161,6 +167,7 @@ def test_pdd446_profile_has_no_source_depth_value() -> None:
         assert cell not in text, f"raw depth cell leaks: {cell!r}"
 
 
+@requires_source_data
 def test_pdd446_summary() -> None:
     samples = read_scalar_csv(PDD446)
     profile = Profile.from_samples(

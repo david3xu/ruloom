@@ -26,6 +26,59 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+REGISTRY_REL = Path("docs/quality/rules.json")
+
+
+def load_registry(root: Path) -> dict | None:
+    """Load the versioned rule registry (single source of rule metadata).
+
+    Returns the parsed payload, or None when the file is missing or
+    invalid. Callers that only enrich evidence fall back to the
+    pre-registry behaviour; the aggregate gate treats a missing or
+    invalid registry as a failure.
+    """
+    path = root / REGISTRY_REL
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def registry_layout_kinds(root: Path) -> dict[str, str] | None:
+    """Map README Layout path -> 'tracked' | 'generated', or None."""
+    payload = load_registry(root)
+    if payload is None:
+        return None
+    layout = payload.get("layout")
+    if not isinstance(layout, list):
+        return None
+    kinds: dict[str, str] = {}
+    for entry in layout:
+        if not isinstance(entry, dict):
+            continue
+        path = entry.get("path")
+        if isinstance(path, str):
+            kinds[path] = entry.get("kind", "tracked")
+    return kinds
+
+
+def registry_q_rules(root: Path) -> list[dict] | None:
+    """Q-group stub entries (R01-R12) in registry order, or None."""
+    payload = load_registry(root)
+    if payload is None:
+        return None
+    rules = payload.get("rules")
+    if not isinstance(rules, list):
+        return None
+    return [
+        rule
+        for rule in rules
+        if isinstance(rule, dict) and str(rule.get("id", "")).startswith("Q-")
+    ]
+
 PRODUCT_DIRS = ("engine", "models", "profiles")
 PROFILES_DIR = Path("profiles")
 TESTS_DIR = Path("tests")
@@ -93,8 +146,55 @@ def _rel(path: Path, root: Path) -> str:
     return path.relative_to(root).as_posix()
 
 
+def _gitignore_entries(root: Path) -> list[str]:
+    """Raw non-comment patterns from .gitignore (prefix match fallback)."""
+    ignore_file = root / ".gitignore"
+    try:
+        lines = ignore_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    entries: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Narrow fallback: single top-level names only.
+        if "/" in stripped.strip("/"):
+            continue
+        core = stripped.lstrip("/").rstrip("/")
+        if core.endswith("*"):
+            core = core.rstrip("*").rstrip("/")
+        if core:
+            entries.append(core)
+    return entries
+
+
+def _is_ignored(root: Path, rel: str) -> bool:
+    """True when a Layout path is covered by .gitignore (generated output)."""
+    proc = subprocess.run(
+        ["git", "-C", str(root), "check-ignore", "-q", "--", rel.rstrip("/")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 0:
+        return True
+    if proc.returncode == 1:
+        return False
+    # No git metadata (clean archive): fall back to prefix matching.
+    top = rel.strip("/").split("/")[0]
+    return top in _gitignore_entries(root)
+
+
 def check_doc1(root: Path) -> tuple[bool, str]:
-    """FP-DOC-1: every path named in the README Layout table exists."""
+    """FP-DOC-1: tracked Layout paths exist; generated ones are ignored.
+
+    Kinds come from the registry layout table (``tracked`` vs
+    ``generated``). Without a registry every path is treated as tracked,
+    which is the pre-registry behaviour. ``runs/`` is generated
+    runtime output: the gate requires it to be git-ignored and never
+    requires it to exist, so a fresh clone without ``runs/`` passes.
+    """
     text = (root / "README.md").read_text(encoding="utf-8")
     section = text.split("## Layout", 1)[1] if "## Layout" in text else ""
     paths: list[str] = []
@@ -109,10 +209,27 @@ def check_doc1(root: Path) -> tuple[bool, str]:
             paths.append(match.group(1))
     if not paths:
         return False, "no Layout table paths found in README.md"
-    missing = [p for p in paths if not (root / p).exists()]
+    kinds = registry_layout_kinds(root)
+    missing = [
+        p
+        for p in paths
+        if (kinds is None or kinds.get(p, "tracked") == "tracked")
+        and not (root / p).exists()
+    ]
     if missing:
         return False, "missing paths: " + ", ".join(missing)
+    generated = [p for p in paths if kinds is not None and kinds.get(p) == "generated"]
+    unignored = [p for p in generated if not _is_ignored(root, p)]
+    if unignored:
+        return False, "generated paths must be git-ignored: " + ", ".join(unignored)
     shown = ", ".join(paths)
+    if generated:
+        return (
+            True,
+            f"Layout paths ok ({len(paths) - len(generated)} tracked exist; "
+            f"generated ignored, existence not required: {', '.join(generated)}; "
+            f"all: {shown})",
+        )
     return True, f"Layout paths exist ({len(paths)}/{len(paths)}: {shown})"
 
 
@@ -345,8 +462,22 @@ def check_code5(root: Path, tracked: list[str] | None = None) -> tuple[bool, str
 
     ``tracked`` injects the file list (tests simulate a tracked data path
     without touching git); None reads the real ``git ls-files`` output.
+    Without git metadata (a clean archive has no ``.git`` directory) the
+    check falls back to scanning the working tree for ``data/`` paths.
     """
-    files = list(tracked) if tracked is not None else _tracked_files(root)
+    via = "git ls-files"
+    if tracked is not None:
+        files = list(tracked)
+        via = "injected list"
+    else:
+        try:
+            files = _tracked_files(root)
+        except RuntimeError:
+            data_top = root / "data"
+            files = []
+            if data_top.exists():
+                files = ["data/ present in working tree (no git metadata to consult)"]
+            via = "working-tree scan (no git metadata)"
     data_paths = [f for f in files if f == "data" or f.startswith("data/")]
     has_rule = _gitignore_has_data_rule(root)
     problems: list[str] = []
@@ -356,7 +487,7 @@ def check_code5(root: Path, tracked: list[str] | None = None) -> tuple[bool, str
         problems.append("no data/ rule in .gitignore")
     if problems:
         return False, "; ".join(problems)
-    return True, f"no data/ path tracked ({len(files)} files); .gitignore data/ rule present"
+    return True, f"no data/ path tracked ({len(files)} files via {via}); .gitignore data/ rule present"
 
 
 def check_code6(root: Path) -> tuple[bool, str]:
@@ -653,6 +784,32 @@ def main(argv: list[str] | None = None) -> int:
     for rule_id, ok, evidence in results:
         print(f"{rule_id}: {'PASS' if ok else 'FAIL'} — {evidence}")
         if not ok:
+            failed += 1
+    payload = load_registry(root)
+    if payload is None:
+        print(f"REGISTRY {REGISTRY_REL}: FAIL — missing or invalid registry")
+        return 1
+    version = payload.get("version")
+    q_rules = registry_q_rules(root) or []
+    counts: dict[str, int] = {}
+    for rule in q_rules:
+        status = str(rule.get("status", "unknown"))
+        counts[status] = counts.get(status, 0) + 1
+    enforced = sum(
+        1 for rule in payload.get("rules", []) if rule.get("status") == "enforced"
+    )
+    summary = ", ".join(f"{count} {status}" for status, count in sorted(counts.items()))
+    print(
+        f"REGISTRY {REGISTRY_REL} v{version}: "
+        f"{enforced} enforced incl. FP rules; Q stubs: {summary or 'none'}"
+    )
+    for rule in q_rules:
+        status = str(rule.get("status", "unknown")).upper()
+        audit_ref = rule.get("audit_ref")
+        ref = f" (audit {audit_ref})" if audit_ref else ""
+        checker = rule.get("checker", "?")
+        print(f"{rule.get('id')}: {status}{ref} — checker {checker}")
+        if status not in ("ENFORCED", "OPEN_FINDING", "PLANNED"):
             failed += 1
     return 1 if failed else 0
 
