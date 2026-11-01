@@ -53,26 +53,46 @@ def build_repair_prompt(
     profile: Profile,
     failed: Sequence[CheckResult],
     current_plan: Mapping[str, Any],
+    supported_options: Mapping[str, Any] | None = None,
 ) -> str:
     """Build the repair prompt for failed checks.
 
-    Only failed-check JSON, the current plan, and the disclosed profile
-    statistics are included; no raw source rows or depths are ever
-    embedded.
+    Only failed-check JSON, the current plan, the supported corrective
+    options, and the disclosed profile statistics are included; no raw
+    source rows or depths are ever embedded. The revised plan must stay
+    inside the supported options: the prompt carries the allowed
+    strategies and bounds, never free-text reinvention.
     """
     failed_payload = [
         {"name": result.name, "status": result.status, "detail": result.detail}
         for result in failed
     ]
-    return (
+    prompt = (
         "The previous generation plan failed checks. Propose a revised plan.\n"
         "Reply with a JSON object with exactly two keys:\n"
         '- "seed": any integer (the deterministic seed for the generator).\n'
         '- "n_rows": a positive integer count of rows to generate.\n'
+    )
+    if supported_options is not None and supported_options.get("strategies"):
+        prompt += (
+            'Optionally, "strategy": one of '
+            f"{list(supported_options['strategies'])!r} naming the "
+            "generation strategy. Omit it to keep the run's own strategy. "
+            "No other keys are accepted.\n"
+        )
+    prompt += (
         "Failed checks (JSON):\n"
         + json.dumps(failed_payload, sort_keys=True, indent=2)
         + "\nCurrent plan (JSON):\n"
         + json.dumps(dict(current_plan), sort_keys=True)
+    )
+    if supported_options is not None:
+        prompt += (
+            "\nSupported corrective options (choose only within these):\n"
+            + json.dumps(dict(supported_options), sort_keys=True, indent=2)
+        )
+    return (
+        prompt
         + "\nProfile statistics (the only source-derived content):\n"
         + profile.to_disclosed_json()
     )
@@ -86,6 +106,8 @@ def repair(
     model: StructuredModel,
     *,
     max_attempts: int,
+    allowed_strategies: Any = None,
+    supported_options: Mapping[str, Any] | None = None,
 ) -> RepairResult:
     """Generate, check, and repair a synthetic hole.
 
@@ -93,7 +115,9 @@ def repair(
     number of generation attempts (initial plan plus repairs). The first
     attempt uses ``initial_plan`` without calling the model. Each failing
     attempt (while attempts remain) triggers one model call for a revised
-    plan, validated with :func:`plan.validate_plan`.
+    plan, validated with :func:`plan.validate_plan` against
+    ``allowed_strategies`` when given. The repair prompt carries only
+    the failed measured properties plus ``supported_options``.
     """
     if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
         raise TypeError(
@@ -105,7 +129,9 @@ def repair(
         raise TypeError(
             f"profile must be a Profile, got {type(profile).__name__}"
         )
-    current_plan = plan_module.validate_plan(initial_plan)
+    current_plan = plan_module.validate_plan(
+        initial_plan, allowed_strategies=allowed_strategies
+    )
 
     source_list = list(source_samples)
     history: list[Attempt] = []
@@ -145,9 +171,13 @@ def repair(
         if attempt_number == max_attempts:
             break
         failed_results = [r for r in report.results if r.status == "fail"]
-        prompt = build_repair_prompt(profile, failed_results, current_plan)
+        prompt = build_repair_prompt(
+            profile, failed_results, current_plan, supported_options
+        )
         completion = model.complete(prompt, plan_module.PLAN_SCHEMA)
-        current_plan = plan_module.validate_plan(completion.data)
+        current_plan = plan_module.validate_plan(
+            completion.data, allowed_strategies=allowed_strategies
+        )
         pending_usage = completion.usage
 
     assert report is not None

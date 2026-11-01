@@ -146,6 +146,10 @@ def test_generic_path_matches_compat_path(
     for name in ("data.csv", "plan.json", "validation-report.json",
                  "seed.txt"):
         assert (compat / name).read_bytes() == (generic / name).read_bytes()
+    for name in ("data.csv", "plan.json", "validation-report.json",
+                 "seed.txt", "evidence-report.md"):
+        assert (compat / name).is_file()
+        assert (generic / name).is_file()
     # checksums.sha256 also attests run.jsonl, which carries the per-run
     # id, so only the lines for the identical members match across runs.
     def attested(artifact: Path) -> dict[str, str]:
@@ -186,6 +190,7 @@ def test_generic_path_matches_compat_path(
                     "seed.txt",
                     "provenance.md",
                     "run.jsonl",
+                    "evidence-report.md",
                     "checksums.sha256",
                 ]
             )

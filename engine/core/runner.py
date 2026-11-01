@@ -45,6 +45,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .manifest import (
+    ENGINE_REPORT_MEMBER,
+    ENGINE_REPORT_SOURCE,
     HOSTED_ADAPTER,
     LOCAL_ADAPTER,
     MAX_ATTEMPTS_BINDING,
@@ -59,7 +61,7 @@ from .records import (
     Run,
     VALID_CHECK_STATUSES,
 )
-from .runstore import RunStore
+from .runstore import RunStore, record_refusal
 from .verdict import (
     CONDITION_IMAGES_PRESENT,
     applicable_required_ids,
@@ -358,6 +360,14 @@ class RunContext:
         """Immutable copy of the manifest limits bounding plans."""
         return self._engine.plan_bounds()
 
+    def spec_record(self) -> dict[str, Any]:
+        """Immutable copy of the normalised GenerationSpec for this run."""
+        return self._engine.spec_record()
+
+    def spec_digest(self) -> str:
+        """Canonical SHA-256 of the normalised GenerationSpec."""
+        return self._engine.spec_digest_value()
+
     def selected_plan(self) -> dict[str, Any]:
         """Immutable copy of the engine-selected attempt's plan.
 
@@ -595,6 +605,8 @@ class _Runner:
         local_critic: bool = False,
         role_bindings: Mapping[str, Mapping[str, Any]] | None = None,
         role_binding_sources: Mapping[str, Mapping[str, str]] | None = None,
+        spec: Mapping[str, Any] | None = None,
+        spec_digest: str | None = None,
     ) -> None:
         if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
             raise TypeError(
@@ -607,6 +619,24 @@ class _Runner:
             raise RunnerError(
                 f"registry is missing capabilities: {', '.join(missing)}"
             )
+        from .spec import normalize_spec as _normalize
+
+        if spec is None:
+            spec, spec_digest = _normalize(
+                None,
+                manifest,
+                source=source,
+                max_attempts=max_attempts,
+                images_dir=images_dir,
+            )
+        else:
+            spec = dict(spec)
+            if spec_digest is None:
+                from ..artifacts.hashing import sha256_canonical
+
+                spec_digest = sha256_canonical(spec)
+        self._spec = spec
+        self._spec_digest = spec_digest
         self.manifest = manifest
         self.registry = dict(registry)
         self.source = source
@@ -702,6 +732,8 @@ class _Runner:
                     else {}
                 ),
                 **({"local_critic": True} if local_critic else {}),
+                "spec": dict(self._spec),
+                "spec_digest": self._spec_digest,
             },
             limits=dict(manifest.limits),
         )
@@ -821,6 +853,14 @@ class _Runner:
         :meth:`store_plan` before any generation or check runs.
         """
         return copy.deepcopy(dict(self.manifest.limits))
+
+    def spec_record(self) -> dict[str, Any]:
+        """Immutable copy of the normalised GenerationSpec."""
+        return copy.deepcopy(dict(self._spec))
+
+    def spec_digest_value(self) -> str:
+        """Canonical SHA-256 of the normalised GenerationSpec."""
+        return str(self._spec_digest)
 
     def _enforce_plan_bounds(self, plan: Mapping[str, Any]) -> None:
         """Refuse an over-limit plan before generation or checks run.
@@ -1186,6 +1226,95 @@ class _Runner:
         )
         return record
 
+    def _rights_record(self) -> dict[str, Any]:
+        """The release-manifest rights evidence for the recorded source."""
+        from ..artifacts.package import (
+            resolve_output_terms as _resolve,
+            rights_block as _rights,
+        )
+
+        meta = self._source_meta
+        verified = meta.get("hash_verified") is True
+        return _rights(
+            source_sha256=str(meta.get("source_sha256", "")),
+            licence=meta.get("licence"),
+            attribution=meta.get("attribution"),
+            manifest_name=meta.get("manifest_name"),
+            manifest_sha256=meta.get("manifest_sha256"),
+            hash_verified=verified,
+            output_terms=_resolve(
+                hash_verified=verified,
+                output_terms_grant=meta.get("output_terms_grant"),
+            ),
+            output_terms_grant=meta.get("output_terms_grant"),
+        )
+
+    def evidence_inputs(self) -> dict[str, Any]:
+        """Assemble the stored-record bundle the evidence report renders.
+
+        Every value comes from a record the run already persisted (the
+        run record, the selected attempt receipt, the frozen candidate
+        manifest, the human decision, the rights evidence): the report
+        renderer reads this bundle and recomputes nothing.
+        """
+        best = self._best
+        conditions = self.run_conditions()
+        refs: dict[str, str] = {
+            "run": "run.json",
+            "spec": "run.jsonl",
+            "source": "run.jsonl",
+            "release": "manifest.json",
+        }
+        if best is not None:
+            attempt_path = f"attempts/attempt-{best.n}/receipt.json"
+            refs["attempt"] = attempt_path
+            refs["checks"] = attempt_path
+            attempt_record: dict[str, Any] = best.to_dict()
+            plan = dict(attempt_record.get("plan_ref") or {})
+            check_results = list(attempt_record.get("check_results") or [])
+            attempt_no: int | None = best.n
+        else:
+            plan = (
+                dict(self._plan)
+                if isinstance(self._plan, Mapping)
+                else {}
+            )
+            check_results = []
+            attempt_no = None
+        if self._evidence_digest is not None:
+            refs["frozen"] = "frozen-manifest.json"
+        if self._decision is not None:
+            refs["decision"] = "decision.json"
+        return {
+            "run_id": self.log.run_id,
+            "profile_id": self.manifest.id,
+            "profile_version": self.manifest.version,
+            "spec": self.spec_record(),
+            "spec_digest": str(self._spec_digest),
+            "source": copy.deepcopy(dict(self._source_meta)),
+            "attempt_no": attempt_no,
+            "plan": plan,
+            "check_results": check_results,
+            "manifest_checks": [
+                dict(entry) for entry in self.manifest.checks
+            ],
+            "conditions": dict(conditions),
+            "decision": (
+                copy.deepcopy(dict(self._decision))
+                if isinstance(self._decision, Mapping)
+                else None
+            ),
+            "frozen_digest": self._evidence_digest,
+            "frozen_members": (
+                copy.deepcopy(list(self._frozen_entries))
+                if isinstance(self._frozen_entries, list)
+                else []
+            ),
+            "rights": self._rights_record(),
+            "images_present": bool(conditions.get("images_present", False)),
+            "refs": refs,
+        }
+
     def pack_recorded_release(self, capability_id: str) -> tuple[Path, str]:
         """Write the reproducible release ZIP from the frozen snapshot.
 
@@ -1241,14 +1370,38 @@ class _Runner:
                     f"frozen member {entry['path']!r} failed "
                     "reverification: refusing (no release)"
                 )
+        from .report import render_evidence_report as _render
+
         run_dir = Path(self._artifact_dir)
         images_present = self.run_conditions()["images_present"]
         specs = _package.selected_release_members(
             self.manifest, images_present=images_present
         )
+        report_bytes = _render(self.evidence_inputs()).encode("utf-8")
+        (run_dir / ENGINE_REPORT_MEMBER).write_text(
+            report_bytes.decode("utf-8"), encoding="utf-8"
+        )
+        report_declared = any(
+            isinstance(entry, Mapping)
+            and entry.get("name") == ENGINE_REPORT_MEMBER
+            and entry.get("source", "frozen") == ENGINE_REPORT_SOURCE
+            for entry in specs
+        )
         files: dict[str, bytes] = {}
         for spec in specs:
             name = spec["name"]
+            if (
+                spec.get("source", "frozen") == ENGINE_REPORT_SOURCE
+                and name == ENGINE_REPORT_MEMBER
+            ):
+                # The evidence report is rendered by the engine at pack
+                # time from stored records (it cites the human decision,
+                # which postdates the frozen snapshot). It is a view over
+                # the frozen evidence plus the decision, never new
+                # evidence itself.
+                if report_declared:
+                    files[name] = bytes(report_bytes)
+                continue
             if spec.get("source", "frozen") != "frozen":
                 # The run log is serialised by the engine from its own
                 # in-memory events at pack time (last event: the human
@@ -1268,8 +1421,6 @@ class _Runner:
             entries = _package.candidate_entries(
                 files, attempt=self._frozen_attempt or 0
             )
-            meta = self._source_meta
-            verified = meta.get("hash_verified") is True
             _package.write_release_manifest(
                 run_dir,
                 {
@@ -1278,21 +1429,7 @@ class _Runner:
                     "evidence_digest": self._evidence_digest,
                     "manifest_digest": _package.candidate_digest(entries),
                     "members": entries,
-                    "rights": _package.rights_block(
-                        source_sha256=str(meta.get("source_sha256", "")),
-                        licence=meta.get("licence"),
-                        attribution=meta.get("attribution"),
-                        manifest_name=meta.get("manifest_name"),
-                        manifest_sha256=meta.get("manifest_sha256"),
-                        hash_verified=verified,
-                        output_terms=_package.resolve_output_terms(
-                            hash_verified=verified,
-                            output_terms_grant=meta.get(
-                                "output_terms_grant"
-                            ),
-                        ),
-                        output_terms_grant=meta.get("output_terms_grant"),
-                    ),
+                    "rights": self._rights_record(),
                 },
             )
             _package.write_detached_hash(run_dir, zip_digest)
@@ -1583,6 +1720,7 @@ class _Runner:
                     ),
                     seed=plan_snapshot.get("seed"),
                     tokens=self.model_tokens - tokens_before,
+                    spec_digest=str(self._spec_digest),
                 )
                 self.attempts.append(attempt)
                 self.store.write_attempt(
@@ -1706,6 +1844,7 @@ def execute(
     local_critic: bool = False,
     role_bindings: Mapping[str, Mapping[str, Any]] | None = None,
     role_binding_sources: Mapping[str, Mapping[str, str]] | None = None,
+    spec: Mapping[str, Any] | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """Execute a manifest graph; return (exit code, outcome summary).
 
@@ -1715,7 +1854,11 @@ def execute(
     output is logged and never affects the verdict. ``role_bindings``
     carries the composition root's effective per-role configs (after
     CLI/env/profile/default resolution); when omitted the manifest's own
-    bindings apply.
+    bindings apply. ``spec`` is an optional GenerationSpec overlay: it
+    is normalised against the manifest and the caller flags before
+    anything else runs, and an unsupported request is refused with a
+    durable terminal record before any model call and before any
+    generation.
     """
     import sys as _sys
 
@@ -1737,6 +1880,46 @@ def execute(
             raise EOFError(f"no input for prompt: {prompt!r}")
         return line.rstrip("\n")
 
+    from .spec import SpecError, normalize_spec as _normalize
+
+    try:
+        normalized_spec, spec_digest = _normalize(
+            spec,
+            manifest,
+            source=Path(source),
+            max_attempts=max_attempts,
+            images_dir=images_dir,
+        )
+    except SpecError as exc:
+        refused_dir = record_refusal(
+            Path(out),
+            profile_ref=manifest.id,
+            request={
+                "source": str(source),
+                "max_attempts": max_attempts,
+                "out": str(out),
+                **(
+                    {"images_dir": str(images_dir)}
+                    if images_dir is not None
+                    else {}
+                ),
+                "spec": dict(spec) if isinstance(spec, Mapping) else spec,
+            },
+            error=str(exc),
+        )
+        _say(f"[engine] spec refused: {exc}")
+        return EXIT_FAILED, {
+            "status": "refused",
+            "run_id": refused_dir.name,
+            "profile": manifest.id,
+            "verdict": None,
+            "failed": [],
+            "artifact_sha256": None,
+            "artifact_dir": None,
+            "attempts": 0,
+            "advisories": [],
+            "error": str(exc),
+        }
     try:
         runner = _Runner(
             manifest=manifest,
@@ -1751,6 +1934,8 @@ def execute(
             local_critic=local_critic,
             role_bindings=role_bindings,
             role_binding_sources=role_binding_sources,
+            spec=normalized_spec,
+            spec_digest=spec_digest,
         )
     except (RunnerError, PermissionDenied) as exc:
         _say(f"[engine] composition refused: {exc}")
@@ -1767,6 +1952,11 @@ def execute(
             "error": str(exc),
         }
     runner.log.append("run_start", "ok", {"run": runner.run.to_dict()})
+    runner.log.append(
+        "spec",
+        "ok",
+        {"spec": normalized_spec, "spec_digest": spec_digest},
+    )
     runner.log.append(
         "model_bindings",
         "ok",
@@ -1907,6 +2097,11 @@ def _refuse_gate(
         if detail:
             runner.say(f"[fail] {check_id}: {detail}")
     if artifact_dir is not None:
+        from .report import render_evidence_report as _render
+
+        (Path(str(artifact_dir)) / ENGINE_REPORT_MEMBER).write_text(
+            _render(runner.evidence_inputs()), encoding="utf-8"
+        )
         runner.log.append(
             gate_id,
             "skipped",

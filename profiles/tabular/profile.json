@@ -126,7 +126,8 @@
       {"name": "validation-report.json", "required": true},
       {"name": "seed.txt", "required": true},
       {"name": "provenance.md", "required": true},
-      {"name": "run.jsonl", "required": true, "source": "engine-log"}
+      {"name": "run.jsonl", "required": true, "source": "engine-log"},
+      {"name": "evidence-report.md", "required": true, "source": "engine-report"}
     ]
   },
   "models": {
@@ -145,5 +146,10 @@
   },
   "limits": {
     "max_rows": 200000
+  },
+  "generation": {
+    "strategies": ["fitted_gaussian_disclosed"],
+    "default_strategy": "fitted_gaussian_disclosed",
+    "outputs": ["scalar"]
   }
 }

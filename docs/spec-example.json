@@ -1,0 +1,10 @@
+{
+  "spec_version": 1,
+  "spec_id": "tabular-default",
+  "profile": "tabular",
+  "source": {"sha256": null},
+  "outputs": ["scalar"],
+  "strategy": "fitted_gaussian_disclosed",
+  "limits": {"max_rows": 200000, "max_attempts": 2},
+  "rights": {"output_terms_intent": null}
+}

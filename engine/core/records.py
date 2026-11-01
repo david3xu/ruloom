@@ -100,12 +100,13 @@ class Attempt:
     """One pass through a loop body: plan, artifacts, checks, status.
 
     An attempt is immutable once the engine records it: it binds the
-    manifest digest the run executed under, the source hash measured at
-    intake, the complete resolved plan (including its seed), the
-    artifact hashes produced from that plan, the check results measured
-    over those artifacts, and the model tokens spent inside the attempt.
-    Selecting a best attempt selects this whole record; packaging must
-    write the selected record's own plan, seed, and artifact together.
+    manifest digest the run executed under, the spec digest the run
+    executed under, the source hash measured at intake, the complete
+    resolved plan (including its seed), the artifact hashes produced
+    from that plan, the check results measured over those artifacts,
+    and the model tokens spent inside the attempt. Selecting a best
+    attempt selects this whole record; packaging must write the
+    selected record's own plan, seed, and artifact together.
     """
 
     n: int
@@ -117,6 +118,7 @@ class Attempt:
     source_sha256: str = ""
     seed: Any = None
     tokens: int = 0
+    spec_digest: str = ""
 
     @property
     def failed(self) -> list[str]:
@@ -134,6 +136,7 @@ class Attempt:
             "source_sha256": self.source_sha256,
             "seed": self.seed,
             "tokens": self.tokens,
+            "spec_digest": self.spec_digest,
         }
 
 

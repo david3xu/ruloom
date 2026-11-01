@@ -175,3 +175,35 @@ measured core-photo alignment; real NVCL core-photo registration is
 unclaimed (`docs/quality/image-registration-rp06.md`).
 `Q-DATA-R03` is enforced. The PDD446 golden bytes reproduce
 unchanged.
+
+RP-07 closed the GenerationSpec slice with bounded plan/repair and the
+evidence report. Every run executes under one versioned GenerationSpec
+(`engine/core/spec.py`: spec id/version, profile, source pin, requested
+outputs, plan strategy, row/attempt limits, rights intent): the CLI
+flags imply a default spec and `--spec PATH` overlays a spec file, the
+normalised spec plus its digest ride the run record, the run log, and
+every attempt receipt, and the manifests declare the implemented
+strategies and outputs per profile (`generation` block: HyLogger
+`fitted_markov_joint` with scalar+imaging outputs, tabular
+`fitted_gaussian_disclosed` with scalar output). Unsupported requests
+-- unknown profile or strategy, unknown output modality, unsupported
+spec version, rows over the declared limit, imaging requested where
+the profile declares no imaging output, or an attempt bound
+contradicting the caller -- are refused during spec normalisation,
+before any model call and before any generation, with a durable
+terminal `refused` run record. A spec source pin, when present, is
+verified at intake before anything downstream runs. The planner and
+repair proposals must stay inside the spec-supported bounded schema
+(optional `strategy` key, validated against the run's strategy set;
+the repair prompt carries the failed measured properties plus only the
+supported corrective options), and the seeded no-model path runs under
+the same spec. One user-facing `evidence-report.md` per run is
+rendered by the engine from stored records only (spec digest, source
+pin, selected plan, check results with required/optional status,
+human decision, frozen manifest digest, rights block, limitations
+including schematic-only imaging and disclosed-view scope): it
+recomputes nothing, ships in the run directory, and -- declared in
+both profile release blocks -- as a release member rendered at pack
+time. `Q-ENGINE-SPEC` and `Q-ENGINE-EVIDENCE` are enforced;
+`Q-EVAL-R09-HARNESS` stays open for RP-08 and the section-9 rules
+stay planned. The PDD446 golden bytes reproduce unchanged.

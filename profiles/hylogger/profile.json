@@ -396,6 +396,7 @@
       {"name": "seed.txt", "required": true},
       {"name": "provenance.md", "required": true},
       {"name": "run.jsonl", "required": true, "source": "engine-log"},
+      {"name": "evidence-report.md", "required": true, "source": "engine-report"},
       {"name": "synthetic.png", "required": true, "when": "images_present"},
       {"name": "image-statistics.json", "required": true, "when": "images_present"},
       {"name": "image-validation.json", "required": true, "when": "images_present"}
@@ -441,5 +442,10 @@
   },
   "limits": {
     "max_rows": 200000
+  },
+  "generation": {
+    "strategies": ["fitted_markov_joint"],
+    "default_strategy": "fitted_markov_joint",
+    "outputs": ["scalar", "imaging"]
   }
 }

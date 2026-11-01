@@ -1,11 +1,13 @@
 """A model proposes the generation plan; seeded code does everything else.
 
-The plan is a strict JSON object -- an integer ``seed`` and an integer
-``n_rows >= 1`` -- and the only source-derived content the model ever sees
+The plan is a strict JSON object -- an integer ``seed``, an integer
+``n_rows >= 1``, and an optional ``strategy`` naming the generation
+strategy -- and the only source-derived content the model ever sees
 is the disclosed statistics view
 (:meth:`TabularProfile.to_disclosed_json`), which withholds rare text
 literals. The returned plan is validated against :data:`PLAN_SCHEMA`;
-anything else raises :class:`PlanError`.
+anything else raises :class:`PlanError`. A plan naming a strategy
+outside the spec-supported set is refused before any generation runs.
 """
 
 from __future__ import annotations
@@ -26,20 +28,29 @@ PLAN_SCHEMA: dict[str, Any] = {
     "properties": {
         "seed": {"type": "integer"},
         "n_rows": {"type": "integer", "minimum": 1},
+        "strategy": {"type": "string", "minLength": 1},
     },
     "required": ["seed", "n_rows"],
     "additionalProperties": False,
 }
 
 
-def validate_plan(data: Any, max_rows: int | None = None) -> dict[str, Any]:
+def validate_plan(
+    data: Any,
+    max_rows: int | None = None,
+    allowed_strategies: Any = None,
+) -> dict[str, Any]:
     """Validate a plan dict against :data:`PLAN_SCHEMA`.
 
     Returns a plain ``dict`` copy of the conforming plan. Raises
     :class:`PlanError` when the value is not a conforming plan. When
     the profile declares a row maximum (the manifest ``max_rows``
     limit), ``max_rows`` carries it and a larger ``n_rows`` is refused
-    here, before any generation or check runs.
+    here, before any generation or check runs. When
+    ``allowed_strategies`` is given, a plan naming a strategy outside
+    that set is refused here too: the planner may only propose values
+    inside the spec-supported bounded schema. A plan omitting
+    ``strategy`` runs under the run spec's own strategy (no injection).
     """
     if not isinstance(data, Mapping):
         raise PlanError(f"plan must be an object, got {type(data).__name__}")
@@ -52,6 +63,20 @@ def validate_plan(data: Any, max_rows: int | None = None) -> dict[str, Any]:
         value = plan[key]
         if isinstance(value, bool) or not isinstance(value, int):
             raise PlanError(f"plan {key!r} must be an integer, got {value!r}")
+    strategy = plan.get("strategy")
+    if strategy is not None:
+        if not isinstance(strategy, str) or not strategy:
+            raise PlanError(
+                f"plan 'strategy' must be a non-empty string, got {strategy!r}"
+            )
+        if allowed_strategies is not None and strategy not in list(
+            allowed_strategies
+        ):
+            raise PlanError(
+                f"plan strategy {strategy!r} is not one of the supported "
+                f"strategies {list(allowed_strategies)!r}: "
+                "refused before generation"
+            )
     if max_rows is not None and plan["n_rows"] > max_rows:
         raise PlanError(
             f"plan n_rows {plan['n_rows']} exceeds maximum {max_rows}: "
@@ -60,27 +85,45 @@ def validate_plan(data: Any, max_rows: int | None = None) -> dict[str, Any]:
     return plan
 
 
-def build_prompt(profile: TabularProfile) -> str:
+def build_prompt(
+    profile: TabularProfile, allowed_strategies: Any = None
+) -> str:
     """Build the planning prompt for a profile.
 
     The only source-derived content in the prompt is the profile's
     disclosed statistics serialisation (rare text literals withheld); no
-    raw source rows are ever included.
+    raw source rows are ever included. When ``allowed_strategies`` is
+    given, the prompt names the supported strategies and the optional
+    ``strategy`` key; otherwise the prompt asks for the seed/row-count
+    pair only.
     """
-    return (
+    prompt = (
         "Propose a data-generation plan for this tabular dataset.\n"
         "Reply with a JSON object with exactly two keys:\n"
         '- "seed": any integer (the deterministic seed for the generator).\n'
         '- "n_rows": a positive integer count of rows to generate. '
         "Set it to the profile statistics' n_rows so the synthetic "
         "table matches the source table's row count.\n"
-        "Profile statistics (the only source-derived content):\n"
+    )
+    if allowed_strategies:
+        prompt += (
+            'Optionally, "strategy": one of '
+            f"{list(allowed_strategies)!r} naming the generation strategy. "
+            "Omit it to run under the run's own strategy. No other keys "
+            "are accepted.\n"
+        )
+    return (
+        prompt
+        + "Profile statistics (the only source-derived content):\n"
         + profile.to_disclosed_json()
     )
 
 
 def propose(
-    model: Any, profile: TabularProfile, max_rows: int | None = None
+    model: Any,
+    profile: TabularProfile,
+    max_rows: int | None = None,
+    allowed_strategies: Any = None,
 ) -> Any:
     """Ask ``model`` for a plan and validate it against :data:`PLAN_SCHEMA`.
 
@@ -88,14 +131,21 @@ def propose(
     :class:`PlanError` when the answer is not a conforming plan and
     :class:`ValueError` when the profile is not a tabular profile.
     ``max_rows`` carries the profile-declared row maximum when one is
-    declared.
+    declared, and ``allowed_strategies`` carries the spec-supported
+    strategy set the proposal must stay inside.
     """
     if not isinstance(profile, TabularProfile):
         raise PlanError(
             f"profile must be a TabularProfile, got {type(profile).__name__}"
         )
-    completion = model.complete(build_prompt(profile), PLAN_SCHEMA)
-    completion_data = validate_plan(completion.data, max_rows=max_rows)
+    completion = model.complete(
+        build_prompt(profile, allowed_strategies), PLAN_SCHEMA
+    )
+    completion_data = validate_plan(
+        completion.data,
+        max_rows=max_rows,
+        allowed_strategies=allowed_strategies,
+    )
     return completion.__class__(
         data=completion_data, usage=completion.usage, meta=completion.meta
     )
@@ -105,11 +155,15 @@ def build_repair_prompt(
     profile: TabularProfile,
     failed: Any,
     current_plan: Mapping[str, Any],
+    supported_options: Any = None,
 ) -> str:
     """Build the repair prompt for failed checks.
 
-    Only failed-check JSON, the current plan, and the disclosed profile
-    statistics are included; no raw source rows are ever embedded.
+    Only failed-check JSON, the current plan, the supported corrective
+    options, and the disclosed profile statistics are included; no raw
+    source rows are ever embedded. The revised plan must stay inside
+    the supported options: the prompt carries the allowed strategies
+    and bounds, never free-text reinvention.
     """
     import json as _json
 
@@ -117,15 +171,32 @@ def build_repair_prompt(
         {"name": item["name"], "status": item["status"], "detail": item["detail"]}
         for item in failed
     ]
-    return (
+    prompt = (
         "The previous generation plan failed checks. Propose a revised plan.\n"
         "Reply with a JSON object with exactly two keys:\n"
         '- "seed": any integer (the deterministic seed for the generator).\n'
         '- "n_rows": a positive integer count of rows to generate.\n'
+    )
+    if supported_options is not None and supported_options.get("strategies"):
+        prompt += (
+            'Optionally, "strategy": one of '
+            f"{list(supported_options['strategies'])!r} naming the "
+            "generation strategy. Omit it to keep the run's own strategy. "
+            "No other keys are accepted.\n"
+        )
+    prompt += (
         "Failed checks (JSON):\n"
         + _json.dumps(failed_payload, sort_keys=True, indent=2)
         + "\nCurrent plan (JSON):\n"
         + _json.dumps(dict(current_plan), sort_keys=True)
+    )
+    if supported_options is not None:
+        prompt += (
+            "\nSupported corrective options (choose only within these):\n"
+            + _json.dumps(dict(supported_options), sort_keys=True, indent=2)
+        )
+    return (
+        prompt
         + "\nProfile statistics (the only source-derived content):\n"
         + profile.to_disclosed_json()
     )

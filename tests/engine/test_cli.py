@@ -178,6 +178,7 @@ def test_accept_writes_release_and_verifies_chain(
                 "seed.txt",
                 "provenance.md",
                 "run.jsonl",
+                "evidence-report.md",
                 "checksums.sha256",
             ]
         )

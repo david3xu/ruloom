@@ -53,6 +53,7 @@ SCALAR_MEMBERS = [
     "seed.txt",
     "provenance.md",
     "run.jsonl",
+    "evidence-report.md",
 ]
 IMAGE_MEMBERS = [
     "synthetic.png",

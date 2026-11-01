@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from ..audit.runlog import RunLog
 from .records import Attempt, Run, utc_now_iso
 
 
@@ -166,3 +167,42 @@ class RunStore:
                 "finished_at": utc_now_iso(),
             },
         )
+
+
+def record_refusal(
+    out: Path | str,
+    *,
+    profile_ref: str,
+    request: Mapping[str, Any] | None = None,
+    error: str = "",
+) -> Path:
+    """Persist a durable terminal record for a refused request.
+
+    Used when a request is unsupported before any run exists to carry
+    it (an unknown profile, an unreadable spec file, or a spec the
+    engine normaliser rejects): the refusal still leaves the same
+    durable history a failed run would -- a run directory with a
+    hash-chained event export and a terminal ``run.json`` carrying
+    status ``"refused"`` -- so the refusal is evidence, not stderr
+    alone. No model is ever invoked on this path.
+    """
+    import uuid as _uuid
+
+    run = Run(
+        id=_uuid.uuid4().hex,
+        profile_ref=str(profile_ref or "unknown"),
+        profile_version=0,
+        profile_digest="",
+        request=dict(request or {}),
+        limits={},
+    )
+    store = RunStore(out, run)
+    log = RunLog(run.id)
+    log.set_sink(store.append_event)
+    log.append(
+        "spec",
+        "refused",
+        {"profile": run.profile_ref, "error": error},
+    )
+    store.update_run("refused", error=error)
+    return store.run_dir

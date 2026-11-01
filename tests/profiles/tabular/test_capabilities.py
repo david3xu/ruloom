@@ -112,6 +112,7 @@ def test_end_to_end_accept(
         "seed.txt",
         "provenance.md",
         "run.jsonl",
+        "evidence-report.md",
         "release.zip",
         "checksums.sha256",
     ):
@@ -140,6 +141,7 @@ def test_end_to_end_accept(
                 "seed.txt",
                 "provenance.md",
                 "run.jsonl",
+                "evidence-report.md",
                 "checksums.sha256",
             ]
         )

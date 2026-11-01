@@ -3,7 +3,11 @@
 The engine executes the profile manifest graph (steps, bounded loops, and
 a human gate) and enforces each capability's declared permissions. Omitting
 ``--profile`` runs the default profile, which preserves the original
-single-profile invocation unchanged.
+single-profile invocation unchanged. Every run executes under a
+versioned GenerationSpec: the CLI flags imply a default spec, and
+``--spec PATH`` overlays a spec file on those defaults. Unsupported
+requests are refused before any model call with a durable terminal
+record under ``--out``.
 """
 
 from __future__ import annotations
@@ -28,7 +32,10 @@ def build_parser() -> argparse.ArgumentParser:
     for profiles declaring image capabilities. Without it the run is
     unchanged (no image step does any work). ``--local-critic`` is
     likewise optional: it enables the advisory local text-critique step
-    (default off, so the default run is unchanged).
+    (default off, so the default run is unchanged). ``--spec PATH``
+    overlays a GenerationSpec JSON file on the flag-implied defaults;
+    without it the flags alone define the spec, so existing invocations
+    behave exactly as before.
     """
     parser = argparse.ArgumentParser(prog="ruloom")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -62,6 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="enable the optional advisory local text-critique step",
+    )
+    run.add_argument(
+        "--spec",
+        default=None,
+        help="path to a GenerationSpec JSON file overriding defaults",
     )
     run.add_argument(
         "--role-model",
@@ -296,11 +308,23 @@ def default_client(role: str, config: Mapping[str, Any]) -> StructuredModel:
     )
 
 
+def _refusal_request(args: Any) -> dict[str, Any]:
+    """Best-effort request record for a refusal that precedes any run."""
+    return {
+        "source": str(getattr(args, "source", "")),
+        "max_attempts": getattr(args, "max_attempts", None),
+        "out": str(getattr(args, "out", ".")),
+    }
+
+
 def main(
     argv: Sequence[str] | None = None,
     model: StructuredModel | None = None,
 ) -> int:
     """Entry point for the ``ruloom`` console script (test-injectable)."""
+    from ..core.runstore import record_refusal
+    from ..core.spec import SpecError, load_spec_file
+
     args = build_parser().parse_args(list(argv) if argv is not None else None)
     if args.command == "run":
         if isinstance(args.max_attempts, bool) or args.max_attempts < 1:
@@ -323,8 +347,36 @@ def main(
                 cli_base_urls=args.role_base_url,
             )
         except (ValueError, ManifestError) as exc:
+            try:
+                record_refusal(
+                    Path(args.out),
+                    profile_ref=resolve_profile(args.profile),
+                    request=_refusal_request(args),
+                    error=str(exc),
+                )
+            except OSError:
+                pass
             print(f"error: {exc}", file=sys.stderr)
             return 1
+        spec_overlay: Mapping[str, Any] | None = None
+        if args.spec is not None:
+            try:
+                spec_overlay = load_spec_file(args.spec)
+            except SpecError as exc:
+                try:
+                    record_refusal(
+                        Path(args.out),
+                        profile_ref=profile_id,
+                        request={
+                            **_refusal_request(args),
+                            "spec_file": str(args.spec),
+                        },
+                        error=str(exc),
+                    )
+                except OSError:
+                    pass
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
 
         def resolving_factory(role: str, config: Mapping[str, Any]) -> Any:
             if model is not None:
@@ -342,6 +394,7 @@ def main(
             local_critic=args.local_critic,
             role_bindings=resolved,
             role_binding_sources=role_sources,
+            spec=spec_overlay,
         )
         return code
     return 1

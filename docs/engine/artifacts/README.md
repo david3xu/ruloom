@@ -30,6 +30,12 @@ Members name a flat file, whether they are required, an optional
 * `engine-log`: serialised by the engine from its own in-memory events
   at pack time (`run.jsonl`, whose last released event is the human
   review). It is never read from working files.
+* `engine-report`: rendered by the engine at pack time from stored
+  records (`evidence-report.md`, which cites the decision and the
+  frozen digest, both of which postdate the snapshot). Like
+  `engine-log`, it is never read from working files; unlike the frozen
+  members, it is a view over the frozen evidence plus the decision,
+  never new evidence itself.
 
 The imaging members (`synthetic.png`, `image-statistics.json`,
 `image-validation.json`) carry `when: images_present`, so they ship

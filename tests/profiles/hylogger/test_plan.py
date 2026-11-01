@@ -275,3 +275,53 @@ def test_adapter_malformed_answer_raises(
     _run_stub(monkeypatch, _Proc(stdout=stdout))
     with pytest.raises(ModelError):
         MuseCLIModel().complete("make a plan", PLAN_SCHEMA)
+
+
+STRATEGY = "fitted_markov_joint"
+
+
+def test_validate_plan_accepts_supported_strategy() -> None:
+    from profiles.hylogger.generation.plan import validate_plan
+
+    plan = validate_plan(
+        {"seed": 1, "n_rows": 5, "strategy": STRATEGY},
+        allowed_strategies=[STRATEGY],
+    )
+    assert plan == {"seed": 1, "n_rows": 5, "strategy": STRATEGY}
+
+
+def test_validate_plan_rejects_unsupported_strategy() -> None:
+    from profiles.hylogger.generation.plan import PlanError, validate_plan
+
+    with pytest.raises(PlanError):
+        validate_plan(
+            {"seed": 1, "n_rows": 5, "strategy": "no-such-strategy"},
+            allowed_strategies=[STRATEGY],
+        )
+
+
+def test_validate_plan_omitted_strategy_needs_no_injection() -> None:
+    from profiles.hylogger.generation.plan import validate_plan
+
+    plan = validate_plan({"seed": 1, "n_rows": 5}, allowed_strategies=[STRATEGY])
+    assert plan == {"seed": 1, "n_rows": 5}
+
+
+def test_propose_rejects_out_of_spec_strategy() -> None:
+    from profiles.hylogger.generation.plan import PlanError, propose
+
+    with pytest.raises(PlanError):
+        propose(
+            FakeModel({"seed": 1, "n_rows": 5, "strategy": "nope"}),
+            _toy_profile(),
+            allowed_strategies=[STRATEGY],
+        )
+
+
+def test_build_prompt_names_supported_strategies() -> None:
+    from profiles.hylogger.generation.plan import build_prompt
+
+    header = build_prompt(_toy_profile()).split("Profile statistics")[0]
+    assert '"strategy"' not in header
+    prompted = build_prompt(_toy_profile(), [STRATEGY])
+    assert STRATEGY in prompted

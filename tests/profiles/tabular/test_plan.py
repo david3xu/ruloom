@@ -44,3 +44,63 @@ def test_propose_returns_validated_plan() -> None:
 def test_validate_plan_rejects_bad_rows() -> None:
     with pytest.raises(plan_module.PlanError):
         plan_module.validate_plan({"seed": 7, "n_rows": 0})
+
+
+STRATEGY = "fitted_gaussian_disclosed"
+
+
+def test_validate_plan_accepts_supported_strategy() -> None:
+    plan = plan_module.validate_plan(
+        {"seed": 7, "n_rows": 20, "strategy": STRATEGY},
+        allowed_strategies=[STRATEGY],
+    )
+    assert plan == {"seed": 7, "n_rows": 20, "strategy": STRATEGY}
+
+
+def test_validate_plan_rejects_unsupported_strategy() -> None:
+    with pytest.raises(plan_module.PlanError):
+        plan_module.validate_plan(
+            {"seed": 7, "n_rows": 20, "strategy": "no-such-strategy"},
+            allowed_strategies=[STRATEGY],
+        )
+
+
+def test_validate_plan_omitted_strategy_needs_no_injection() -> None:
+    plan = plan_module.validate_plan(
+        {"seed": 7, "n_rows": 20}, allowed_strategies=[STRATEGY]
+    )
+    assert plan == {"seed": 7, "n_rows": 20}
+
+
+def test_propose_rejects_out_of_spec_strategy() -> None:
+    profile = TabularProfile.from_rows(COLUMNS, ROWS, "orders-tabular", "abc123")
+    with pytest.raises(plan_module.PlanError):
+        plan_module.propose(
+            FakeModel([{"seed": 7, "n_rows": 20, "strategy": "nope"}]),
+            profile,
+            allowed_strategies=[STRATEGY],
+        )
+
+
+def test_build_prompt_names_supported_strategies() -> None:
+    profile = TabularProfile.from_rows(COLUMNS, ROWS, "orders-tabular", "abc123")
+    header = plan_module.build_prompt(profile).split("Profile statistics")[0]
+    assert '"strategy"' not in header
+    prompted = plan_module.build_prompt(profile, [STRATEGY])
+    assert STRATEGY in prompted
+    assert profile.to_disclosed_json() in prompted
+
+
+def test_repair_prompt_carries_only_supported_options() -> None:
+    profile = TabularProfile.from_rows(COLUMNS, ROWS, "orders-tabular", "abc123")
+    failed = [{"name": "mean_value", "status": "fail", "detail": "drift"}]
+    options = {"strategies": [STRATEGY], "max_rows": 200000}
+    prompt = plan_module.build_repair_prompt(
+        profile, failed, {"seed": 1, "n_rows": 20}, options
+    )
+    assert "mean_value" in prompt
+    assert STRATEGY in prompt
+    assert "200000" in prompt
+    assert profile.to_disclosed_json() in prompt
+    header = prompt.split("Profile statistics")[0]
+    assert "10.0" not in header

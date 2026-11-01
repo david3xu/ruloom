@@ -195,3 +195,58 @@ def test_max_attempts_is_required_keyword() -> None:
             {"seed": 0, "n_rows": 8},
             model,
         )
+
+
+def test_repair_prompt_carries_only_supported_options() -> None:
+    source = _source()
+    profile = _profile(source)
+    failed = [
+        result for result in _run_checks_for_prompt(source, profile)
+        if result.status == "fail"
+    ]
+    assert failed != []
+    options = {"strategies": ["fitted_markov_joint"], "max_rows": 200000}
+    prompt = repair_module.build_repair_prompt(
+        profile, failed, {"seed": 1, "n_rows": 8}, options
+    )
+    for result in failed:
+        assert result.name in prompt
+    assert "fitted_markov_joint" in prompt
+    assert "200000" in prompt
+    assert profile.to_disclosed_json() in prompt
+    for sample in source:
+        assert repr(sample.depth_m) not in prompt
+
+
+def _run_checks_for_prompt(source, profile):
+    from profiles.hylogger.validation.checks import run_checks as _checks
+    from profiles.hylogger.validation.dataset import read as _read
+    from profiles.hylogger.generation.generate import generate as _generate
+
+    payload = _generate(profile, {"seed": 0, "n_rows": 8})
+    report = _checks(
+        _read(payload),
+        _thresholds(),
+        source_samples=list(source),
+        artifact_name="TOY:attempt-1",
+        artifact_sha256="0" * 64,
+    )
+    return report.results
+
+
+def test_repair_rejects_disallowed_revised_strategy() -> None:
+    source = _source()
+    profile = _profile(source)
+    thresholds = _thresholds()
+    model = FakeModel([{"seed": 8, "n_rows": 8, "strategy": "nope"}])
+    with pytest.raises(repair_module.plan_module.PlanError):
+        repair_module.repair(
+            profile,
+            source,
+            thresholds,
+            {"seed": 0, "n_rows": 8},
+            model,
+            max_attempts=2,
+            allowed_strategies=["fitted_markov_joint"],
+        )
+    assert model.calls == 1

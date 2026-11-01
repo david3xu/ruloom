@@ -53,6 +53,7 @@ COVERAGE: list[tuple[str, str, str]] = [
 RELEASE_MEMBERS = [
     "checksums.sha256",
     "data.csv",
+    "evidence-report.md",
     "plan.json",
     "provenance.md",
     "run.jsonl",

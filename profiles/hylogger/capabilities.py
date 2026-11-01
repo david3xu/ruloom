@@ -113,6 +113,46 @@ def _plan_max_rows(ctx: Any) -> int | None:
     return ceiling
 
 
+def _spec_strategy(ctx: Any) -> str | None:
+    """The run spec's plan strategy (the run default when plans omit it)."""
+    spec = ctx.spec_record()
+    strategy = spec.get("strategy") if isinstance(spec, dict) else None
+    if isinstance(strategy, str) and strategy:
+        return strategy
+    return None
+
+
+def _allowed_strategies(ctx: Any) -> list[str] | None:
+    """The single-strategy bound the planner must stay inside, if any."""
+    strategy = _spec_strategy(ctx)
+    return [strategy] if strategy is not None else None
+
+
+def _spec_max_rows(ctx: Any) -> int | None:
+    """The run spec's row bound (already tightened against the manifest)."""
+    spec = ctx.spec_record()
+    limits = spec.get("limits") if isinstance(spec, dict) else None
+    ceiling = limits.get("max_rows") if isinstance(limits, dict) else None
+    if (
+        isinstance(ceiling, bool)
+        or not isinstance(ceiling, int)
+        or ceiling < 1
+    ):
+        return _plan_max_rows(ctx)
+    return ceiling
+
+
+def _supported_options(ctx: Any) -> dict[str, Any]:
+    """The corrective options a repair proposal may choose within."""
+    spec = ctx.spec_record() if isinstance(ctx.spec_record(), dict) else {}
+    strategy = _spec_strategy(ctx)
+    return {
+        "strategies": [strategy] if strategy is not None else [],
+        "max_rows": _spec_max_rows(ctx),
+        "outputs": list(spec.get("outputs", ["scalar"])),
+    }
+
+
 def _catalog(ctx: Any) -> dict[str, dict[str, Any]]:
     return {entry["id"]: entry for entry in ctx.declared_checks}
 
@@ -171,10 +211,34 @@ def _verify_sibling_manifest(
     return manifest.name, manifest_sha256, True
 
 
+def _check_source_pin(ctx: Any, source_sha256: str) -> None:
+    """Refuse a measured source that misses the spec's expected pin.
+
+    The spec may pin the expected source SHA-256; when it does, intake
+    verifies the measured bytes against that pin before anything
+    downstream runs -- before any model call and before any release
+    may treat the bytes as the pinned source. A missing pin (null)
+    leaves the bytes unchecked here (the sibling-manifest registry
+    check below still applies).
+    """
+    spec = ctx.spec_record()
+    source = spec.get("source") if isinstance(spec, dict) else None
+    pin = source.get("sha256") if isinstance(source, dict) else None
+    if not isinstance(pin, str) or not pin:
+        return
+    if pin.lower() != source_sha256.lower():
+        raise RuntimeError(
+            f"source hash mismatch: the spec pins source sha256 "
+            f"{pin}, but the source bytes hash to "
+            f"{source_sha256}: refusing (no verified source)"
+        )
+
+
 def intake(ctx: Any) -> None:
     """Hash the source, verify it against the registry, parse samples."""
     payload = ctx.raw_bytes()
     source_sha256 = hashlib.sha256(payload).hexdigest()
+    _check_source_pin(ctx, source_sha256)
     manifest = _sibling_manifest(ctx.source_path, ctx.source_config)
     manifest_name, manifest_sha256, hash_verified = _verify_sibling_manifest(
         manifest, source_sha256
@@ -253,11 +317,19 @@ def profile_source(ctx: Any) -> None:
 
 
 def plan(ctx: Any) -> None:
-    """Ask the planner role for a generation plan (statistics only)."""
+    """Ask the planner role for a generation plan (statistics only).
+
+    The proposal must stay inside the spec-supported bounded schema:
+    the row bound and the strategy set come from the run spec, and an
+    out-of-spec proposal is refused before any generation runs.
+    """
     profile = ctx.profile()
     try:
         completion = propose(
-            ctx.model("planner"), profile, max_rows=_plan_max_rows(ctx)
+            ctx.model("planner"),
+            profile,
+            max_rows=_spec_max_rows(ctx),
+            allowed_strategies=_allowed_strategies(ctx),
         )
     except Exception as exc:  # noqa: BLE001 -- logged, then reported
         ctx.event("plan", "error", {"error": f"{type(exc).__name__}: {exc}"})
@@ -354,19 +426,26 @@ def validate(ctx: Any) -> None:
 
 
 def repair(ctx: Any) -> None:
-    """Ask the planner role for a revised plan after failed checks."""
+    """Ask the planner role for a revised plan after failed checks.
+
+    The repair prompt carries only the failed measured properties plus
+    the supported corrective options, and the revised plan is validated
+    against the same spec-supported bounds as the initial plan.
+    """
     profile = ctx.profile()
     report = ctx.latest_report()
     failed_results = [r for r in report.results if r.status == "fail"]
     prompt = build_repair_prompt(
-        profile, failed_results, ctx.plan()
+        profile, failed_results, ctx.plan(), _supported_options(ctx)
     )
     try:
         completion = ctx.model("planner").complete(
             prompt, PLAN_SCHEMA
         )
         new_plan = validate_plan(
-            completion.data, max_rows=_plan_max_rows(ctx)
+            completion.data,
+            max_rows=_spec_max_rows(ctx),
+            allowed_strategies=_allowed_strategies(ctx),
         )
     except Exception as exc:  # noqa: BLE001 -- logged, then reported
         ctx.event("repair", "error", {"error": f"{type(exc).__name__}: {exc}"})

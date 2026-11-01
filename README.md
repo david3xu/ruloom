@@ -179,6 +179,20 @@ RULOOM_ROLE_PLANNER_EFFORT=low .venv/bin/ruloom run --profile hylogger \
   --role-model planner=muse-spark-1.3
 ```
 
+Every run executes under one versioned GenerationSpec (spec id and
+version, profile, source pin, requested outputs, plan strategy,
+row/attempt limits, rights intent), recorded with its digest in the
+run record and every attempt receipt. The flags above already imply
+the default spec; `--spec spec.json` overlays a spec file on those
+defaults, and unsupported requests are refused before any model call
+with a durable terminal record. The run also ships a user-facing
+`evidence-report.md` rendered from stored records only.
+
+```bash
+.venv/bin/ruloom run --profile tabular <source>.csv --max-attempts 2 \
+  --spec docs/spec-example.json
+```
+
 ## Status
 
 New work, written fresh for the Meta Global AI Developer Hackathon

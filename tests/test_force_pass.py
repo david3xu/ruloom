@@ -486,8 +486,16 @@ def test_registry_maps_every_audit_finding() -> None:
         if rule.get("audit_ref") is None:
             # Governance/structure rules carry no audit finding: they
             # stay planned until an enforcing work package lands them.
-            assert rule["status"] == "planned"
-            assert rule.get("checker_implemented") is False
+            # Product-behaviour rules (RP-07 Q-ENGINE-SPEC and
+            # Q-ENGINE-EVIDENCE) likewise carry no audit finding but
+            # enforce real behaviour: they may be enforced only with
+            # an implemented checker (verified to exist below), so no
+            # enforced rule ever points at a checker that does not run.
+            if rule["status"] == "planned":
+                assert rule.get("checker_implemented") is False
+            else:
+                assert rule["status"] == "enforced"
+                assert rule.get("checker_implemented") is True
 
 
 def test_registry_implemented_checkers_exist() -> None:

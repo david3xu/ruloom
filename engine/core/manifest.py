@@ -27,6 +27,23 @@ ENGINE_API = 1
 #: The only graph node kinds the engine executes.
 NODE_KINDS = ("step", "loop", "gate")
 
+#: Output modalities the engine recognises in a ``generation`` block and
+#: in a GenerationSpec. ``scalar`` is the CSV artifact every profile
+#: produces; ``imaging`` is the optional synthetic-render branch a
+#: profile declares only when it ships image capabilities.
+GENERATION_OUTPUTS = ("scalar", "imaging")
+
+#: Release-member source for the engine-rendered evidence report. Like
+#: ``engine-log``, the bytes are rendered by the engine at pack time
+#: (after the human decision, which the report cites) instead of being
+#: read from the frozen snapshot -- the report is a view over the
+#: frozen evidence plus the decision, never new evidence itself.
+ENGINE_REPORT_SOURCE = "engine-report"
+
+#: The fixed file name of the user-facing evidence summary. Only this
+#: name may use the ``engine-report`` source.
+ENGINE_REPORT_MEMBER = "evidence-report.md"
+
 #: The only permission keys a capability may declare.
 PERMISSION_KEYS = (
     "reads_raw_source",
@@ -66,6 +83,7 @@ class Manifest:
     digest: str = ""
     path: str = ""
     release: dict[str, Any] = field(default_factory=dict)
+    generation: dict[str, Any] = field(default_factory=dict)
 
 
 def _require(mapping: Mapping[str, Any], key: str, where: str) -> Any:
@@ -279,8 +297,10 @@ def _check_models(payload: Mapping[str, Any], manifest_id: str) -> dict[str, Any
 #: Where a declared release member's bytes come from. ``frozen`` members
 #: are snapshotted before the human prompt and the decision binds their
 #: digest; ``engine-log`` members are serialised by the engine itself
-#: after the decision (the run log) and never read from working files.
-RELEASE_SOURCES = ("frozen", "engine-log")
+#: after the decision (the run log) and never read from working files;
+#: ``engine-report`` members are rendered by the engine at pack time
+#: from stored records (the evidence report, which cites the decision).
+RELEASE_SOURCES = ("frozen", "engine-log", ENGINE_REPORT_SOURCE)
 
 #: The only member name the engine is allowed to regenerate itself.
 #: Every other declared member must arrive frozen from the snapshot.
@@ -344,6 +364,11 @@ def _check_release(release: Any, manifest_id: str) -> dict[str, Any]:
                 f"{item}: only {ENGINE_LOG_MEMBER!r} may use "
                 "source 'engine-log'"
             )
+        if source == ENGINE_REPORT_SOURCE and name != ENGINE_REPORT_MEMBER:
+            raise ManifestError(
+                f"{item}: only {ENGINE_REPORT_MEMBER!r} may use "
+                f"source {ENGINE_REPORT_SOURCE!r}"
+            )
         record: dict[str, Any] = {"name": name, "required": required}
         if condition is not None:
             record["when"] = condition
@@ -354,6 +379,62 @@ def _check_release(release: Any, manifest_id: str) -> dict[str, Any]:
             raise ManifestError(f"{item}: unknown keys {sorted(extra)}")
         members.append(record)
     return {"members": members}
+
+
+def _check_generation(generation: Any, manifest_id: str) -> dict[str, Any]:
+    """Validate the optional ``generation`` declaration (fail-closed).
+
+    The block names the plan strategies the profile implements
+    (``strategies``, a non-empty list of unique non-empty strings),
+    which of them a default run uses (``default_strategy``, defaulting
+    to the first listed), and the output modalities the profile can
+    produce (``outputs``, a non-empty subset of ``GENERATION_OUTPUTS``).
+    A manifest without the block declares nothing: no named strategies
+    and scalar output only. Unknown keys, an empty strategy list, a
+    default outside the list, or an unknown output are refused at load.
+    """
+    where = f"manifest {manifest_id!r} 'generation'"
+    if generation is None:
+        return {}
+    if not isinstance(generation, dict):
+        raise ManifestError(f"{where} must be an object")
+    strategies = generation.get("strategies", [])
+    if (
+        not isinstance(strategies, list)
+        or not strategies
+        or any(
+            not isinstance(name, str) or not name for name in strategies
+        )
+        or len(set(strategies)) != len(strategies)
+    ):
+        raise ManifestError(
+            f"{where} needs a non-empty 'strategies' list of unique "
+            "non-empty strings"
+        )
+    default = generation.get("default_strategy", strategies[0])
+    if default not in strategies:
+        raise ManifestError(
+            f"{where}: 'default_strategy' {default!r} is not one of "
+            f"the declared strategies {list(strategies)!r}"
+        )
+    outputs = generation.get("outputs", ["scalar"])
+    if (
+        not isinstance(outputs, list)
+        or not outputs
+        or any(output not in GENERATION_OUTPUTS for output in outputs)
+    ):
+        raise ManifestError(
+            f"{where}: 'outputs' must be a non-empty list drawn from "
+            f"{list(GENERATION_OUTPUTS)!r}, got {outputs!r}"
+        )
+    extra = set(generation) - {"strategies", "default_strategy", "outputs"}
+    if extra:
+        raise ManifestError(f"{where}: unknown keys {sorted(extra)}")
+    return {
+        "strategies": list(strategies),
+        "default_strategy": default,
+        "outputs": list(outputs),
+    }
 
 
 def validate_manifest(payload: Mapping[str, Any]) -> Manifest:
@@ -393,6 +474,7 @@ def validate_manifest(payload: Mapping[str, Any]) -> Manifest:
     )
     models = _check_models(payload, manifest_id)
     release = _check_release(payload.get("release"), manifest_id)
+    generation = _check_generation(payload.get("generation"), manifest_id)
     limits = payload.get("limits", {})
     if not isinstance(limits, dict):
         raise ManifestError(f"manifest {manifest_id!r}: 'limits' must be "
@@ -414,6 +496,7 @@ def validate_manifest(payload: Mapping[str, Any]) -> Manifest:
         limits=dict(limits),
         digest=digest,
         release=dict(release),
+        generation=dict(generation),
     )
 
 
@@ -442,6 +525,7 @@ def load_manifest(path: str | Path) -> Manifest:
         digest=manifest.digest,
         path=str(manifest_path),
         release=dict(manifest.release),
+        generation=dict(manifest.generation),
     )
 
 

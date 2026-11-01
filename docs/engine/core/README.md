@@ -85,3 +85,31 @@ test paths, and the quality rules they satisfy:
 - `F-ENGINE-DURABLE-LOG` (audit R11, rule `Q-ENGINE-R11`).
 - `F-ENGINE-PLAN-BOUNDS` (audit R11, rule `Q-ENGINE-R11`).
 - `F-ENGINE-BUDGET-POLICY` (audit R11, rule `Q-ENGINE-R11`).
+- `F-ENGINE-GENERATION-SPEC` (RP-07, rules `Q-ENGINE-SPEC`,
+  `Q-ENGINE-EVIDENCE`).
+
+## GenerationSpec, bounded plans, and the evidence report
+
+Every run executes under one versioned GenerationSpec
+(`spec.py`, `report.py`): the spec names the profile, the source pin,
+the requested outputs, the plan strategy, the row/attempt limits, and
+the rights intent, and its canonical digest rides the run record
+(`run.json`), the run log (`spec` event), and every attempt receipt
+(`spec_digest`). The CLI flags imply a default spec (scalar output
+always; the render branch exactly when `--images DIR` is given; the
+manifest's default strategy; the manifest row bound); `--spec PATH`
+overlays a spec file on those defaults. Unsupported requests -- an
+unknown profile or strategy, an unknown output modality, an
+unsupported spec version, rows over the manifest limit, an output the
+profile never declares, a source pin pointing elsewhere, or an
+attempt bound contradicting the caller's `--max-attempts` -- are
+refused during normalisation, before any model call and before any
+generation, with a durable terminal `refused` run record
+(`runstore.record_refusal`). The plan schema carries an optional
+`strategy` key validated against the run's strategy set, so the
+planner and repair can only propose values inside the spec-supported
+bounds; a plan omitting the key runs under the run's own strategy.
+One user-facing `evidence-report.md` per run is rendered from stored
+records only and recomputed never; it ships in the run directory and,
+when the profile release block declares it, as an `engine-report`
+release member rendered at pack time.
