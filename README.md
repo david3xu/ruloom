@@ -226,7 +226,7 @@ them.
 |---|---|
 | `engine/` | The generic lifecycle root (`__init__.py` re-exports only; no feature module sits flat here — FP-CODE-8) |
 | `engine/core/` | Graph execution with permission enforcement (`runner.py`), profile manifests (`manifest.py`), strict run records (`records.py`), durable per-run history (`runstore.py`) |
-| `engine/artifacts/` | Content addressing (`hashing.py`), release packaging (`package.py`) |
+| `engine/artifacts/` | Content addressing (`hashing.py`), manifest-driven frozen release packaging (`package.py`), consumer-side verification (`consumer.py`) |
 | `engine/audit/` | The append-only hash-chained log (`runlog.py`) |
 | `engine/cli/` | The profile runner package: `ruloom run --profile <id>` entry (`__init__.py`) plus `__main__.py` so `python -m engine.cli` works too |
 | `profiles/` | Profile registry and loader (`__init__.py`): new profiles arrive as new directories, never as engine edits |
@@ -234,7 +234,8 @@ them.
 | `profiles/hylogger/imaging/` | The HyLogger image extension (optional `--images DIR` branch after validate, before the human gate): `codec.py` (stdlib PNG encode/decode), `intake.py` (image hashing/attribution), `statistics.py` (code-only histograms/texture/strips), `generate.py` (seeded synthetic PNGs), `checks.py` (deterministic image checks), `critic.py` (advisory vision note over synthetic renders only) |
 | `profiles/tabular/` | The second profile (common CSV proof): same root wiring (`profile.json`, `thresholds.json`, `capabilities.py`); features in `intake/` (`reader.py`), `analysis/` (`statistics.py`, `calibration.py`), `generation/` (`generate.py`, `plan.py`), `validation/` (`checks.py`, `dataset.py`) |
 | `models/` | Model adapters — the only code that talks to a model (`base.py`, `meta_cli.py`, `glimmer.py` — local OpenAI-compatible text adapter; role bindings select it with `"adapter": "glimmer_local"`) |
-| `catalogue/features/engine/` | Feature records for the persistence slice: one JSON file per feature (stable id, owner, code/doc/test paths, required rules, status) |
+| `catalogue/features/engine/` | Feature records for the persistence and reviewed-release slice: one JSON file per feature (stable id, owner, code/doc/test paths, required rules, status) |
 | `docs/engine/core/` | Engine-core contracts (`README.md` states the run/attempt persistence contract) |
+| `docs/engine/artifacts/` | Engine-artifacts contracts (`README.md` states the freeze/manifest/atomic/consumer release contract) |
 | `tests/` | Mirrors the tree: `tests/engine/`, `tests/profiles/hylogger/`, `tests/profiles/tabular/` (one `test_<feature>.py` per feature module), gate tests at the root |
 | `runs/` | Per-run durable history under `runs/<run-id>/` plus the content-addressed payload cache under `runs/<payload-sha>/` (generated at runtime, git-ignored — absent in a fresh clone) |

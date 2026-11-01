@@ -119,6 +119,16 @@
       "required": true
     }
   ],
+  "release": {
+    "members": [
+      {"name": "data.csv", "required": true},
+      {"name": "plan.json", "required": true},
+      {"name": "validation-report.json", "required": true},
+      {"name": "seed.txt", "required": true},
+      {"name": "provenance.md", "required": true},
+      {"name": "run.jsonl", "required": true, "source": "engine-log"}
+    ]
+  },
   "models": {
     "roles": {
       "planner": {

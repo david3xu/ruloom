@@ -1,23 +1,38 @@
-"""Release packaging: reproducible ZIP plus checksums.
+"""Release packaging: manifest-driven, frozen, atomic, reproducible.
 
-The release layout is fixed: the artifact directory holds the payload and
-its evidence files, and ``release.zip`` bundles them with stable
-timestamps so the same content always hashes the same way.
+The release member list comes from the profile's declared ``release``
+block, never from a hard-coded file list. Members whose ``when``
+condition is unmet (for example image evidence when the imaging branch
+did not run) are absent; every other required member must be present
+or packaging refuses loudly.
+
+Packaging reads only the frozen snapshot the engine took when the run
+reached the human gate, plus the engine-serialised run log -- never
+mutable working files. A working file mutated or deleted during the
+review prompt cannot change the released bytes. The ZIP is built in a
+temporary file and renamed into place, so a failure mid-packaging
+leaves no partial ``release.zip``; the same frozen inputs always yield
+the same ZIP bytes (fixed member timestamps).
 """
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Mapping
 
-from .hashing import sha256_bytes
+from .hashing import sha256_bytes, sha256_canonical
 
 #: Fixed DOS timestamp for reproducible ZIP members (year, mon, day, h, m, s).
 ZIP_FIXED_DATE = (1980, 1, 1, 0, 0, 0)
 
-#: Files written to the artifact directory (and, plus checksums, the ZIP).
-ARTIFACT_FILES = (
+#: Fallback member list for manifests that declare no ``release`` block
+#: (test-only manifests built programmatically). Shipped profiles always
+#: declare their members; this fallback keeps those older shapes working.
+DEFAULT_RELEASE_MEMBERS = (
     "data.csv",
     "plan.json",
     "validation-report.json",
@@ -25,6 +40,82 @@ ARTIFACT_FILES = (
     "provenance.md",
     "run.jsonl",
 )
+
+#: Directory (under the run directory) holding the frozen byte copies
+#: snapshotted when the run reached the human gate.
+FROZEN_DIR_NAME = "frozen"
+
+#: The frozen evidence manifest recorded before the human decision.
+FROZEN_MANIFEST_NAME = "frozen-manifest.json"
+
+#: The complete release manifest recorded alongside the release.
+RELEASE_MANIFEST_NAME = "manifest.json"
+
+#: Detached SHA-256 of ``release.zip`` (``"<sha>  release.zip"``).
+RELEASE_HASH_NAME = "release.sha256"
+
+#: Name of the reproducible bundle itself.
+RELEASE_ZIP_NAME = "release.zip"
+
+#: Name of the in-ZIP checksum file attesting every zipped member.
+CHECKSUMS_NAME = "checksums.sha256"
+
+
+def declared_release_members(manifest: Any) -> list[dict[str, Any]]:
+    """The ordered release member specs from the profile declaration.
+
+    Returns ``{"name", "required", ...}`` specs in manifest order. A
+    manifest without a ``release`` block falls back to
+    :data:`DEFAULT_RELEASE_MEMBERS` (all required, frozen-sourced).
+    """
+    release = getattr(manifest, "release", None)
+    members: list[Any] = []
+    if isinstance(release, Mapping):
+        raw = release.get("members", [])
+        if isinstance(raw, list):
+            members = list(raw)
+    if not members:
+        return [{"name": name, "required": True} for name in DEFAULT_RELEASE_MEMBERS]
+    return [dict(spec) for spec in members if isinstance(spec, Mapping)]
+
+
+def selected_release_members(
+    manifest: Any, *, images_present: bool
+) -> list[dict[str, Any]]:
+    """The release member specs active for this run, in manifest order.
+
+    Members whose ``when`` condition is unmet are absent (the imaging
+    branch produced nothing for this run, so its evidence stays out).
+    """
+    selected: list[dict[str, Any]] = []
+    for spec in declared_release_members(manifest):
+        condition = spec.get("when")
+        if condition == "images_present" and not images_present:
+            continue
+        selected.append(spec)
+    return selected
+
+
+def release_member_names(
+    manifest: Any, *, images_present: bool
+) -> list[str]:
+    """The ordered release file names active for this run."""
+    return [spec["name"] for spec in selected_release_members(
+        manifest, images_present=images_present
+    )]
+
+
+def frozen_member_names(
+    manifest: Any, *, images_present: bool
+) -> list[str]:
+    """Active members whose bytes arrive via the frozen snapshot."""
+    return [
+        spec["name"]
+        for spec in selected_release_members(
+            manifest, images_present=images_present
+        )
+        if spec.get("source", "frozen") == "frozen"
+    ]
 
 
 def build_provenance(
@@ -63,22 +154,150 @@ def build_provenance(
     return "\n".join(lines)
 
 
-def write_release_zip(artifact_dir: Path) -> tuple[Path, str]:
-    """Write reproducible ``release.zip``; return its path and SHA-256."""
-    members = sorted(ARTIFACT_FILES)
-    checksums = "".join(
-        f"{sha256_bytes((artifact_dir / name).read_bytes())}  {name}\n"
-        for name in members
+def candidate_entries(
+    files: Mapping[str, bytes], *, attempt: int
+) -> list[dict[str, Any]]:
+    """Manifest entries for frozen bytes: path, size, sha, producer."""
+    return [
+        {
+            "path": name,
+            "size": len(payload),
+            "sha256": sha256_bytes(bytes(payload)),
+            "attempt": attempt,
+        }
+        for name, payload in files.items()
+    ]
+
+
+def candidate_digest(entries: list[dict[str, Any]]) -> str:
+    """The digest the human decision binds: canonical hash of entries."""
+    return sha256_canonical(entries)
+
+
+def _atomic_write(path: Path, payload: bytes) -> Path:
+    """Write ``payload`` to ``path`` atomically (temp file + rename)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=path.name + ".tmp."
     )
-    (artifact_dir / "checksums.sha256").write_text(checksums, encoding="utf-8")
-    zip_path = artifact_dir / "release.zip"
+    try:
+        with os.fdopen(handle, "wb") as tmp:
+            tmp.write(payload)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def write_frozen_snapshot(run_dir: Path, files: Mapping[str, bytes]) -> Path:
+    """Persist frozen byte copies under ``run_dir/frozen/`` (evidence)."""
+    frozen_dir = Path(run_dir) / FROZEN_DIR_NAME
+    frozen_dir.mkdir(parents=True, exist_ok=True)
+    for name, payload in files.items():
+        (frozen_dir / name).write_bytes(bytes(payload))
+    return frozen_dir
+
+
+def write_frozen_manifest(run_dir: Path, payload: Mapping[str, Any]) -> Path:
+    """Record the candidate manifest snapshotted before the decision."""
+    path = Path(run_dir, FROZEN_MANIFEST_NAME)
+    path.write_text(
+        json.dumps(dict(payload), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def write_release_manifest(run_dir: Path, payload: Mapping[str, Any]) -> Path:
+    """Record the complete release manifest alongside the release."""
+    return _atomic_write(
+        Path(run_dir, RELEASE_MANIFEST_NAME),
+        (
+            json.dumps(dict(payload), indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8"),
+    )
+
+
+def write_detached_hash(run_dir: Path, zip_digest: str) -> Path:
+    """Write the detached ``release.sha256`` hash of ``release.zip``."""
+    return _atomic_write(
+        Path(run_dir, RELEASE_HASH_NAME),
+        f"{zip_digest}  {RELEASE_ZIP_NAME}\n".encode("utf-8"),
+    )
+
+
+def build_checksums(files: Mapping[str, bytes]) -> str:
+    """The ``checksums.sha256`` text attesting every member's bytes."""
+    return "".join(
+        f"{sha256_bytes(bytes(payload))}  {name}\n"
+        for name, payload in sorted(files.items())
+    )
+
+
+def build_zip_bytes(files: Mapping[str, bytes]) -> bytes:
+    """Deterministic ZIP bytes for one ordered member mapping.
+
+    Identical frozen inputs always yield identical bytes: member
+    timestamps, permissions, order (sorted by name), and compression
+    are all fixed.
+    """
+    import io as _io
+
+    buffer = _io.BytesIO()
     with zipfile.ZipFile(
-        zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+        buffer, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
     ) as archive:
-        for name in members + ["checksums.sha256"]:
+        for name in sorted(files):
             info = zipfile.ZipInfo(name, date_time=ZIP_FIXED_DATE)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
-            archive.writestr(info, (artifact_dir / name).read_bytes())
-    digest = sha256_bytes(zip_path.read_bytes())
-    return zip_path, digest
+            archive.writestr(info, bytes(files[name]))
+    return buffer.getvalue()
+
+
+def write_release_zip(
+    artifact_dir: Path, files: Mapping[str, bytes]
+) -> tuple[Path, str]:
+    """Write the reproducible ``release.zip`` from frozen bytes, atomically.
+
+    ``files`` maps member name to the exact bytes to ship (the frozen
+    snapshot plus engine-serialised log, never working files). The ZIP
+    is built in a temporary file, verified by the consumer check, and
+    renamed into place; any failure leaves no partial ``release.zip``.
+    The checksum text is also kept as the loose ``checksums.sha256``
+    file beside the bundle. Returns the ZIP path and its SHA-256.
+    """
+    from .consumer import verify_release as _verify
+
+    ordered = {name: bytes(files[name]) for name in sorted(files)}
+    checksums_text = build_checksums(ordered)
+    payload = ordered | {CHECKSUMS_NAME: checksums_text.encode("utf-8")}
+    zip_bytes = build_zip_bytes(payload)
+    zip_digest = sha256_bytes(zip_bytes)
+    run_dir = Path(artifact_dir)
+    handle, tmp_name = tempfile.mkstemp(
+        dir=str(run_dir), prefix=RELEASE_ZIP_NAME + ".tmp."
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(handle, "wb") as tmp:
+            tmp.write(zip_bytes)
+        _verify(tmp_path)
+        os.replace(tmp_name, run_dir / RELEASE_ZIP_NAME)
+        _atomic_write(run_dir / CHECKSUMS_NAME, checksums_text.encode("utf-8"))
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        for leftover in (run_dir / RELEASE_ZIP_NAME, run_dir / CHECKSUMS_NAME):
+            try:
+                leftover.unlink()
+            except OSError:
+                pass
+        raise
+    return run_dir / RELEASE_ZIP_NAME, zip_digest

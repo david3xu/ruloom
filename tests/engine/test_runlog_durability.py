@@ -11,6 +11,7 @@ affecting the verdict.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Mapping
@@ -361,8 +362,21 @@ def _critic_registry(spent: dict[str, int]) -> dict[str, Any]:
             json.dumps(plan, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        # A realistic bound report: the release consumer requires the
+        # report to carry the artifact hash it attests, as every real
+        # profile report does.
         (artifact_dir / "validation-report.json").write_text(
-            json.dumps({"verdict": "pass"}, indent=2, sort_keys=True) + "\n",
+            json.dumps(
+                {
+                    "artifact_name": "durability:attempt-1",
+                    "artifact_sha256": hashlib.sha256(payload).hexdigest(),
+                    "verdict": "pass",
+                    "results": [],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
             encoding="utf-8",
         )
         (artifact_dir / "seed.txt").write_text(

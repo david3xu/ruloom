@@ -84,3 +84,23 @@ enforced): `Q-GOV-*`, `Q-STRUCT-*`, `Q-DOC-CLAIM-EVIDENCE`,
 `Q-GRAPH-AUTHORITY`, `Q-RELEASE-COMPLETE`. R06 stays open for RP-03
 (the in-review mutation probe was made deterministic against the run's
 own directory; no product change).
+
+RP-03 closed R06 and the membership side of R04. When the run reaches
+the human gate, the engine snapshots every release candidate into a
+frozen store and records a candidate manifest (path, size, sha256,
+producing attempt) whose digest the human decision binds; packaging
+reads only the frozen snapshot plus the engine-serialised run log,
+never mutable working files, so mutating or deleting working bytes
+during review cannot change the released files. The release member
+list comes from the profile's declared `release` block: the scalar
+release keeps its members, and the synthetic image plus its
+registration/check evidence ship exactly when the imaging branch
+produced them for the run. The ZIP is built in a temporary file and
+renamed into place (no partial release on failure, decision still
+recorded), `manifest.json` and the detached `release.sha256` sit
+beside it, and `engine/artifacts/consumer.py` re-verifies the bundle
+from the recipient side. `Q-RELEASE-R06` and `Q-RELEASE-R04-MEMBERS`
+are enforced; the rights/claims side of R04 stays open as
+`Q-RELEASE-R04-RIGHTS` for RP-06, and the section-9 rules stay
+planned. The full suite, the gate, and the clean-archive check pass,
+and the golden PDD446 bytes reproduce unchanged.

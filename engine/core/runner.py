@@ -627,6 +627,14 @@ class _Runner:
         self._loop_failed: list[str] = []
         self._final_verdict: str | None = None
         self._final_failed: list[str] = []
+        # Frozen release snapshot: member bytes captured when the run
+        # reaches the human gate, the candidate entries describing them,
+        # and the digest the human decision binds. Packaging reads only
+        # these bytes, never mutable working files.
+        self._frozen_files: dict[str, bytes] | None = None
+        self._frozen_entries: list[dict[str, Any]] | None = None
+        self._frozen_attempt: int | None = None
+        self._evidence_digest: str | None = None
         self._last_usage: Any = None
         self._post_artifacts: list[str] = []
         self.pending_checks: list[EngineCheckResult] = []
@@ -1045,16 +1053,205 @@ class _Runner:
             run_id=self.log.run_id,
         )
 
+    def freeze_release_candidates(self) -> dict[str, Any]:
+        """Snapshot every release candidate's bytes before the prompt.
+
+        Runs when the run reaches the human gate, after the artifact
+        step and before the review prompt is shown. Each frozen member
+        declared by the profile is read once from the run directory and
+        kept in engine memory plus a ``frozen/`` copy; the candidate
+        manifest (path, size, sha256, produced-by attempt) is recorded
+        to ``frozen-manifest.json`` and its digest becomes the evidence
+        digest the human decision binds. A working file mutated or
+        deleted during the review prompt cannot change the snapshot.
+        Missing required members refuse loudly instead of shipping
+        short. Runs with no artifact directory (no package step ran
+        before the gate) have no candidates: the freeze is a recorded
+        no-op and the decision binds nothing.
+        """
+        from ..artifacts import package as _package
+
+        if self._artifact_dir is None:
+            self.log.append(
+                "freeze",
+                "skipped",
+                {"reason": "no artifact directory prepared"},
+            )
+            return {
+                "run_id": self.run.id,
+                "artifact_sha256": self._selected_artifact_sha,
+                "evidence_digest": None,
+                "members": [],
+            }
+        if self._best is None:
+            raise RunnerError(
+                "cannot freeze release candidates before an attempt "
+                "is selected: refusing (no release)"
+            )
+        run_dir = Path(self._artifact_dir)
+        images_present = self.run_conditions()["images_present"]
+        specs = _package.selected_release_members(
+            self.manifest, images_present=images_present
+        )
+        # Strict only under a declared release contract: manifests that
+        # declare no release block (test-only shapes) snapshot whatever
+        # candidates exist, and packaging -- if the flow packs at all --
+        # still refuses any gap.
+        strict = bool(getattr(self.manifest, "release", None))
+        frozen: dict[str, bytes] = {}
+        entries: list[dict[str, Any]] = []
+        attempt_no = self._best.n
+        for spec in specs:
+            name = spec["name"]
+            if spec.get("source", "frozen") != "frozen":
+                continue
+            path = run_dir / name
+            if not path.is_file():
+                if strict and spec.get("required", True):
+                    raise RunnerError(
+                        f"frozen release candidate {name!r} is missing: "
+                        "refusing (no release)"
+                    )
+                continue
+            payload = path.read_bytes()
+            frozen[name] = payload
+            entries.append(
+                {
+                    "path": name,
+                    "size": len(payload),
+                    "sha256": _package.sha256_bytes(bytes(payload)),
+                    "attempt": attempt_no,
+                }
+            )
+        digest = _package.candidate_digest(entries)
+        self._frozen_files = frozen
+        self._frozen_entries = entries
+        self._frozen_attempt = attempt_no
+        self._evidence_digest = digest
+        _package.write_frozen_snapshot(run_dir, frozen)
+        record = {
+            "run_id": self.run.id,
+            "artifact_sha256": self._selected_artifact_sha,
+            "evidence_digest": digest,
+            "members": entries,
+        }
+        _package.write_frozen_manifest(run_dir, record)
+        self.log.append(
+            "freeze",
+            "ok",
+            {
+                "members": [entry["path"] for entry in entries],
+                "evidence_digest": digest,
+            },
+            artifact_sha256=self._selected_artifact_sha,
+        )
+        return record
+
     def pack_recorded_release(self, capability_id: str) -> tuple[Path, str]:
-        """Write the reproducible release ZIP for the artifact directory."""
-        from ..artifacts.package import write_release_zip as _pack
+        """Write the reproducible release ZIP from the frozen snapshot.
+
+        Reads only the frozen snapshot plus the engine-serialised run
+        log -- never mutable working files. The frozen bytes are
+        re-verified against the decision-bound digest immediately
+        before the build, and the build is atomic: a temporary file is
+        verified and renamed into place, so any failure leaves no
+        partial ``release.zip``.
+        """
+        from ..artifacts import package as _package
 
         if self._artifact_dir is None:
             raise RunnerError(
                 f"capability {capability_id!r} cannot pack a release "
                 "before the artifact directory is prepared"
             )
-        return _pack(Path(self._artifact_dir))
+        if (
+            self._frozen_files is None
+            or self._frozen_entries is None
+            or self._evidence_digest is None
+        ):
+            raise RunnerError(
+                f"capability {capability_id!r} cannot pack a release "
+                "with no frozen snapshot: refusing to read mutable "
+                "working files (no release)"
+            )
+        if (
+            self._decision is None
+            or self._decision.get("frozen_manifest_sha256")
+            != self._evidence_digest
+        ):
+            raise RunnerError(
+                "the human decision does not bind the frozen manifest: "
+                "refusing (no release)"
+            )
+        if (
+            _package.candidate_digest(self._frozen_entries)
+            != self._evidence_digest
+        ):
+            raise RunnerError(
+                "the frozen snapshot changed after the human decision: "
+                "refusing (no release)"
+            )
+        for entry in self._frozen_entries:
+            payload = self._frozen_files.get(entry["path"])
+            if (
+                payload is None
+                or _package.sha256_bytes(bytes(payload))
+                != entry["sha256"]
+            ):
+                raise RunnerError(
+                    f"frozen member {entry['path']!r} failed "
+                    "reverification: refusing (no release)"
+                )
+        run_dir = Path(self._artifact_dir)
+        images_present = self.run_conditions()["images_present"]
+        specs = _package.selected_release_members(
+            self.manifest, images_present=images_present
+        )
+        files: dict[str, bytes] = {}
+        for spec in specs:
+            name = spec["name"]
+            if spec.get("source", "frozen") != "frozen":
+                # The run log is serialised by the engine from its own
+                # in-memory events at pack time (last event: the human
+                # review). It is never read from working files.
+                files[name] = self.log.to_jsonl().encode("utf-8")
+                continue
+            try:
+                files[name] = bytes(self._frozen_files[name])
+            except KeyError as exc:
+                if spec.get("required", True):
+                    raise RunnerError(
+                        f"frozen member {name!r} is missing: "
+                        "refusing (no release)"
+                    ) from exc
+        zip_path, zip_digest = _package.write_release_zip(run_dir, files)
+        try:
+            entries = _package.candidate_entries(
+                files, attempt=self._frozen_attempt or 0
+            )
+            _package.write_release_manifest(
+                run_dir,
+                {
+                    "run_id": self.run.id,
+                    "artifact_sha256": self._selected_artifact_sha,
+                    "evidence_digest": self._evidence_digest,
+                    "manifest_digest": _package.candidate_digest(entries),
+                    "members": entries,
+                },
+            )
+            _package.write_detached_hash(run_dir, zip_digest)
+        except BaseException:
+            for leftover in (
+                run_dir / _package.RELEASE_ZIP_NAME,
+                run_dir / _package.RELEASE_HASH_NAME,
+                run_dir / _package.RELEASE_MANIFEST_NAME,
+            ):
+                try:
+                    leftover.unlink()
+                except OSError:
+                    pass
+            raise
+        return zip_path, zip_digest
 
     def run_conditions(self) -> dict[str, bool]:
         """Resolve the applicability conditions for the final verdict."""
@@ -1398,7 +1595,19 @@ class _Runner:
         return best.status
 
     def run_gate(self, gate_id: str) -> Decision:
-        """Prompt the human and record the decision verbatim."""
+        """Prompt the human and record the decision verbatim.
+
+        The decision binds the frozen evidence digest snapshotted when
+        the run reached the gate, so the released bytes are exactly the
+        bytes the human reviewed. Runs with no frozen snapshot (no
+        package step ran) bind nothing; their later packaging -- if
+        any -- refuses without it.
+        """
+        if self._artifact_dir is not None and self._evidence_digest is None:
+            raise RunnerError(
+                f"no frozen snapshot bound at gate {gate_id!r}: "
+                "refusing (no release)"
+            )
         self.say("Human review required: the model cannot accept its own output.")
         try:
             decision = self._ask("Decision [accept/modify/reject]: ").strip().lower()
@@ -1415,6 +1624,8 @@ class _Runner:
             "decided_by": record.decided_by,
             "at": record.at,
         }
+        if self._evidence_digest is not None:
+            self._decision["frozen_manifest_sha256"] = self._evidence_digest
         self.store.write_decision(self._decision)
         self.log.append(
             gate_id,
@@ -1542,6 +1753,10 @@ def execute(
                 runner.final_verdict_record(verdict, failed)
                 if verdict != ATTEMPT_PASS:
                     return _refuse_gate(runner, gate_id, failed)
+                # Freeze every release candidate before the prompt: the
+                # human reviews frozen bytes, and packaging later reads
+                # only the snapshot.
+                runner.freeze_release_candidates()
                 decision = runner.run_gate(gate_id)
                 if runner.artifact_dir_record() is not None:
                     runner.log.write_jsonl(

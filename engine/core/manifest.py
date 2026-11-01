@@ -14,7 +14,7 @@ declaration and enforces it mechanically at run time.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -65,6 +65,7 @@ class Manifest:
     limits: dict[str, Any]
     digest: str = ""
     path: str = ""
+    release: dict[str, Any] = field(default_factory=dict)
 
 
 def _require(mapping: Mapping[str, Any], key: str, where: str) -> Any:
@@ -275,6 +276,86 @@ def _check_models(payload: Mapping[str, Any], manifest_id: str) -> dict[str, Any
     return dict(models)
 
 
+#: Where a declared release member's bytes come from. ``frozen`` members
+#: are snapshotted before the human prompt and the decision binds their
+#: digest; ``engine-log`` members are serialised by the engine itself
+#: after the decision (the run log) and never read from working files.
+RELEASE_SOURCES = ("frozen", "engine-log")
+
+#: The only member name the engine is allowed to regenerate itself.
+#: Every other declared member must arrive frozen from the snapshot.
+ENGINE_LOG_MEMBER = "run.jsonl"
+
+
+def _check_release(release: Any, manifest_id: str) -> dict[str, Any]:
+    """Validate the optional ``release`` declaration (fail-closed).
+
+    The release block declares the complete release member list, so
+    packaging never falls back to a hard-coded file list. Each member
+    names a flat file (no directories, no absolute paths, no ``..``),
+    whether it is required, an optional applicability condition, and
+    where its bytes come from. Unknown keys, duplicate names, and
+    unknown conditions or sources are refused at load.
+    """
+    if release is None:
+        return {}
+    where = f"manifest {manifest_id!r} 'release'"
+    if not isinstance(release, dict):
+        raise ManifestError(f"{where} must be an object")
+    raw_members = release.get("members", [])
+    if not isinstance(raw_members, list) or not raw_members:
+        raise ManifestError(f"{where} needs a non-empty 'members' list")
+    seen: set[str] = set()
+    members: list[dict[str, Any]] = []
+    for index, entry in enumerate(raw_members):
+        item = f"{where} member {index}"
+        if not isinstance(entry, dict):
+            raise ManifestError(f"{item}: must be an object")
+        name = entry.get("name")
+        if not isinstance(name, str) or not name:
+            raise ManifestError(f"{item}: needs a non-empty string 'name'")
+        if (
+            name.startswith("/")
+            or ".." in name.split("/")
+            or "/" in name
+            or "\\" in name
+        ):
+            raise ManifestError(f"{item}: {name!r} must be a flat file name")
+        if name in seen:
+            raise ManifestError(f"{item}: duplicate member {name!r}")
+        seen.add(name)
+        required = entry.get("required", True)
+        if not isinstance(required, bool):
+            raise ManifestError(f"{item}: 'required' must be true or false")
+        condition = entry.get("when")
+        if condition is not None and condition not in CHECK_CONDITIONS:
+            raise ManifestError(
+                f"{item}: unknown 'when' {condition!r} "
+                f"(known: {', '.join(CHECK_CONDITIONS)})"
+            )
+        source = entry.get("source", "frozen")
+        if source not in RELEASE_SOURCES:
+            raise ManifestError(
+                f"{item}: unknown 'source' {source!r} "
+                f"(known: {', '.join(RELEASE_SOURCES)})"
+            )
+        if source == "engine-log" and name != ENGINE_LOG_MEMBER:
+            raise ManifestError(
+                f"{item}: only {ENGINE_LOG_MEMBER!r} may use "
+                "source 'engine-log'"
+            )
+        record: dict[str, Any] = {"name": name, "required": required}
+        if condition is not None:
+            record["when"] = condition
+        if source != "frozen":
+            record["source"] = source
+        extra = set(entry) - {"name", "required", "when", "source"}
+        if extra:
+            raise ManifestError(f"{item}: unknown keys {sorted(extra)}")
+        members.append(record)
+    return {"members": members}
+
+
 def validate_manifest(payload: Mapping[str, Any]) -> Manifest:
     """Validate a decoded manifest document; raise ManifestError if invalid."""
     if not isinstance(payload, Mapping):
@@ -311,6 +392,7 @@ def validate_manifest(payload: Mapping[str, Any]) -> Manifest:
         manifest_id,
     )
     models = _check_models(payload, manifest_id)
+    release = _check_release(payload.get("release"), manifest_id)
     limits = payload.get("limits", {})
     if not isinstance(limits, dict):
         raise ManifestError(f"manifest {manifest_id!r}: 'limits' must be "
@@ -331,6 +413,7 @@ def validate_manifest(payload: Mapping[str, Any]) -> Manifest:
         models=dict(models),
         limits=dict(limits),
         digest=digest,
+        release=dict(release),
     )
 
 
@@ -358,6 +441,7 @@ def load_manifest(path: str | Path) -> Manifest:
         limits=manifest.limits,
         digest=manifest.digest,
         path=str(manifest_path),
+        release=dict(manifest.release),
     )
 
 

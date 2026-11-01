@@ -1,0 +1,72 @@
+# Engine artifacts: the reviewed frozen release
+
+A release ships exactly the bytes the human reviewed -- never the
+mutable working files as they happen to look when packaging runs.
+
+## Freeze at the gate
+
+When the run reaches the human gate (the artifact step has run and the
+verdict passes, before the review prompt is shown), the engine
+snapshots every release candidate declared by the profile:
+
+* each frozen member is read once into engine memory, with a byte copy
+  under `runs/<run-id>/frozen/`;
+* the candidate manifest -- path, size, sha256, and producing attempt
+  per member -- is recorded to `frozen-manifest.json`;
+* the manifest digest becomes the evidence digest, which the human
+  decision binds (`decision.json` carries `frozen_manifest_sha256`).
+
+Mutating or deleting a working file during the review prompt cannot
+change the released bytes: packaging never opens working files again.
+
+## Manifest-driven membership
+
+The member list comes from the profile's declared `release` block
+(`profiles/<id>/profile.json`), never from a hard-coded file list.
+Members name a flat file, whether they are required, an optional
+`when` condition, and where their bytes come from:
+
+* `frozen` (the default): snapshotted bytes as above;
+* `engine-log`: serialised by the engine from its own in-memory events
+  at pack time (`run.jsonl`, whose last released event is the human
+  review). It is never read from working files.
+
+The imaging members (`synthetic.png`, `image-statistics.json`,
+`image-validation.json`) carry `when: images_present`, so they ship
+exactly when the imaging branch produced a selected synthetic image
+for this run and attempt, and are absent otherwise. Acceptance still
+requires a passing reviewed report: a failing verdict never reaches
+the gate, so nothing about membership can rescue it. Manifests that
+declare no release block (test-only shapes) fall back to the
+historical member list; packaging still refuses any gap.
+
+## Atomic release
+
+Each run owns its release location: `runs/<run-id>/` holds
+`decision.json`, `manifest.json` (the complete release manifest with
+the evidence digest, the final digest, and every member hash),
+`release.zip`, and the detached `release.sha256` hash. The ZIP is
+built from the frozen snapshot in a temporary file, verified, and
+renamed into place; any failure mid-packaging leaves no partial
+`release.zip` (and no manifest or hash), the decision stays recorded,
+and a rerun can complete. Identical frozen inputs always yield
+identical ZIP bytes: member order, timestamps, permissions, and
+compression are fixed.
+
+## Consumer verification
+
+`engine/artifacts/consumer.py` re-establishes every guarantee from
+the bundle alone: entry names must be flat (no absolute paths, no
+parent escapes), every declared member must be present with no extras,
+every member must match `checksums.sha256`, every `.json` member must
+parse, the validation report must carry its required fields, and the
+report's artifact hash must resolve to the shipped payload bytes (an
+older substituted report fails even when the checksums were re-cut
+around it). Any violation raises loudly; a return means every check
+passed.
+
+## Feature record
+
+This slice is registered as `F-ENGINE-REVIEWED-RELEASE` under
+`catalogue/features/engine/` (rules `Q-RELEASE-R06` and
+`Q-RELEASE-R04-MEMBERS`).
