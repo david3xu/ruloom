@@ -61,6 +61,18 @@ New work, written fresh for the Meta Global AI Developer Hackathon
 source data is public NVCL WA data under CC BY 4.0, used as fetched data
 only — see `docs/provenance.md`.
 
+First-stage product is complete: one command runs the full lifecycle
+(intake, profile, plan, generate, validate, bounded repair, human-gated
+release). Verified on a real PDD446 run: plan `{seed 42, n_rows 39300}`,
+validation verdict pass, artifact `be9e26d7e664…`, release ZIP
+`46c7c07110c5…` with a hash-chained run log that verifies end to end.
+Test suite: 134 passed. Force-pass gate (`scripts/force_pass.py`):
+7/7 rules PASS. Run it with:
+
+```bash
+.venv/bin/python -m engine.cli run data/sources/PDD446-scalars.csv --max-attempts 3
+```
+
 ## Layout
 
 | Path | What lives there |
