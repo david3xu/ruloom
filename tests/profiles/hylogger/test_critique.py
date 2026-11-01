@@ -282,6 +282,15 @@ def test_registry_covers_local_critique() -> None:
     assert role["adapter"] == "glimmer_local"
 
 
+def test_every_role_binding_declares_a_known_adapter() -> None:
+    root = Path(__file__).resolve().parents[3]
+    for profile_id in ("hylogger", "tabular"):
+        manifest = load_manifest(root / "profiles" / profile_id / "profile.json")
+        for role, binding in manifest.models["roles"].items():
+            assert binding.get("adapter") in ("meta_cli", "glimmer_local"), role
+        assert manifest.models["roles"]["planner"]["adapter"] == "meta_cli"
+
+
 def test_default_client_adapter_selector() -> None:
     glimmer = cli_module.default_client(
         "local_critic",

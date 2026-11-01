@@ -120,6 +120,7 @@
       "planner": {
         "provider": "meta-api",
         "model": "muse-spark-1.3",
+        "adapter": "meta_cli",
         "reasoning_effort": "max",
         "structured_output": true
       }
