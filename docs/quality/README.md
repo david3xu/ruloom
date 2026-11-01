@@ -236,3 +236,20 @@ pipeline-vs-baseline comparison is claimed from this round.
 `Q-EVAL-R09-HARNESS` is enforced (`tests/test_evaluate.py`); the
 section-9 rules stay planned. The PDD446 golden bytes reproduce
 unchanged.
+
+RP-08 rework fixed the live-only planner 400 and reran the held-out
+benchmark once as `benchmark-v3-post-rp08-rework`. Each profile gained
+a strict wire schema (`provider_schema`: required covers every
+declared property, `strategy` required when the spec bounds one) sent
+on every live planner and repair call, while validation stays on the
+still-optional `PLAN_SCHEMA`; regression tests pin the strict sent
+shape on the propose and repair paths for both profiles. The live
+rerun (code `1fac399` plus this fix, spec v1, both manifests v1,
+evidence git-ignored under `runs/evaluation/20261101T190018Z/`,
+results in `docs/benchmark-v3-post-rp08-rework.md`, Step 14 tables and
+the v2 doc untouched) scored 4/4 pipeline arms pass (single attempt
+each, all reproducible, 134806 tokens, 80.0 s wall) and 4/4 baseline
+arms fresh with saved bytes (2 pass; 20LCDD003 and DDG007 fail
+fidelity on `repeated_depths_masked_out`; 4633554 tokens, 1220.2 s
+wall). No general pipeline-vs-baseline superiority is claimed: both
+sides are single-run stochastic samples.
