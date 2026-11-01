@@ -81,6 +81,11 @@ def test_real_tree_code7() -> None:
     assert ok
 
 
+def test_real_tree_code8() -> None:
+    ok, _ = gate.check_code8(REPO_ROOT)
+    assert ok
+
+
 def test_script_entry_point_passes() -> None:
     proc = subprocess.run(
         [sys.executable, "scripts/force_pass.py"],
@@ -91,7 +96,7 @@ def test_script_entry_point_passes() -> None:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
-    assert len(lines) == 9
+    assert len(lines) == 10
     assert all("PASS" in line for line in lines)
 
 
@@ -115,7 +120,7 @@ def test_planted_engine_boundary_import_fails(tmp_path: Path) -> None:
         "engine/evil.py",
         "from models.meta_cli import MuseCLIModel\n",
     )
-    _write(tmp_path, "engine/cli.py", "VALUE = 1\n")
+    _write(tmp_path, "engine/cli/__init__.py", "VALUE = 1\n")
     ok, _ = gate.check_code2(tmp_path)
     assert not ok
 
@@ -123,12 +128,30 @@ def test_planted_engine_boundary_import_fails(tmp_path: Path) -> None:
 def test_allowed_models_base_import_passes(tmp_path: Path) -> None:
     _write(
         tmp_path,
-        "profiles/hylogger/plan.py",
+        "profiles/hylogger/generation/plan.py",
+        "from models.base import StructuredModel\n",
+    )
+    _write(
+        tmp_path,
+        "profiles/tabular/generation/repair.py",
         "from models.base import StructuredModel\n",
     )
     _write(tmp_path, "profiles/__init__.py", "")
     ok, _ = gate.check_code2(tmp_path)
     assert ok
+
+
+def test_flat_generation_import_still_fails(tmp_path: Path) -> None:
+    # models.base is allowed only in generation/plan.py|repair.py, so the
+    # same import directly under the profile root must fail.
+    _write(
+        tmp_path,
+        "profiles/hylogger/plan.py",
+        "from models.base import StructuredModel\n",
+    )
+    _write(tmp_path, "profiles/__init__.py", "")
+    ok, _ = gate.check_code2(tmp_path)
+    assert not ok
 
 
 def test_planted_tracked_data_path_fails() -> None:
@@ -147,7 +170,8 @@ def test_planted_missing_gitignore_rule_fails(tmp_path: Path) -> None:
 
 def test_planted_missing_doc_entry_fails(tmp_path: Path) -> None:
     _write(tmp_path, "README.md", "# Ruloom\n\nNo modules named here.\n")
-    _write(tmp_path, "profiles/hylogger/fram.py", "VALUE = 1\n")
+    _write(tmp_path, "profiles/hylogger/profile.json", "{}\n")
+    _write(tmp_path, "profiles/hylogger/generation/fram.py", "VALUE = 1\n")
     ok, evidence = gate.check_doc2(tmp_path)
     assert not ok
     assert "fram" in evidence
@@ -170,7 +194,7 @@ def test_planted_unmeasured_claim_fails(tmp_path: Path) -> None:
 
 
 def test_planted_sha256_helper_fails(tmp_path: Path) -> None:
-    _write(tmp_path, "engine/hashing.py", "def sha256_bytes(p): ...\n")
+    _write(tmp_path, "engine/artifacts/hashing.py", "def sha256_bytes(p): ...\n")
     _write(
         tmp_path,
         "profiles/hylogger/evil.py",
@@ -183,7 +207,7 @@ def test_planted_sha256_helper_fails(tmp_path: Path) -> None:
 
 def test_plain_hashlib_call_is_not_a_helper(tmp_path: Path) -> None:
     # One-line stdlib digest uses are uses, not helper definitions.
-    _write(tmp_path, "engine/hashing.py", "def sha256_bytes(p): ...\n")
+    _write(tmp_path, "engine/artifacts/hashing.py", "def sha256_bytes(p): ...\n")
     _write(
         tmp_path,
         "profiles/hylogger/ok.py",
@@ -194,11 +218,25 @@ def test_plain_hashlib_call_is_not_a_helper(tmp_path: Path) -> None:
 
 
 def test_planted_missing_mirror_test_fails(tmp_path: Path) -> None:
-    _write(tmp_path, "profiles/hylogger/fram.py", "VALUE = 1\n")
-    _write(tmp_path, "tests/test_other.py", "def test_x(): assert True\n")
+    _write(tmp_path, "profiles/hylogger/profile.json", "{}\n")
+    _write(tmp_path, "profiles/hylogger/generation/fram.py", "VALUE = 1\n")
+    _write(tmp_path, "tests/profiles/hylogger/test_other.py", "def test_x(): assert True\n")
     ok, evidence = gate.check_code4(tmp_path)
     assert not ok
     assert "test_fram.py" in evidence
+
+
+def test_planted_flat_feature_module_fails(tmp_path: Path) -> None:
+    _write(tmp_path, "engine/__init__.py", "")
+    _write(tmp_path, "engine/extra.py", "VALUE = 1\n")
+    _write(tmp_path, "profiles/hylogger/profile.json", "{}\n")
+    _write(tmp_path, "profiles/hylogger/__init__.py", "")
+    _write(tmp_path, "profiles/hylogger/capabilities.py", "")
+    _write(tmp_path, "profiles/hylogger/stray.py", "VALUE = 1\n")
+    ok, evidence = gate.check_code8(tmp_path)
+    assert not ok
+    assert "engine/extra.py" in evidence
+    assert "profiles/hylogger/stray.py" in evidence
 
 
 def test_planted_engine_domain_word_fails(tmp_path: Path) -> None:

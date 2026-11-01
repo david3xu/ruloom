@@ -1,12 +1,12 @@
 """Tabular profile: plain CSV shape statistics and synthesis."""
 
-from .calibration import Thresholds, load_thresholds
-from .checks import CheckReport, CheckResult, run_checks
-from .dataset import read_csv_bytes, to_csv_bytes
-from .generate import generate
-from .plan import PLAN_SCHEMA, PlanError, propose, validate_plan
-from .reader import read_tabular_csv
-from .statistics import TabularProfile, build_stats
+from .analysis.calibration import Thresholds, load_thresholds
+from .validation.checks import CheckReport, CheckResult, run_checks
+from .validation.dataset import read_csv_bytes, to_csv_bytes
+from .generation.generate import generate
+from .generation.plan import PLAN_SCHEMA, PlanError, propose, validate_plan
+from .intake.reader import read_tabular_csv
+from .analysis.statistics import TabularProfile, build_stats
 
 __all__ = [
     "Thresholds",

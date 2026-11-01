@@ -27,9 +27,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 PRODUCT_DIRS = ("engine", "models", "profiles")
-HYLOGGER_DIR = Path("profiles/hylogger")
+PROFILES_DIR = Path("profiles")
 TESTS_DIR = Path("tests")
 ENGINE_DIR = Path("engine")
+
+#: File names a profile root may hold directly (manifest/wiring only).
+#: Every feature module lives one level down in intake/, analysis/,
+#: generation/, or validation/.
+PROFILE_ROOT_ALLOWED = ("__init__.py", "capabilities.py")
 
 #: Words no engine module may use outside comments (the engine knows no
 #: domain). Listed here so the rule can name them; FP-CODE-6 forbids them
@@ -49,15 +54,27 @@ DOMAIN_RE = re.compile(
     re.IGNORECASE,
 )
 
-# profiles/hylogger files allowed to import the models.base contract.
-ALLOWED_MODELS_BASE = {
-    "profiles/hylogger/plan.py",
-    "profiles/hylogger/repair.py",
-}
+def _allowed_models_base(rel: str) -> bool:
+    """Generation wiring may import the models.base contract only.
+
+    ``profiles/<profile>/generation/plan.py`` and
+    ``profiles/<profile>/generation/repair.py`` are the two files that
+    build model prompts from statistics; nothing else under profiles/
+    may import any of ``models``.
+    """
+    parts = rel.split("/")
+    return (
+        len(parts) == 4
+        and parts[0] == "profiles"
+        and parts[2] == "generation"
+        and parts[3] in ("plan.py", "repair.py")
+    )
+
+
 # The single composition root allowed to import models.meta_cli directly.
-COMPOSITION_ROOT = "engine/cli.py"
-# engine/hashing.py owns the sha256 helpers; nothing else may define one.
-HASH_OWNER = "engine/hashing.py"
+COMPOSITION_ROOT = "engine/cli/__init__.py"
+# engine/artifacts/hashing.py owns the sha256 helpers; nothing else defines one.
+HASH_OWNER = "engine/artifacts/hashing.py"
 
 UNMEASURED_RE = re.compile(r"\b(?:TBD|TODO)\b")
 
@@ -99,13 +116,30 @@ def check_doc1(root: Path) -> tuple[bool, str]:
     return True, f"Layout paths exist ({len(paths)}/{len(paths)}: {shown})"
 
 
-def _feature_modules(root: Path) -> list[str]:
-    hylogger = root / HYLOGGER_DIR
-    if not hylogger.is_dir():
+def _profile_ids(root: Path) -> list[str]:
+    base = root / PROFILES_DIR
+    if not base.is_dir():
         return []
     return sorted(
-        p.stem for p in hylogger.glob("*.py") if p.name != "__init__.py"
+        p.name
+        for p in base.iterdir()
+        if p.is_dir()
+        and not p.name.startswith(("_", "."))
+        and (p / "profile.json").is_file()
     )
+
+
+def _feature_modules(root: Path) -> dict[str, list[str]]:
+    """Feature stems per profile: every .py below the profile root."""
+    out: dict[str, list[str]] = {}
+    for profile_id in _profile_ids(root):
+        base = root / PROFILES_DIR / profile_id
+        out[profile_id] = sorted(
+            p.stem
+            for p in base.rglob("*.py")
+            if "__pycache__" not in p.parts and p.name != "__init__.py"
+        )
+    return out
 
 
 def _docs_corpus(root: Path) -> str:
@@ -118,15 +152,21 @@ def _docs_corpus(root: Path) -> str:
 
 
 def check_doc2(root: Path) -> tuple[bool, str]:
-    """FP-DOC-2: every profiles/hylogger feature module is named in docs."""
-    modules = _feature_modules(root)
-    if not modules:
-        return False, "no profiles/hylogger feature modules found"
+    """FP-DOC-2: every profile feature module is named in docs."""
+    by_profile = _feature_modules(root)
+    if not by_profile:
+        return False, "no profile feature modules found"
     corpus = _docs_corpus(root)
-    missing = [m for m in modules if m not in corpus]
+    missing = [
+        f"{profile}/{stem}"
+        for profile, stems in by_profile.items()
+        for stem in stems
+        if stem not in corpus
+    ]
     if missing:
         return False, "modules not named in README.md or docs/: " + ", ".join(missing)
-    return True, f"all {len(modules)} feature modules named in docs"
+    total = sum(len(stems) for stems in by_profile.values())
+    return True, f"all {total} feature modules named in docs"
 
 
 def check_doc4(root: Path) -> tuple[bool, str]:
@@ -186,9 +226,9 @@ def _classify(
             return [f"{label}: profiles imports engine ({mod})"]
         if top == "models":
             base_only = mod == "models.base" or mod.startswith("models.base.")
-            if base_only and rel in ALLOWED_MODELS_BASE:
+            if base_only and _allowed_models_base(rel):
                 return []
-            return [f"{label}: profiles imports {mod} (only models.base in plan.py/repair.py)"]
+            return [f"{label}: profiles imports {mod} (only models.base in generation/plan.py|repair.py)"]
         return []
     if top0 == "models":
         if top in ("profiles", "engine"):
@@ -227,12 +267,13 @@ def check_code2(root: Path) -> tuple[bool, str]:
 
 
 def check_code3(root: Path) -> tuple[bool, str]:
-    """FP-CODE-3: sha256 helpers live only in engine/hashing.py.
+    """FP-CODE-3: sha256 helpers live only in engine/artifacts/hashing.py.
 
-    The gate fails any module outside engine/hashing.py that *defines* its
-    own sha256 helper (``def *sha256*``). Plain one-line stdlib digest calls
-    at a use site are uses, not helper definitions, so they do not fail;
-    new helpers must reuse engine/hashing.py instead.
+    The gate fails any module outside engine/artifacts/hashing.py that
+    *defines* its own sha256 helper (``def *sha256*``). Plain one-line
+    stdlib digest calls at a use site are uses, not helper definitions,
+    so they do not fail; new helpers must reuse engine/artifacts/hashing.py
+    instead.
     """
     offenders: list[str] = []
     scanned = 0
@@ -250,21 +291,25 @@ def check_code3(root: Path) -> tuple[bool, str]:
                 if "sha256" in node.name:
                     offenders.append(f"{rel}:{node.lineno}: def {node.name}")
     if offenders:
-        return False, "sha256 helper defined outside engine/hashing.py: " + "; ".join(offenders)
-    return True, f"no sha256 helper outside engine/hashing.py ({scanned} files scanned)"
+        return False, "sha256 helper defined outside engine/artifacts/hashing.py: " + "; ".join(offenders)
+    return True, f"no sha256 helper outside engine/artifacts/hashing.py ({scanned} files scanned)"
 
 
 def check_code4(root: Path) -> tuple[bool, str]:
-    """FP-CODE-4: every feature module has a matching tests/test_<feature>.py."""
-    modules = _feature_modules(root)
-    if not modules:
-        return False, "no profiles/hylogger feature modules found"
+    """FP-CODE-4: every feature module mirrors to tests/profiles/<id>/test_<feature>.py."""
+    by_profile = _feature_modules(root)
+    if not by_profile:
+        return False, "no profile feature modules found"
     missing = [
-        m for m in modules if not (root / TESTS_DIR / f"test_{m}.py").is_file()
+        f"tests/profiles/{profile}/test_{stem}.py"
+        for profile, stems in by_profile.items()
+        for stem in stems
+        if not (root / TESTS_DIR / "profiles" / profile / f"test_{stem}.py").is_file()
     ]
     if missing:
-        return False, "missing mirror tests: " + ", ".join(f"tests/test_{m}.py" for m in missing)
-    return True, f"all {len(modules)} feature modules have mirror tests"
+        return False, "missing mirror tests: " + ", ".join(missing)
+    total = sum(len(stems) for stems in by_profile.values())
+    return True, f"all {total} feature modules have mirror tests"
 
 
 def _tracked_files(root: Path) -> list[str]:
@@ -441,6 +486,37 @@ def check_code7(root: Path) -> tuple[bool, str]:
     )
 
 
+def check_code8(root: Path) -> tuple[bool, str]:
+    """FP-CODE-8: feature modules live in subpackages, never flat.
+
+    No feature ``.py`` module sits directly under ``engine/`` (only
+    ``__init__.py``) or directly under ``profiles/<profile>/`` (only
+    ``__init__.py`` and ``capabilities.py`` as manifest/wiring). Engine
+    features live in ``core/``, ``artifacts/``, ``audit/``, ``cli/``;
+    profile features live in ``intake/``, ``analysis/``, ``generation/``,
+    ``validation/``.
+    """
+    offenders: list[str] = []
+    base = root / ENGINE_DIR
+    if not base.is_dir():
+        return False, "no engine/ directory found"
+    for path in sorted(base.glob("*.py")):
+        if path.name != "__init__.py":
+            offenders.append(_rel(path, root))
+    profiles = root / PROFILES_DIR
+    if not profiles.is_dir():
+        return False, "no profiles/ directory found"
+    for profile_dir in sorted(p for p in profiles.iterdir() if p.is_dir()):
+        if not (profile_dir / "profile.json").is_file():
+            continue
+        for path in sorted(profile_dir.glob("*.py")):
+            if path.name not in PROFILE_ROOT_ALLOWED:
+                offenders.append(_rel(path, root))
+    if offenders:
+        return False, "flat feature modules (move into a feature subpackage): " + ", ".join(offenders)
+    return True, "no flat feature modules under engine/ or profile roots"
+
+
 CHECKS = (
     ("FP-DOC-1", check_doc1),
     ("FP-DOC-2", check_doc2),
@@ -451,6 +527,7 @@ CHECKS = (
     ("FP-CODE-5", check_code5),
     ("FP-CODE-6", check_code6),
     ("FP-CODE-7", check_code7),
+    ("FP-CODE-8", check_code8),
 )
 
 

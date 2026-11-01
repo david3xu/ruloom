@@ -11,72 +11,171 @@
   },
   "capabilities": {
     "intake": {
-      "impl": "hylogger.intake",
+      "impl": "hylogger.intake.reader",
       "reads_raw_source": true,
       "stage": "source_intake"
     },
     "profile_source": {
-      "impl": "hylogger.profile_source",
+      "impl": "hylogger.analysis.statistics",
       "reads_raw_source": true,
       "stage": "profile"
     },
     "plan": {
-      "impl": "hylogger.plan",
+      "impl": "hylogger.generation.plan",
       "calls_model": "planner",
       "stage": "plan"
     },
     "generate": {
-      "impl": "hylogger.generate",
+      "impl": "hylogger.generation.generate",
       "stage": "generate"
     },
     "validate": {
-      "impl": "hylogger.validate",
+      "impl": "hylogger.validation.checks",
       "writes_verdict": true,
       "stage": "validate"
     },
     "repair": {
-      "impl": "hylogger.repair",
+      "impl": "hylogger.generation.repair",
       "calls_model": "planner",
       "stage": "repair"
     },
     "package_artifact": {
-      "impl": "hylogger.package_artifact",
+      "impl": "hylogger.capabilities",
       "stage": "artifact"
     },
     "package_release": {
-      "impl": "hylogger.package_release",
+      "impl": "hylogger.capabilities",
       "stage": "release"
     }
   },
   "graph": [
-    {"step": "intake"},
-    {"step": "profile_source"},
-    {"step": "plan"},
     {
-      "loop": ["generate", "validate"],
+      "step": "intake"
+    },
+    {
+      "step": "profile_source"
+    },
+    {
+      "step": "plan"
+    },
+    {
+      "loop": [
+        "generate",
+        "validate"
+      ],
       "on_fail": "repair",
       "max_attempts": "max_attempts",
       "stage": "generate_validate_repair"
     },
-    {"step": "package_artifact"},
-    {"gate": "human_review"},
-    {"step": "package_release"}
+    {
+      "step": "package_artifact"
+    },
+    {
+      "gate": "human_review"
+    },
+    {
+      "step": "package_release"
+    }
   ],
   "checks": [
-    {"id": "has_rows", "kind": "constraint", "threshold": {"source": "literal"}},
-    {"id": "backward_steps", "kind": "constraint", "threshold": {"source": "literal"}},
-    {"id": "depth_non_decreasing", "kind": "constraint", "threshold": {"source": "literal"}},
-    {"id": "spacing_median", "kind": "fidelity", "threshold": {"source": "real_vs_real_band"}},
-    {"id": "repeated_depth_fraction", "kind": "fidelity", "threshold": {"source": "real_vs_real_band"}},
-    {"id": "valid_fraction", "kind": "fidelity", "threshold": {"source": "real_vs_real_band"}},
-    {"id": "repeated_depths_masked_out", "kind": "fidelity", "threshold": {"source": "real_vs_real_band"}},
-    {"id": "swir_answer_rate", "kind": "fidelity", "threshold": {"source": "real_vs_real_band"}},
-    {"id": "tir_answer_rate", "kind": "fidelity", "threshold": {"source": "real_vs_real_band"}},
-    {"id": "swir_vocabulary", "kind": "constraint", "threshold": {"source": "literal"}},
-    {"id": "tir_vocabulary", "kind": "constraint", "threshold": {"source": "literal"}},
-    {"id": "swir_fidelity", "kind": "fidelity", "threshold": {"source": "split_half_reference"}},
-    {"id": "tir_fidelity", "kind": "fidelity", "threshold": {"source": "split_half_reference"}},
-    {"id": "csv_schema", "kind": "constraint", "threshold": {"source": "literal"}}
+    {
+      "id": "has_rows",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      }
+    },
+    {
+      "id": "backward_steps",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      }
+    },
+    {
+      "id": "depth_non_decreasing",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      }
+    },
+    {
+      "id": "spacing_median",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "real_vs_real_band"
+      }
+    },
+    {
+      "id": "repeated_depth_fraction",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "real_vs_real_band"
+      }
+    },
+    {
+      "id": "valid_fraction",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "real_vs_real_band"
+      }
+    },
+    {
+      "id": "repeated_depths_masked_out",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "real_vs_real_band"
+      }
+    },
+    {
+      "id": "swir_answer_rate",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "real_vs_real_band"
+      }
+    },
+    {
+      "id": "tir_answer_rate",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "real_vs_real_band"
+      }
+    },
+    {
+      "id": "swir_vocabulary",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      }
+    },
+    {
+      "id": "tir_vocabulary",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      }
+    },
+    {
+      "id": "swir_fidelity",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "split_half_reference"
+      }
+    },
+    {
+      "id": "tir_fidelity",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "split_half_reference"
+      }
+    },
+    {
+      "id": "csv_schema",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      }
+    }
   ],
   "models": {
     "roles": {

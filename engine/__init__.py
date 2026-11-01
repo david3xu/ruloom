@@ -1,8 +1,12 @@
 """The lifecycle: intake, profile, plan, repair, artifact, human review."""
 
 from . import cli
-from .hashing import canonical_bytes, sha256_bytes, sha256_canonical
-from .runlog import GENESIS, RunLog, utc_now_iso
+from .artifacts.hashing import (
+    canonical_bytes,
+    sha256_bytes,
+    sha256_canonical,
+)
+from .audit.runlog import GENESIS, RunLog, utc_now_iso
 
 __all__ = [
     "GENESIS",
