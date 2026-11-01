@@ -1,0 +1,5 @@
+CC0 1.0 Universal — see https://creativecommons.org/publicdomain/zero/1.0/
+
+Synthetic data packages produced by CalibraSynth are dedicated to the public
+domain under CC0 1.0. Provenance for the fitted source (NVCL WA, CC BY 4.0)
+is retained in every run manifest regardless; see docs/provenance.md.
