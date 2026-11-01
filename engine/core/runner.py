@@ -27,7 +27,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .manifest import MAX_ATTEMPTS_BINDING, Manifest, permission_of
+from .manifest import (
+    HOSTED_ADAPTER,
+    LOCAL_ADAPTER,
+    MAX_ATTEMPTS_BINDING,
+    Manifest,
+    permission_of,
+)
 from .records import Artifact, Attempt, Decision, EngineCheckResult, Run
 from ..audit.runlog import RunLog
 
@@ -49,6 +55,15 @@ class RunnerError(Exception):
     """The graph, registry, or capability outputs do not line up."""
 
 
+class BudgetExceeded(RunnerError):
+    """The run's model token ceiling was reached before the next call.
+
+    Raised before the next model call is made (never mid-call), so the
+    offending call never happens and the run fails loudly instead of
+    silently overspending.
+    """
+
+
 #: A capability implementation: profile code receiving a scoped context.
 CapabilityFn = Callable[["RunContext",], None]
 
@@ -62,6 +77,70 @@ class _Permissions:
     calls_model: str | None = None
     advisory: bool = False
     writes_verdict: bool = False
+
+
+def usage_tokens(usage: Any) -> int:
+    """Count the budget tokens one model call reported.
+
+    The budget unit is ``input + output + reasoning`` tokens as the
+    adapter reports them (local calls count the same way; their cost is
+    zero but the budget is denominated in tokens, not money). Missing or
+    non-integer fields count as zero.
+    """
+    total = 0
+    for field in ("input_tokens", "output_tokens", "reasoning_tokens"):
+        value = getattr(usage, field, 0)
+        if isinstance(value, bool) or not isinstance(value, int):
+            if isinstance(usage, Mapping):
+                raw = usage.get(field, 0)
+                if isinstance(raw, bool) or not isinstance(raw, int):
+                    continue
+                total += raw
+            continue
+        total += value
+    return total
+
+
+class _BudgetedClient:
+    """A model client wrapper that enforces the run token budget.
+
+    The ceiling is checked before every call: once cumulative usage
+    reaches ``budget`` the next call raises :class:`BudgetExceeded`
+    without touching the wrapped client. Usage reported by each allowed
+    call accumulates on the runner.
+    """
+
+    def __init__(self, client: Any, runner: "_Runner") -> None:
+        self._client = client
+        self._runner = runner
+
+    def _check_budget(self) -> None:
+        budget = self._runner.model_budget
+        if budget is not None and self._runner.model_tokens >= budget:
+            raise BudgetExceeded(
+                f"model token budget exceeded: {self._runner.model_tokens} "
+                f"tokens used of {budget} allowed; refusing the next model "
+                "call before making it"
+            )
+
+    def complete(self, prompt: str, schema: Mapping[str, Any]) -> Any:
+        self._check_budget()
+        completion = self._client.complete(prompt, schema)
+        self._runner.record_model_usage(completion.usage)
+        return completion
+
+    def complete_with_image(
+        self, prompt: str, schema: Mapping[str, Any], image_path: Any
+    ) -> Any:
+        self._check_budget()
+        completion = self._client.complete_with_image(
+            prompt, schema, image_path
+        )
+        self._runner.record_model_usage(completion.usage)
+        return completion
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.__dict__["_client"], name)
 
 
 class RunContext:
@@ -144,6 +223,14 @@ class RunContext:
                 raise RunnerError(
                     f"check {check_id!r}: 'passed' must be true or false"
                 )
+            position = item.get("band_position")
+            if position is not None and (
+                isinstance(position, bool)
+                or not isinstance(position, (int, float))
+            ):
+                raise RunnerError(
+                    f"check {check_id!r}: 'band_position' must be a number"
+                )
             self._runner.pending_checks.append(
                 EngineCheckResult(
                     check_id=str(check_id),
@@ -155,6 +242,7 @@ class RunContext:
                     artifact_sha256=current,
                     verifier=self.capability_id,
                     detail=str(item.get("detail", "")),
+                    band_position=position,
                 )
             )
 
@@ -274,6 +362,8 @@ class _Runner:
         ask: Callable[[str], str],
         images_dir: Path | None = None,
         local_critic: bool = False,
+        role_bindings: Mapping[str, Mapping[str, Any]] | None = None,
+        role_binding_sources: Mapping[str, Mapping[str, str]] | None = None,
     ) -> None:
         if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
             raise TypeError(
@@ -311,6 +401,31 @@ class _Runner:
         self.artifact_payloads: dict[str, bytes] = {}
         self.current_artifact_sha: str | None = None
         self.attempt_artifacts: list[str] = []
+        declared = manifest.models.get("roles", {})
+        if not isinstance(declared, dict):
+            declared = {}
+        self.role_bindings: dict[str, dict[str, Any]] = {
+            role: dict(config) if isinstance(config, Mapping) else {}
+            for role, config in (
+                role_bindings.items() if role_bindings is not None
+                else declared.items()
+            )
+        }
+        source_map = (
+            role_binding_sources if role_binding_sources is not None else {}
+        )
+        self.role_binding_sources: dict[str, dict[str, str]] = {
+            role: dict(sources) for role, sources in source_map.items()
+        }
+        self._refuse_unresolvable_roles()
+        budget = manifest.models.get("budget", None)
+        ceiling = None
+        if isinstance(budget, Mapping):
+            raw = budget.get("max_tokens_per_run")
+            if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1:
+                ceiling = raw
+        self.model_budget: int | None = ceiling
+        self.model_tokens = 0
         self.run = Run(
             id=self.log.run_id,
             profile_ref=manifest.id,
@@ -343,25 +458,62 @@ class _Runner:
         """1-based attempt number inside a loop body; 0 outside."""
         return len(self.attempts) + 1 if self._in_loop else 0
 
+    def _refuse_unresolvable_roles(self) -> None:
+        """Refuse unresolvable role bindings at composition time.
+
+        Every capability that declares ``calls_model`` must resolve to a
+        bound, enabled role, and an open-weight requirement must never sit
+        on the hosted adapter. This runs in the constructor so a bad
+        binding fails before any capability -- and before any model call.
+        """
+        for capability_id, spec in self.manifest.capabilities.items():
+            role = spec.get("calls_model")
+            if role is None:
+                continue
+            if role not in self.role_bindings:
+                raise RunnerError(
+                    f"capability {capability_id!r} calls model role "
+                    f"{role!r}, which is not bound: refusing (no run)"
+                )
+            config = self.role_bindings[role]
+            if config.get("enabled", True) is False:
+                raise RunnerError(
+                    f"capability {capability_id!r} calls model role "
+                    f"{role!r}, which is disabled: refusing (no run)"
+                )
+            requires = config.get("requires", {})
+            if (
+                isinstance(requires, Mapping)
+                and requires.get("open_weight") is True
+                and config.get("adapter", HOSTED_ADAPTER) != LOCAL_ADAPTER
+            ):
+                raise RunnerError(
+                    f"capability {capability_id!r} calls model role "
+                    f"{role!r}, which requires open_weight but is bound "
+                    "to the hosted adapter: refusing (no run)"
+                )
+
+    def record_model_usage(self, usage: Any) -> None:
+        """Accumulate one model call's reported tokens toward the budget."""
+        self.model_tokens += usage_tokens(usage)
+
     def model_for(self, role: str) -> Any:
         """Resolve a model role to a client, enforcing availability."""
         if role in self._models:
             return self._models[role]
-        roles = self.manifest.models.get("roles", {})
-        if not isinstance(roles, dict) or role not in roles:
+        if role not in self.role_bindings:
             raise PermissionDenied(
                 f"model role {role!r} is not bound by the manifest"
             )
-        config = roles[role]
-        if isinstance(config, Mapping) and config.get("enabled", True) is False:
+        config = self.role_bindings[role]
+        if config.get("enabled", True) is False:
             raise PermissionDenied(
                 f"model role {role!r} is disabled: treated as missing"
             )
-        if not isinstance(config, Mapping):
-            config = {}
         client = self.model_factory(role, dict(config))
-        self._models[role] = client
-        return client
+        guarded = _BudgetedClient(client, self)
+        self._models[role] = guarded
+        return guarded
 
     def store_artifact(
         self, name: str, media_type: str, payload: bytes, produced_by: str
@@ -541,13 +693,18 @@ def execute(
     ask: Callable[[str], str] | None = None,
     images_dir: Path | None = None,
     local_critic: bool = False,
+    role_bindings: Mapping[str, Mapping[str, Any]] | None = None,
+    role_binding_sources: Mapping[str, Mapping[str, str]] | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """Execute a manifest graph; return (exit code, outcome summary).
 
     ``max_attempts`` is required and has no default: the caller supplies
     the bound and every loop node binds to it. ``local_critic`` enables
     the optional advisory text-critique step (default off); advisory
-    output is logged and never affects the verdict.
+    output is logged and never affects the verdict. ``role_bindings``
+    carries the composition root's effective per-role configs (after
+    CLI/env/profile/default resolution); when omitted the manifest's own
+    bindings apply.
     """
     import sys as _sys
 
@@ -569,19 +726,63 @@ def execute(
             raise EOFError(f"no input for prompt: {prompt!r}")
         return line.rstrip("\n")
 
-    runner = _Runner(
-        manifest=manifest,
-        registry=registry,
-        source=Path(source),
-        max_attempts=max_attempts,
-        model_factory=model_factory,
-        out=Path(out),
-        say=_say,
-        ask=_ask,
-        images_dir=images_dir,
-        local_critic=local_critic,
-    )
+    try:
+        runner = _Runner(
+            manifest=manifest,
+            registry=registry,
+            source=Path(source),
+            max_attempts=max_attempts,
+            model_factory=model_factory,
+            out=Path(out),
+            say=_say,
+            ask=_ask,
+            images_dir=images_dir,
+            local_critic=local_critic,
+            role_bindings=role_bindings,
+            role_binding_sources=role_binding_sources,
+        )
+    except (RunnerError, PermissionDenied) as exc:
+        _say(f"[engine] composition refused: {exc}")
+        return EXIT_FAILED, {
+            "status": "error",
+            "run_id": None,
+            "profile": manifest.id,
+            "verdict": None,
+            "failed": [],
+            "artifact_sha256": None,
+            "artifact_dir": None,
+            "attempts": 0,
+            "advisories": [],
+            "error": str(exc),
+        }
     runner.log.append("run_start", "ok", {"run": runner.run.to_dict()})
+    runner.log.append(
+        "model_bindings",
+        "ok",
+        {
+            "roles": {
+                role: {
+                    "adapter": config.get("adapter", "meta_cli"),
+                    "model": config.get("model"),
+                    "reasoning_effort": config.get("reasoning_effort"),
+                    **(
+                        {"base_url": config.get("base_url")}
+                        if config.get("adapter") == "glimmer_local"
+                        else {}
+                    ),
+                    "sources": dict(
+                        runner.role_binding_sources.get(role, {})
+                    ),
+                }
+                for role, config in runner.role_bindings.items()
+            },
+            **(
+                {"budget_max_tokens_per_run": runner.model_budget}
+                if runner.model_budget is not None
+                else {}
+            ),
+        },
+    )
     gate_id = ""
     try:
         for node in manifest.graph:

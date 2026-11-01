@@ -19,6 +19,7 @@ from engine.core.runner import (
     EXIT_FAILED,
     EXIT_OK,
     PermissionDenied,
+    RunnerError,
     execute,
 )
 from models.base import Completion, Usage
@@ -309,6 +310,8 @@ def test_model_withheld_without_grant(tmp_path: Path) -> None:
 
 
 def test_model_role_mismatch_denied(tmp_path: Path) -> None:
+    # A capability bound to an unbound role is refused at composition:
+    # no client is ever built for it.
     manifest = _manifest(
         capabilities={
             "asker": {"impl": "fake.asker", "calls_model": "critic"},
@@ -317,28 +320,27 @@ def test_model_role_mismatch_denied(tmp_path: Path) -> None:
     )
     from engine.core.runner import _Runner
 
-    runner = _Runner(
-        manifest=manifest,
-        registry={"asker": (lambda ctx: None)},
-        source=_source(tmp_path),
-        max_attempts=1,
-        model_factory=lambda role, config: FakeClient([{}]),
-        out=tmp_path / "out",
-        say=lambda message: None,
-        ask=lambda prompt: "",
-    )
-    ctx = runner.scoped("asker")
-    with pytest.raises(PermissionDenied):
-        ctx.model("planner")
+    with pytest.raises(RunnerError):
+        _Runner(
+            manifest=manifest,
+            registry={"asker": (lambda ctx: None)},
+            source=_source(tmp_path),
+            max_attempts=1,
+            model_factory=lambda role, config: FakeClient([{}]),
+            out=tmp_path / "out",
+            say=lambda message: None,
+            ask=lambda prompt: "",
+        )
 
 
 def test_disabled_role_is_missing(tmp_path: Path) -> None:
+    # A capability bound to a disabled role is refused at composition:
+    # the runner never reaches the capability, let alone a model call.
     manifest = _manifest(
         models={"roles": {"planner": {"model": "fake", "enabled": False}}}
     )
-    ctx = _scoped(tmp_path, manifest, "decide")
-    with pytest.raises(PermissionDenied):
-        ctx.model("planner")
+    with pytest.raises(RunnerError):
+        _scoped(tmp_path, manifest, "decide")
 
 
 def test_writes_verdict_required(tmp_path: Path) -> None:

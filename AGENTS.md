@@ -47,6 +47,12 @@ any `FAIL`.
   `validation/` (plus `imaging/` for the HyLogger image extension:
   `codec.py`, `intake.py`, `statistics.py`, `generate.py`, `checks.py`,
   `critic.py`).
+- **FP-CODE-9** — Any role binding declaring `requires.open_weight` in any
+  profile manifest must bind adapter `glimmer_local` (never the hosted
+  `meta_cli` adapter); the gate fails a hosted binding.
+- **FP-CODE-10** — Every profile manifest declares
+  `models.budget.max_tokens_per_run`, and the HyLogger manifest contains
+  a disabled `reporter` role (`enabled: false`, so it can never resolve).
 
 ## Review
 

@@ -92,6 +92,61 @@ then run with the default adapter base URL `http://127.0.0.1:8080`
 Glimmer are not present, so Glimmer serves the text critique only; the
 Spark multimodal adapter stays the vision critic for synthetic renders.
 
+## Model roles, budget, and overrides
+
+Each profile manifest binds named roles to models under `models.roles`
+(`planner`, `critic`, `local_critic` for HyLogger; `planner` for the
+tabular profile). A role binding names its `adapter` (`meta_cli` for
+the hosted `muse exec` adapter, `glimmer_local` for the local
+OpenAI-compatible server) plus the model id, reasoning effort, and —
+for local roles — the base URL.
+
+Three guardrails from the engine design are enforced as behaviour, not
+prose:
+
+- **Fail-closed requirements.** A binding may declare
+  `requires: {open_weight: true}` (HyLogger's `local_critic` does).
+  Loading a manifest — or composing a client — that puts such a role on
+  the hosted adapter is refused loudly with no run and no model call.
+- **Token budget.** Each manifest declares
+  `models.budget.max_tokens_per_run` (HyLogger `500000`, tabular
+  `250000`). These are declared limits, not measured results — they sit
+  several times above the largest observed full runs. The engine counts
+  every model call's `input + output + reasoning` tokens as the adapters
+  report them and refuses the next call *before* making it once the
+  ceiling is reached, failing the run with the budget error. Local
+  Glimmer calls count exactly the same way: cost is zero, but the budget
+  is denominated in tokens, not money.
+- **Disabled roles never resolve.** HyLogger declares a `reporter` seat
+  (`muse-wonder-1.0`, `enabled: false`). No capability is wired to it,
+  and binding any capability to it is refused at composition. The seat
+  documents where a future Wonder-based reporter would attach; refusal
+  is the feature.
+- **Band position.** Every band check (HyLogger fidelity/invariant bands
+  plus the tabular fidelity band) reports `band_position` alongside
+  pass/fail: the measured value's fractional position across `[lo, hi]`
+  (`lo` → `0.0`, midpoint → `0.5`, `hi` → `1.0`; outside, the signed
+  distance in band-widths, negative below `lo`, above `1.0` past `hi`).
+  It rides in each check result and into `validation-report.json`. No
+  existing field changed meaning and pass/fail semantics are untouched.
+
+Role fields resolve **CLI > env > profile > engine default**: repeatable
+`--role-model ROLE=MODEL` (plus `--role-effort` and `--role-base-url`)
+beat `RULOOM_ROLE_<ROLE>_MODEL` / `_EFFORT` / `_BASE_URL` (role
+uppercased, e.g. `RULOOM_ROLE_PLANNER_MODEL`), which beat the manifest
+binding, which beats the adapter default (`muse-spark-1.3` /
+`muse-glimmer-30B`, effort `max`, local base URL
+`http://127.0.0.1:8080`). The composition root applies this precedence
+and records the effective binding — value plus source
+(`cli`/`env`/`profile`/`default`) — as a `model_bindings` event in the
+run log. Example:
+
+```bash
+RULOOM_ROLE_PLANNER_EFFORT=low .venv/bin/ruloom run --profile hylogger \
+  data/sources/PDD446-scalars.csv --max-attempts 3 \
+  --role-model planner=muse-spark-1.3
+```
+
 ## Status
 
 New work, written fresh for the Meta Global AI Developer Hackathon

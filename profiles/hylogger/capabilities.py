@@ -194,6 +194,7 @@ def validate(ctx: Any) -> None:
                 if isinstance(threshold, dict)
                 else "literal",
                 "detail": result.detail,
+                "band_position": getattr(result, "band_position", None),
             }
         )
     ctx.record_checks(items)
@@ -304,6 +305,7 @@ def image_validate(ctx: Any) -> None:
                 if isinstance(threshold, dict)
                 else "literal",
                 "detail": result.detail,
+                "band_position": getattr(result, "band_position", None),
             }
         )
     ctx.record_checks(items)

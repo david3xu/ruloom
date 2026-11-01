@@ -86,6 +86,16 @@ def test_real_tree_code8() -> None:
     assert ok
 
 
+def test_real_tree_code9() -> None:
+    ok, evidence = gate.check_code9(REPO_ROOT)
+    assert ok, evidence
+
+
+def test_real_tree_code10() -> None:
+    ok, evidence = gate.check_code10(REPO_ROOT)
+    assert ok, evidence
+
+
 def test_script_entry_point_passes() -> None:
     proc = subprocess.run(
         [sys.executable, "scripts/force_pass.py"],
@@ -96,7 +106,7 @@ def test_script_entry_point_passes() -> None:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
-    assert len(lines) == 10
+    assert len(lines) == 12
     assert all("PASS" in line for line in lines)
 
 
@@ -322,6 +332,115 @@ def test_planted_loop_default_fails(tmp_path: Path) -> None:
     ok, evidence = gate.check_code7(tmp_path)
     assert not ok
     assert "no default" in evidence
+
+
+def _manifest_payload(
+    roles: dict | None = None,
+    *,
+    profile_id: str = "fake",
+    budget: dict | None = {"max_tokens_per_run": 1000},
+) -> dict:
+    models: dict = {"roles": roles or {"planner": {"model": "m"}}}
+    if budget is not None:
+        models["budget"] = budget
+    return {
+        "id": profile_id,
+        "version": 1,
+        "engine_api": 1,
+        "source": {},
+        "capabilities": {"a": {"impl": "fake.a"}},
+        "graph": [{"step": "a"}],
+        "checks": [
+            {"id": "c", "kind": "constraint", "threshold": {"source": "literal"}}
+        ],
+        "models": models,
+    }
+
+
+def test_planted_open_weight_on_hosted_adapter_fails(tmp_path: Path) -> None:
+    import json as _json
+
+    _write(
+        tmp_path,
+        "profiles/fake/profile.json",
+        _json.dumps(
+            _manifest_payload(
+                {
+                    "local_critic": {
+                        "model": "m",
+                        "adapter": "meta_cli",
+                        "requires": {"open_weight": True},
+                    }
+                }
+            )
+        ),
+    )
+    ok, evidence = gate.check_code9(tmp_path)
+    assert not ok
+    assert "local_critic" in evidence
+
+
+def test_planted_open_weight_on_local_adapter_passes(tmp_path: Path) -> None:
+    import json as _json
+
+    _write(
+        tmp_path,
+        "profiles/fake/profile.json",
+        _json.dumps(
+            _manifest_payload(
+                {
+                    "local_critic": {
+                        "model": "m",
+                        "adapter": "glimmer_local",
+                        "requires": {"open_weight": True},
+                    }
+                }
+            )
+        ),
+    )
+    ok, _ = gate.check_code9(tmp_path)
+    assert ok
+
+
+def test_planted_missing_budget_fails(tmp_path: Path) -> None:
+    import json as _json
+
+    _write(
+        tmp_path,
+        "profiles/hylogger/profile.json",
+        _json.dumps(_manifest_payload(budget=None, profile_id="hylogger")),
+    )
+    ok, evidence = gate.check_code10(tmp_path)
+    assert not ok
+    assert "max_tokens_per_run" in evidence
+
+
+def test_planted_missing_reporter_fails(tmp_path: Path) -> None:
+    import json as _json
+
+    _write(
+        tmp_path,
+        "profiles/hylogger/profile.json",
+        _json.dumps(_manifest_payload(profile_id="hylogger")),
+    )
+    ok, evidence = gate.check_code10(tmp_path)
+    assert not ok
+    assert "reporter" in evidence
+
+
+def test_planted_enabled_reporter_fails(tmp_path: Path) -> None:
+    import json as _json
+
+    payload = _manifest_payload(profile_id="hylogger")
+    payload["models"]["roles"]["reporter"] = {
+        "model": "muse-wonder-1.0",
+        "adapter": "meta_cli",
+        "enabled": True,
+    }
+    _write(tmp_path, "profiles/hylogger/profile.json", _json.dumps(payload))
+    ok, evidence = gate.check_code10(tmp_path)
+    assert not ok
+    assert "reporter" in evidence
 
 
 def test_planted_engine_max_attempts_default_fails(tmp_path: Path) -> None:

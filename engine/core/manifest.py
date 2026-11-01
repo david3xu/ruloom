@@ -39,6 +39,12 @@ PERMISSION_KEYS = (
 #: it; neither the manifest nor the engine supplies a default value.
 MAX_ATTEMPTS_BINDING = "max_attempts"
 
+#: Adapters the composition root knows how to build. A role binding that
+#: declares ``requires.open_weight`` must use the local adapter: an open
+#: weight requirement bound to the hosted adapter is refused at load.
+HOSTED_ADAPTER = "meta_cli"
+LOCAL_ADAPTER = "glimmer_local"
+
 
 class ManifestError(Exception):
     """A profile manifest is missing, unreadable, or invalid."""
@@ -181,6 +187,59 @@ def _check_checks(checks: Any, manifest_id: str) -> list[dict[str, Any]]:
     return out
 
 
+def _check_models(payload: Mapping[str, Any], manifest_id: str) -> dict[str, Any]:
+    """Validate the ``models`` block: fail-closed bindings and budget shape.
+
+    A role binding may declare ``requires: {open_weight: true}``. Such a
+    role must bind the local adapter: binding it to the hosted adapter is
+    refused loudly here, before any run, so an open-weight requirement can
+    never silently ride on a hosted model. ``models.budget`` is optional at
+    load (older manifests omit it and run unbounded), but when present it
+    must declare a positive integer ``max_tokens_per_run`` ceiling.
+    """
+    models = payload.get("models", {})
+    if not isinstance(models, dict):
+        raise ManifestError(f"manifest {manifest_id!r}: 'models' must be "
+                            "an object")
+    roles = models.get("roles", {})
+    if not isinstance(roles, dict):
+        raise ManifestError(f"manifest {manifest_id!r}: 'models.roles' must "
+                            "be an object")
+    for role, binding in roles.items():
+        if not isinstance(binding, Mapping):
+            continue
+        requires = binding.get("requires", {})
+        wants_open = (
+            isinstance(requires, Mapping)
+            and requires.get("open_weight") is True
+        )
+        if wants_open:
+            adapter = binding.get("adapter", HOSTED_ADAPTER)
+            if adapter != LOCAL_ADAPTER:
+                raise ManifestError(
+                    f"manifest {manifest_id!r}: role {role!r} requires "
+                    f"open_weight but is bound to hosted adapter "
+                    f"{adapter!r}: refusing (no run)"
+                )
+    budget = models.get("budget", None)
+    if budget is not None:
+        if not isinstance(budget, dict):
+            raise ManifestError(
+                f"manifest {manifest_id!r}: 'models.budget' must be an object"
+            )
+        ceiling = budget.get("max_tokens_per_run")
+        if (
+            not isinstance(ceiling, int)
+            or isinstance(ceiling, bool)
+            or ceiling < 1
+        ):
+            raise ManifestError(
+                f"manifest {manifest_id!r}: 'models.budget' must declare a "
+                "positive integer 'max_tokens_per_run'"
+            )
+    return dict(models)
+
+
 def validate_manifest(payload: Mapping[str, Any]) -> Manifest:
     """Validate a decoded manifest document; raise ManifestError if invalid."""
     if not isinstance(payload, Mapping):
@@ -216,10 +275,7 @@ def validate_manifest(payload: Mapping[str, Any]) -> Manifest:
         capabilities,
         manifest_id,
     )
-    models = payload.get("models", {})
-    if not isinstance(models, dict):
-        raise ManifestError(f"manifest {manifest_id!r}: 'models' must be "
-                            "an object")
+    models = _check_models(payload, manifest_id)
     limits = payload.get("limits", {})
     if not isinstance(limits, dict):
         raise ManifestError(f"manifest {manifest_id!r}: 'limits' must be "

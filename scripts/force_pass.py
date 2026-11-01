@@ -407,6 +407,106 @@ def _manifest_files(root: Path) -> list[Path]:
     )
 
 
+def _manifest_payloads(root: Path) -> list[tuple[str, dict]]:
+    out: list[tuple[str, dict]] = []
+    for path in _manifest_files(root):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if isinstance(payload, dict):
+            out.append((_rel(path, root), payload))
+    return out
+
+
+def check_code9(root: Path) -> tuple[bool, str]:
+    """FP-CODE-9: open-weight requirements never ride on a hosted adapter.
+
+    Any role binding declaring ``requires.open_weight`` in any profile
+    manifest must bind the ``glimmer_local`` adapter. A hosted
+    (``meta_cli``) adapter on such a role fails the gate.
+    """
+    payloads = _manifest_payloads(root)
+    if not payloads:
+        return False, "no profile manifests (profiles/*/profile.json) found"
+    problems: list[str] = []
+    checked = 0
+    for rel, payload in payloads:
+        models = payload.get("models", {})
+        roles = models.get("roles", {}) if isinstance(models, dict) else {}
+        if not isinstance(roles, dict):
+            continue
+        for role, binding in roles.items():
+            if not isinstance(binding, dict):
+                continue
+            requires = binding.get("requires", {})
+            if (
+                isinstance(requires, dict)
+                and requires.get("open_weight") is True
+            ):
+                checked += 1
+                adapter = binding.get("adapter", "meta_cli")
+                if adapter != "glimmer_local":
+                    problems.append(
+                        f"{rel}: role {role!r} requires open_weight but "
+                        f"binds adapter {adapter!r}"
+                    )
+    if problems:
+        return False, "; ".join(problems)
+    return (
+        True,
+        f"open_weight bindings all local "
+        f"({checked} open_weight roles in {len(payloads)} manifests)",
+    )
+
+
+def check_code10(root: Path) -> tuple[bool, str]:
+    """FP-CODE-10: budgets declared; the reporter seat stays disabled.
+
+    Every profile manifest declares
+    ``models.budget.max_tokens_per_run``, and the hylogger manifest
+    contains a disabled ``reporter`` role (the seat exists but can never
+    resolve, so no reporter capability can be wired to it).
+    """
+    payloads = _manifest_payloads(root)
+    if not payloads:
+        return False, "no profile manifests (profiles/*/profile.json) found"
+    problems: list[str] = []
+    hylogger_seen = False
+    for rel, payload in payloads:
+        models = payload.get("models", {})
+        budget = models.get("budget", {}) if isinstance(models, dict) else {}
+        ceiling = budget.get("max_tokens_per_run") if isinstance(budget, dict) else None
+        if (
+            not isinstance(ceiling, int)
+            or isinstance(ceiling, bool)
+            or ceiling < 1
+        ):
+            problems.append(
+                f"{rel}: missing models.budget.max_tokens_per_run"
+            )
+        if payload.get("id") == "hylogger":
+            hylogger_seen = True
+            roles = models.get("roles", {}) if isinstance(models, dict) else {}
+            reporter = roles.get("reporter", {}) if isinstance(roles, dict) else {}
+            if (
+                not isinstance(reporter, dict)
+                or reporter.get("enabled", True) is not False
+            ):
+                problems.append(
+                    f"{rel}: missing disabled reporter role"
+                )
+    if not hylogger_seen:
+        problems.append("no hylogger manifest found")
+    if problems:
+        return False, "; ".join(problems)
+    return (
+        True,
+        f"budgets declared and reporter disabled "
+        f"({len(payloads)} manifests)",
+    )
+
+
 def check_code7(root: Path) -> tuple[bool, str]:
     """FP-CODE-7: manifests use only step/loop/gate; loops bind max_attempts.
 
@@ -528,6 +628,8 @@ CHECKS = (
     ("FP-CODE-6", check_code6),
     ("FP-CODE-7", check_code7),
     ("FP-CODE-8", check_code8),
+    ("FP-CODE-9", check_code9),
+    ("FP-CODE-10", check_code10),
 )
 
 

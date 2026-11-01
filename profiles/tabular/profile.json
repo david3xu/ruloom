@@ -124,6 +124,9 @@
         "reasoning_effort": "max",
         "structured_output": true
       }
+    },
+    "budget": {
+      "max_tokens_per_run": 250000
     }
   },
   "limits": {

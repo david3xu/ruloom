@@ -63,6 +63,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="enable the optional advisory local text-critique step",
     )
+    run.add_argument(
+        "--role-model",
+        action="append",
+        default=[],
+        metavar="ROLE=MODEL",
+        help="override a role's model id (repeatable; beats env/profile)",
+    )
+    run.add_argument(
+        "--role-effort",
+        action="append",
+        default=[],
+        metavar="ROLE=EFFORT",
+        help="override a role's reasoning effort (repeatable)",
+    )
+    run.add_argument(
+        "--role-base-url",
+        action="append",
+        default=[],
+        metavar="ROLE=URL",
+        help="override a local role's base URL (repeatable)",
+    )
     return parser
 
 
@@ -85,15 +106,175 @@ def load_registry(profile_id: str) -> Mapping[str, Any]:
     return capabilities
 
 
+#: Engine defaults applied when neither CLI, environment, nor manifest
+#: supplies a value for a role field.
+DEFAULT_MODEL_BY_ADAPTER = {
+    "meta_cli": "muse-spark-1.3",
+    "glimmer_local": "muse-glimmer-30B",
+}
+DEFAULT_EFFORT = "max"
+
+#: Override precedence for role fields (highest first): CLI flags, then
+#: ``RULOOM_ROLE_<ROLE>_<FIELD>`` environment variables, then the manifest
+#: binding, then the adapter default. The composition root records which
+#: level supplied every effective value in the run log.
+SOURCE_CLI = "cli"
+SOURCE_ENV = "env"
+SOURCE_PROFILE = "profile"
+SOURCE_DEFAULT = "default"
+
+#: Environment variable suffixes per role field (role name uppercased).
+ENV_SUFFIXES = {
+    "model": "MODEL",
+    "reasoning_effort": "EFFORT",
+    "base_url": "BASE_URL",
+}
+
+
+def parse_role_assignment(spec: str, flag: str) -> tuple[str, str]:
+    """Split one ``ROLE=VALUE`` CLI override; a missing ``=`` fails loudly."""
+    if "=" not in spec:
+        raise ValueError(
+            f"{flag} expects ROLE=VALUE, got {spec!r}"
+        )
+    role, _, value = spec.partition("=")
+    role = role.strip().lower()
+    value = value.strip()
+    if not role or not value:
+        raise ValueError(
+            f"{flag} expects ROLE=VALUE, got {spec!r}"
+        )
+    return role, value
+
+
+def resolve_role_bindings(
+    manifest: Any,
+    *,
+    cli_models: Sequence[str] | None = None,
+    cli_efforts: Sequence[str] | None = None,
+    cli_base_urls: Sequence[str] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, str]]]:
+    """Apply CLI > env > profile > default precedence to every role.
+
+    Returns ``(resolved, sources)``: the effective binding per role and,
+    per role, the source level (``cli``/``env``/``profile``/``default``)
+    that supplied each field. Unknown roles in CLI overrides fail loudly;
+    so does a resolved open-weight requirement on the hosted adapter.
+    """
+    import os as _os
+
+    environment: Mapping[str, str] = _os.environ if env is None else env
+    cli_model_map: dict[str, str] = {}
+    for spec in cli_models or []:
+        role, value = parse_role_assignment(spec, "--role-model")
+        cli_model_map[role] = value
+    cli_effort_map: dict[str, str] = {}
+    for spec in cli_efforts or []:
+        role, value = parse_role_assignment(spec, "--role-effort")
+        cli_effort_map[role] = value
+    cli_base_url_map: dict[str, str] = {}
+    for spec in cli_base_urls or []:
+        role, value = parse_role_assignment(spec, "--role-base-url")
+        cli_base_url_map[role] = value
+
+    declared = manifest.models.get("roles", {})
+    if not isinstance(declared, dict):
+        declared = {}
+    for role in (
+        list(cli_model_map) + list(cli_effort_map) + list(cli_base_url_map)
+    ):
+        if role not in declared:
+            raise ManifestError(
+                f"role override for unknown role {role!r}: the manifest "
+                "binds " + ", ".join(sorted(declared))
+            )
+    resolved: dict[str, dict[str, Any]] = {}
+    sources: dict[str, dict[str, str]] = {}
+    for role, binding in declared.items():
+        base = dict(binding) if isinstance(binding, Mapping) else {}
+        adapter = base.get("adapter", "meta_cli")
+        role_sources: dict[str, str] = {}
+
+        if role in cli_model_map:
+            base["model"] = cli_model_map[role]
+            role_sources["model"] = SOURCE_CLI
+        elif f"RULOOM_ROLE_{role.upper()}_MODEL" in environment:
+            base["model"] = environment[f"RULOOM_ROLE_{role.upper()}_MODEL"]
+            role_sources["model"] = SOURCE_ENV
+        elif isinstance(binding, Mapping) and binding.get("model"):
+            role_sources["model"] = SOURCE_PROFILE
+        else:
+            base["model"] = DEFAULT_MODEL_BY_ADAPTER.get(adapter, "muse-spark-1.3")
+            role_sources["model"] = SOURCE_DEFAULT
+
+        if role in cli_effort_map:
+            base["reasoning_effort"] = cli_effort_map[role]
+            role_sources["reasoning_effort"] = SOURCE_CLI
+        elif f"RULOOM_ROLE_{role.upper()}_EFFORT" in environment:
+            base["reasoning_effort"] = environment[
+                f"RULOOM_ROLE_{role.upper()}_EFFORT"
+            ]
+            role_sources["reasoning_effort"] = SOURCE_ENV
+        elif isinstance(binding, Mapping) and binding.get("reasoning_effort"):
+            role_sources["reasoning_effort"] = SOURCE_PROFILE
+        else:
+            base["reasoning_effort"] = DEFAULT_EFFORT
+            role_sources["reasoning_effort"] = SOURCE_DEFAULT
+
+        if adapter == "glimmer_local":
+            if role in cli_base_url_map:
+                base["base_url"] = cli_base_url_map[role]
+                role_sources["base_url"] = SOURCE_CLI
+            elif f"RULOOM_ROLE_{role.upper()}_BASE_URL" in environment:
+                base["base_url"] = environment[
+                    f"RULOOM_ROLE_{role.upper()}_BASE_URL"
+                ]
+                role_sources["base_url"] = SOURCE_ENV
+            elif isinstance(binding, Mapping) and binding.get("base_url"):
+                role_sources["base_url"] = SOURCE_PROFILE
+            else:
+                from models.glimmer import DEFAULT_BASE_URL
+
+                base["base_url"] = DEFAULT_BASE_URL
+                role_sources["base_url"] = SOURCE_DEFAULT
+
+        requires = base.get("requires", {})
+        if (
+            isinstance(requires, Mapping)
+            and requires.get("open_weight") is True
+            and base.get("adapter", "meta_cli") != "glimmer_local"
+        ):
+            raise ManifestError(
+                f"role {role!r} requires open_weight but resolves to the "
+                "hosted adapter: refusing (no run)"
+            )
+        resolved[role] = base
+        sources[role] = role_sources
+    return resolved, sources
+
+
 def default_client(role: str, config: Mapping[str, Any]) -> StructuredModel:
     """Build the model client for one resolved role (composition root).
 
     Each role binding declares its adapter: ``meta_cli`` (the hosted
     ``muse exec`` adapter, the default for existing roles) or
     ``glimmer_local`` (the local OpenAI-compatible server). An unknown
-    adapter name fails loudly.
+    adapter name fails loudly, as does an open-weight requirement bound
+    to the hosted adapter (fail-closed: the refusal happens here, before
+    any model call, even for programmatically built configs).
     """
     adapter = config.get("adapter", "meta_cli")
+    requires = config.get("requires", {})
+    if (
+        isinstance(requires, Mapping)
+        and requires.get("open_weight") is True
+        and adapter != "glimmer_local"
+    ):
+        raise ValueError(
+            f"role {role!r} requires open_weight but is bound to hosted "
+            f"adapter {adapter!r}: refusing (no run)"
+        )
     if adapter == "glimmer_local":
         from models.glimmer import DEFAULT_BASE_URL, GlimmerLocalModel
 
@@ -135,24 +316,32 @@ def main(
                 profiles_package.manifest_path(profile_id)
             )
             registry = load_registry(profile_id)
+            resolved, role_sources = resolve_role_bindings(
+                manifest,
+                cli_models=args.role_model,
+                cli_efforts=args.role_effort,
+                cli_base_urls=args.role_base_url,
+            )
         except (ValueError, ManifestError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
-        def factory(role: str, config: Mapping[str, Any]) -> Any:
+        def resolving_factory(role: str, config: Mapping[str, Any]) -> Any:
             if model is not None:
                 return model
-            return default_client(role, config)
+            return default_client(role, resolved[role])
 
         code, _outcome = execute(
             manifest,
             registry,
             source=Path(args.source),
             max_attempts=args.max_attempts,
-            model_factory=factory,
+            model_factory=resolving_factory,
             out=Path(args.out),
             images_dir=Path(args.images) if args.images is not None else None,
             local_critic=args.local_critic,
+            role_bindings=resolved,
+            role_binding_sources=role_sources,
         )
         return code
     return 1

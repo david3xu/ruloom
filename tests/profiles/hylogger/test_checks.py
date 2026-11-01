@@ -2,8 +2,14 @@
 
 import hashlib
 
+import pytest
+
 from profiles.hylogger.analysis.calibration import Band, Thresholds
-from profiles.hylogger.validation.checks import check_artifact_csv, run_checks
+from profiles.hylogger.validation.checks import (
+    band_position,
+    check_artifact_csv,
+    run_checks,
+)
 from profiles.hylogger.validation.dataset import to_csv_bytes
 from profiles.hylogger.intake.reader import Sample
 
@@ -216,6 +222,77 @@ def test_image_checks_fail_for_foreign_synthetic() -> None:
     )
     assert report.verdict == "fail"
     assert "image_histogram_distance" in report.failed
+
+
+def test_band_position_endpoints_and_midpoint() -> None:
+    assert band_position(0.0, 0.0, 1.0) == 0.0
+    assert band_position(0.5, 0.0, 1.0) == 0.5
+    assert band_position(1.0, 0.0, 1.0) == 1.0
+    assert band_position(0.5, 0.0, 2.0) == 0.25
+    assert band_position(0.003472, 0.003472, 0.008898) == 0.0
+    assert band_position(0.008898, 0.003472, 0.008898) == 1.0
+
+
+def test_band_position_outside_is_signed_distance() -> None:
+    assert band_position(-0.1, 0.0, 0.2) == pytest.approx(-0.5)
+    assert band_position(0.3, 0.0, 0.2) == pytest.approx(1.5)
+    assert band_position(0.0, 0.0, 0.0) == 0.0
+
+
+def test_band_checks_carry_positions_and_keep_verdict() -> None:
+    report = run_checks(_base(), _thresholds(), source_samples=_base(),
+                        artifact_name="base")
+    assert report.verdict == "pass"
+    spacing = next(r for r in report.results if r.name == "spacing_median")
+    assert spacing.status == "pass"
+    assert spacing.band_position is not None
+    assert 0.0 <= spacing.band_position <= 1.0
+    skipped = next(r for r in report.results if r.name == "swir_answer_rate")
+    assert skipped.status == "skip"
+    assert skipped.band_position is None
+    for result in report.results:
+        if result.status == "fail":
+            assert result.band_position is not None
+            assert (
+                result.band_position < 0.0 or result.band_position > 1.0
+            )
+
+
+def test_failing_band_reports_out_of_band_distance() -> None:
+    wide = [
+        Sample(depth_m=s.depth_m * 10, valid=s.valid,
+               swir_group=s.swir_group, tir_group=s.tir_group)
+        for s in _base()
+    ]
+    report = run_checks(wide, _thresholds(), source_samples=_base())
+    assert report.verdict == "fail"
+    spacing = next(r for r in report.results if r.name == "spacing_median")
+    assert spacing.status == "fail"
+    assert spacing.band_position is not None
+    assert spacing.band_position > 1.0
+
+
+def test_fidelity_checks_carry_tvd_positions() -> None:
+    report = run_checks(_base(), _thresholds(), source_samples=_base())
+    swir_fid = next(r for r in report.results if r.name == "swir_fidelity")
+    assert swir_fid.status == "pass"
+    assert swir_fid.band_position == 0.0
+    tir_fid = next(r for r in report.results if r.name == "tir_fidelity")
+    assert tir_fid.status == "pass"
+    assert tir_fid.band_position == 0.0
+
+
+def test_report_dict_carries_positions_without_renaming() -> None:
+    report = check_artifact_csv(to_csv_bytes(_base()), _thresholds(),
+                                source_samples=_base())
+    body = report.to_dict()
+    assert set(body) == {
+        "artifact_name", "artifact_sha256", "verdict", "results",
+    }
+    for entry in body["results"]:
+        assert set(entry) == {"name", "status", "detail", "band_position"}
+    spacing = next(e for e in body["results"] if e["name"] == "spacing_median")
+    assert 0.0 <= spacing["band_position"] <= 1.0
 
 
 def test_image_checks_fail_for_wrong_dimensions() -> None:

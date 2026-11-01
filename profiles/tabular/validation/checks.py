@@ -17,13 +17,36 @@ from .dataset import read_csv_bytes, to_csv_bytes
 PASS, FAIL, SKIP = "pass", "fail", "skip"
 
 
+def band_position(value: float, lo: float, hi: float) -> float:
+    """Fractional position of ``value`` across the band ``[lo, hi]``.
+
+    Inside the band the value maps to ``[0.0, 1.0]`` (``lo`` -> ``0.0``,
+    midpoint -> ``0.5``, ``hi`` -> ``1.0``). Outside, the result is the
+    signed distance in band-widths: negative below ``lo``, above ``1.0``
+    past ``hi``. A zero-width band reports ``0.0`` on the line and a unit
+    step off it. Pass/fail semantics never read this value.
+    """
+    width = hi - lo
+    if width == 0:
+        if value == lo:
+            return 0.0
+        return 1.0 if value > hi else -1.0
+    return (value - lo) / width
+
+
 @dataclass(frozen=True)
 class CheckResult:
-    """One named check outcome; ``status`` is pass, fail or skip."""
+    """One named check outcome; ``status`` is pass, fail or skip.
+
+    ``band_position`` is the measured value's fractional position across
+    its band (``None`` for checks with no band). It rides alongside
+    pass/fail and never changes it.
+    """
 
     name: str
     status: str
     detail: str
+    band_position: float | None = None
 
 
 @dataclass
@@ -53,7 +76,12 @@ class CheckReport:
             "artifact_sha256": self.artifact_sha256,
             "verdict": self.verdict,
             "results": [
-                {"name": r.name, "status": r.status, "detail": r.detail}
+                {
+                    "name": r.name,
+                    "status": r.status,
+                    "detail": r.detail,
+                    "band_position": r.band_position,
+                }
                 for r in self.results
             ],
         }
@@ -129,12 +157,14 @@ def run_checks(
         tolerance = thresholds.mean_relative_tolerance
         reference = abs(profile_mean) or 1.0
         distance = abs(observed - profile_mean) / reference
+        position = band_position(distance, 0.0, tolerance)
         if distance <= tolerance:
             add(
                 CheckResult(
                     "mean_value",
                     PASS,
                     f"relative drift {distance:.6f} <= {tolerance}",
+                    position,
                 )
             )
         else:
@@ -143,6 +173,7 @@ def run_checks(
                     "mean_value",
                     FAIL,
                     f"relative drift {distance:.6f} > {tolerance}",
+                    position,
                 )
             )
     return report

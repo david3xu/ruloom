@@ -61,6 +61,7 @@ class EngineCheckResult:
     artifact_sha256: str
     verifier: str
     detail: str = ""
+    band_position: float | None = None
 
 
 @dataclass

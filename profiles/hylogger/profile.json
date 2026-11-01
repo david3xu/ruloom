@@ -259,8 +259,22 @@
         "provider": "local",
         "model": "muse-glimmer-30B",
         "adapter": "glimmer_local",
-        "structured_output": true
+        "structured_output": true,
+        "requires": {
+          "open_weight": true
+        }
+      },
+      "reporter": {
+        "provider": "meta-api",
+        "model": "muse-wonder-1.0",
+        "adapter": "meta_cli",
+        "reasoning_effort": "max",
+        "structured_output": true,
+        "enabled": false
       }
+    },
+    "budget": {
+      "max_tokens_per_run": 500000
     }
   },
   "limits": {
