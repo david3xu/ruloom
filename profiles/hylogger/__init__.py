@@ -15,6 +15,7 @@ from .calibration import (
 )
 from .checks import CheckReport, CheckResult, check_artifact_csv, run_checks
 from .dataset import read, read_csv_bytes, to_csv_bytes
+from .generate import generate, generate_samples
 from .reader import Sample, read_scalar_csv, read_scalar_csvs
 from .statistics import Profile, build_stats
 
@@ -27,6 +28,8 @@ __all__ = [
     "to_csv_bytes",
     "read_csv_bytes",
     "read",
+    "generate",
+    "generate_samples",
     "Band",
     "HoleScalars",
     "Thresholds",
