@@ -1,6 +1,6 @@
 # Ruloom
 
-**Synthetic data, woven from reality. Backed by evidence.*
+**Synthetic data, woven from reality. Backed by evidence.**
 
 A plain-language dataset requirement becomes reproducible synthetic data,
 calibrated against real data, proven by executed checks, delivered as a CC0
