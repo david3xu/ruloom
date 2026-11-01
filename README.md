@@ -66,8 +66,11 @@ First-stage product is complete: one command runs the full lifecycle
 release). Verified on a real PDD446 run: plan `{seed 42, n_rows 39300}`,
 validation verdict pass, artifact `be9e26d7e664…`, release ZIP
 `46c7c07110c5…` with a hash-chained run log that verifies end to end.
-Test suite: 134 passed. Force-pass gate (`scripts/force_pass.py`):
-7/7 rules PASS. Run it with:
+Test suite: 184 passed. Force-pass gate (`scripts/force_pass.py`):
+10/10 rules PASS. The engine is generic: profiles declare their
+step/loop/gate graphs and permissions, and the same engine code runs
+the HyLogger profile and the common tabular profile
+(`ruloom run --profile tabular ...`). Run it with:
 
 ```bash
 .venv/bin/ruloom run data/sources/PDD446-scalars.csv --max-attempts 3
