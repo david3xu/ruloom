@@ -68,7 +68,11 @@ def test_mutation_during_review_must_not_release(tmp_path: Path) -> None:
 
     def ask(prompt: str) -> str:
         if prompt.startswith("Decision"):
-            target = next((out / "runs").glob("*/data.csv"))
+            # Mutate the run's own packaged copy: exactly one run.json
+            # exists at gate time, so this targets the directory the
+            # packager reads (the payload cache has no run.json).
+            run_dir = next((out / "runs").glob("*/run.json")).parent
+            target = run_dir / "data.csv"
             target.write_text("value,label\n999,UNVALIDATED\n", encoding="utf-8")
             return "accept"
         return "accepted after mutation"

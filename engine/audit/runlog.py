@@ -46,6 +46,17 @@ class RunLog:
     def __init__(self, run_id: str | None = None) -> None:
         self.run_id = run_id or uuid.uuid4().hex
         self.events: list[dict[str, Any]] = []
+        self._sink: Any = None
+
+    def set_sink(self, sink: Any) -> None:
+        """Register a write-through sink called with every appended event.
+
+        The engine sets a durable store here so each transition is
+        persisted as it occurs, including failures that never reach a
+        final packaging step. A failing sink never breaks the in-memory
+        chain: the event is already appended before the sink runs.
+        """
+        self._sink = sink
 
     def append(
         self,
@@ -71,6 +82,8 @@ class RunLog:
         }
         event = {**body, "event_hash": sha256_canonical(body)}
         self.events.append(event)
+        if self._sink is not None:
+            self._sink(event)
         return event
 
     def verify(self) -> bool:

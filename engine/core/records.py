@@ -97,13 +97,26 @@ class EngineCheckResult:
 
 @dataclass
 class Attempt:
-    """One pass through a loop body: plan, artifacts, checks, status."""
+    """One pass through a loop body: plan, artifacts, checks, status.
+
+    An attempt is immutable once the engine records it: it binds the
+    manifest digest the run executed under, the source hash measured at
+    intake, the complete resolved plan (including its seed), the
+    artifact hashes produced from that plan, the check results measured
+    over those artifacts, and the model tokens spent inside the attempt.
+    Selecting a best attempt selects this whole record; packaging must
+    write the selected record's own plan, seed, and artifact together.
+    """
 
     n: int
     plan_ref: dict[str, Any] = field(default_factory=dict)
     artifact_refs: list[str] = field(default_factory=list)
     check_results: list[EngineCheckResult] = field(default_factory=list)
     status: str = ""
+    manifest_digest: str = ""
+    source_sha256: str = ""
+    seed: Any = None
+    tokens: int = 0
 
     @property
     def failed(self) -> list[str]:
@@ -117,6 +130,10 @@ class Attempt:
             "artifact_refs": list(self.artifact_refs),
             "check_results": [_jsonable(r) for r in self.check_results],
             "status": self.status,
+            "manifest_digest": self.manifest_digest,
+            "source_sha256": self.source_sha256,
+            "seed": self.seed,
+            "tokens": self.tokens,
         }
 
 

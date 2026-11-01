@@ -329,9 +329,13 @@ def _run(
     ]
     monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(answers) + "\n"))
     code = cli_module.main(list(argv), model=models)  # type: ignore[arg-type]
-    children = list((out_dir / "runs").iterdir()) if (out_dir / "runs").is_dir() else []
-    assert len(children) <= 1
-    return code, children[0] if children else None
+    run_dirs = (
+        [c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()]
+        if (out_dir / "runs").is_dir()
+        else []
+    )
+    assert len(run_dirs) <= 1
+    return code, run_dirs[0] if run_dirs else None
 
 
 def _advisory_events(artifact: Path) -> list[dict[str, Any]]:
@@ -469,5 +473,10 @@ def test_unreachable_server_fails_loudly(
         tmp_path, monkeypatch, models, extra_argv=["--local-critic"]
     )
     assert code == EXIT_FAILED
-    assert artifact is None
+    # The required critic's failure still leaves a durable failed record.
+    assert artifact is not None
+    assert not (artifact / "release.zip").exists()
+    record = json.loads((artifact / "run.json").read_text(encoding="utf-8"))
+    assert record["status"] == "error"
+    assert "connection refused by glimmer" in record["error"]
     assert "connection refused by glimmer" in capsys.readouterr().out

@@ -57,12 +57,14 @@
       "impl": "hylogger.imaging.critic",
       "calls_model": "critic",
       "advisory": true,
+      "critic_policy": "optional",
       "stage": "image_critique"
     },
     "local_critique": {
       "impl": "hylogger.validation.critique",
       "calls_model": "local_critic",
       "advisory": true,
+      "critic_policy": "required",
       "stage": "local_critique"
     },
     "package_artifact": {

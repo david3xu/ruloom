@@ -105,6 +105,43 @@ def test_unknown_permission_rejected() -> None:
         validate_manifest(payload)
 
 
+def test_critic_policy_declarations_load() -> None:
+    payload = _base_manifest()
+    payload["capabilities"]["note"] = {
+        "impl": "fake.note",
+        "advisory": True,
+        "critic_policy": "optional",
+    }
+    payload["capabilities"]["judge"]["critic_policy"] = "required"
+    with pytest.raises(ManifestError):
+        # judge is not advisory: policy declarations need the seat.
+        validate_manifest(payload)
+    payload["capabilities"]["judge"].pop("critic_policy")
+    payload["capabilities"]["judge"]["advisory"] = True
+    payload["capabilities"]["judge"]["critic_policy"] = "required"
+    manifest = validate_manifest(payload)
+    assert manifest.capabilities["note"]["critic_policy"] == "optional"
+    assert manifest.capabilities["judge"]["critic_policy"] == "required"
+
+
+def test_unknown_critic_policy_rejected() -> None:
+    payload = _base_manifest()
+    payload["capabilities"]["note"] = {
+        "impl": "fake.note",
+        "advisory": True,
+        "critic_policy": "sometimes",
+    }
+    with pytest.raises(ManifestError):
+        validate_manifest(payload)
+
+
+def test_critic_policy_on_non_advisory_rejected() -> None:
+    payload = _base_manifest()
+    payload["capabilities"]["decide"]["critic_policy"] = "optional"
+    with pytest.raises(ManifestError):
+        validate_manifest(payload)
+
+
 def test_engine_api_mismatch_rejected() -> None:
     payload = _base_manifest()
     payload["engine_api"] = ENGINE_API + 1

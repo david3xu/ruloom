@@ -1,10 +1,12 @@
 """Audit counterexample fixture: R10 best-attempt evidence names another plan.
 
-Restoring the best attempt restores its artifact and verdict but not
-its plan, so the packager writes the last attempted plan instead. The
-test asserts the corrected behaviour (packaged plan and seed describe
-the packaged artifact); it currently fails because the evidence pairs
-seed-11 data with a seed-22 plan, recorded as strict xfail.
+Restoring the best attempt used to restore its artifact and verdict
+but not its plan, so the packager wrote the last attempted plan.
+Every attempt is now an immutable record binding the manifest digest,
+the source hash, the complete resolved plan, the seed, the artifact
+manifest, the check results, and the resource use; selecting a best
+attempt selects the whole record, and packaging writes the selected
+attempt's own plan, seed, and artifact together.
 """
 
 from __future__ import annotations
@@ -13,16 +15,10 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-import pytest
-
 from engine.core.manifest import load_manifest
-from engine.core.runner import EXIT_FAILED, execute
+from engine.core.runner import EXIT_FAILED, EXIT_OK, execute
 from models.base import Completion, Usage
 from profiles.tabular.capabilities import CAPABILITIES
-
-needs_fix = pytest.mark.xfail(
-    strict=True, reason="audit R10 open: best-attempt plan/seed mismatch"
-)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = load_manifest(REPO_ROOT / "profiles" / "tabular" / "profile.json")
@@ -58,33 +54,103 @@ def _write_source(path: Path) -> Path:
     return csv_path
 
 
-@needs_fix
-def test_best_attempt_packages_its_own_plan(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = _write_source(tmp_path)
-    thresholds = tmp_path / "strict.json"
-    thresholds.write_text('{"mean_relative_tolerance": 0.0}', encoding="utf-8")
-    monkeypatch.setenv("RULOOM_THRESHOLDS", str(thresholds))
+def _write_thresholds(path: Path, tolerance: float) -> Path:
+    thresholds = path / "strict.json"
+    thresholds.write_text(
+        json.dumps({"mean_relative_tolerance": tolerance}), encoding="utf-8"
+    )
+    return thresholds
 
-    code, result = execute(
+
+def _run(
+    tmp_path: Path,
+    plans: Sequence[Mapping[str, Any]],
+    answers: Sequence[str],
+    tolerance: float,
+    monkeypatch: Any,
+) -> tuple[int, dict[str, Any]]:
+    source = _write_source(tmp_path)
+    monkeypatch.setenv(
+        "RULOOM_THRESHOLDS", str(_write_thresholds(tmp_path, tolerance))
+    )
+    queue = list(answers)
+    client = FakeModel(plans)
+    return execute(
         MANIFEST,
         CAPABILITIES,
         source=source,
-        max_attempts=2,
-        model_factory=lambda role, config: FakeModel(
-            [{"seed": 11, "n_rows": 4}, {"seed": 22, "n_rows": 8}]
-        ),
+        max_attempts=len(plans),
+        model_factory=lambda role, config: client,
         out=tmp_path / "out",
         say=lambda message: None,
-        ask=lambda prompt: "accept",
+        ask=lambda prompt: queue.pop(0),
+    )
+
+
+def _packaged_triple(artifact: Path) -> tuple[dict[str, Any], int, int]:
+    """The packaged (plan, seed, data-row) triple of a run directory."""
+    packaged = json.loads((artifact / "plan.json").read_text(encoding="utf-8"))
+    seed = int((artifact / "seed.txt").read_text(encoding="utf-8").strip())
+    data_rows = len((artifact / "data.csv").read_text(encoding="utf-8").splitlines()) - 1
+    return packaged, seed, data_rows
+
+
+def test_best_attempt_packages_its_own_plan(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Tied failing attempts package the first (best) attempt's triple."""
+    code, result = _run(
+        tmp_path,
+        [{"seed": 11, "n_rows": 4}, {"seed": 22, "n_rows": 8}],
+        ["accept", "note"],
+        tolerance=0.0,
+        monkeypatch=monkeypatch,
     )
     assert code == EXIT_FAILED
     assert result["attempts"] == 2
     artifact = Path(str(result["artifact_dir"]))
-    packaged = json.loads((artifact / "plan.json").read_text(encoding="utf-8"))
-    data_rows = len((artifact / "data.csv").read_text(encoding="utf-8").splitlines()) - 1
-    assert packaged["n_rows"] == data_rows
-    assert packaged["seed"] == int(
-        (artifact / "seed.txt").read_text(encoding="utf-8").strip()
+    packaged, seed, data_rows = _packaged_triple(artifact)
+    assert packaged["n_rows"] == data_rows == 4
+    assert packaged["seed"] == seed == 11
+
+
+def test_first_attempt_success_packages_its_own_plan(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A passing first attempt is the best attempt: package its triple."""
+    code, result = _run(
+        tmp_path,
+        [{"seed": 2, "n_rows": 4}],
+        ["accept", "first accepted"],
+        tolerance=0.05,
+        monkeypatch=monkeypatch,
     )
+    assert code == EXIT_OK
+    assert result["status"] == "released"
+    assert result["attempts"] == 1
+    artifact = Path(str(result["artifact_dir"]))
+    packaged, seed, data_rows = _packaged_triple(artifact)
+    assert packaged["n_rows"] == data_rows == 4
+    assert packaged["seed"] == seed == 2
+    assert (artifact / "release.zip").is_file()
+
+
+def test_final_success_packages_the_last_plan(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Fail-then-pass packages the final (best) attempt's triple."""
+    code, result = _run(
+        tmp_path,
+        [{"seed": 11, "n_rows": 4}, {"seed": 7, "n_rows": 6}],
+        ["accept", "repaired run accepted"],
+        tolerance=0.05,
+        monkeypatch=monkeypatch,
+    )
+    assert code == EXIT_OK
+    assert result["status"] == "released"
+    assert result["attempts"] == 2
+    artifact = Path(str(result["artifact_dir"]))
+    packaged, seed, data_rows = _packaged_triple(artifact)
+    assert packaged["n_rows"] == data_rows == 6
+    assert packaged["seed"] == seed == 7
+    assert (artifact / "release.zip").is_file()

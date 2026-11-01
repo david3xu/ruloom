@@ -242,9 +242,11 @@ def _run_with_images(
     ]
     monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(answers) + "\n"))
     code = cli_module.main(list(argv), model=models)  # type: ignore[arg-type]
-    children = list((out_dir / "runs").iterdir())
-    assert len(children) == 1
-    return code, children[0]
+    run_dirs = [
+        c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()
+    ]
+    assert len(run_dirs) == 1
+    return code, run_dirs[0]
 
 
 def test_images_end_to_end_releases_with_advisory_note(
@@ -330,9 +332,11 @@ def test_no_images_flag_leaves_no_image_outputs(
     monkeypatch.setattr("sys.stdin", io.StringIO("accept\nok\n"))
     code = cli_module.main(list(argv), model=models)  # type: ignore[arg-type]
     assert code == EXIT_OK
-    children = list((out_dir / "runs").iterdir())
-    assert len(children) == 1
-    artifact = children[0]
+    run_dirs = [
+        c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()
+    ]
+    assert len(run_dirs) == 1
+    artifact = run_dirs[0]
     assert not (artifact / "synthetic.png").exists()
     assert not (artifact / "image-validation.json").exists()
     assert not (artifact / "image-statistics.json").exists()

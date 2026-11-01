@@ -61,3 +61,26 @@ open for RP-08. One declared exception: HyLogger `swir_answer_rate`
 is `required: false` with a manifest note because its calibrated band
 is vacuous (informative bands are RP-05). R01, R02, R03, R05, R06, R10
 remain open findings with strict-xfail counterexamples.
+
+RP-02 closed R05, R10, and R11. Every execution gets a unique run id
+and its own durable history under `runs/<run-id>/` (`run.json`,
+`events.jsonl` plus the legacy-named `run.jsonl`, per-attempt
+`plan.json`/`artifacts.json`/`checks.json`/`receipt.json`,
+`decision.json`, packaged evidence, and `release.zip` only on accept);
+identical output bytes only reuse the content-addressed payload cache
+(`runs/<payload-sha>/data.csv`), never another run's plan, log,
+decision, or release. Attempts are immutable records binding the
+manifest digest, source hash, plan, seed, artifacts, checks, and
+tokens, and packaging writes the selected attempt's own plan, seed,
+and artifact together. The run record is created before intake with
+write-through events, so a model failure after intake leaves a durable
+failed record; manifest row limits are enforced against the plan before
+generation; and each critic declares `required`/`optional`, so a
+required critic's budget failure blocks the run while an optional
+one's is recorded as `advisory-failed` without touching the verdict.
+`Q-ENGINE-R05`, `Q-ENGINE-R10`, and `Q-ENGINE-R11` are enforced. The
+governance and structure rules are registered as planned (not
+enforced): `Q-GOV-*`, `Q-STRUCT-*`, `Q-DOC-CLAIM-EVIDENCE`,
+`Q-GRAPH-AUTHORITY`, `Q-RELEASE-COMPLETE`. R06 stays open for RP-03
+(the in-review mutation probe was made deterministic against the run's
+own directory; no product change).

@@ -470,7 +470,9 @@ def test_registry_maps_every_audit_finding() -> None:
     payload = gate.load_registry(REPO_ROOT)
     assert payload is not None
     q_rules = [rule for rule in payload["rules"] if rule["id"].startswith("Q-")]
-    refs = sorted({rule.get("audit_ref") for rule in q_rules})
+    refs = sorted(
+        {rule.get("audit_ref") for rule in q_rules if rule.get("audit_ref")}
+    )
     assert refs == [f"R{i:02d}" for i in range(1, 13)]
     for rule in q_rules:
         assert rule["status"] in ("enforced", "open_finding", "planned")
@@ -481,6 +483,11 @@ def test_registry_maps_every_audit_finding() -> None:
             assert field in rule, (rule.get("id"), field)
         if rule["status"] == "open_finding":
             assert rule["audit_ref"] is not None
+        if rule.get("audit_ref") is None:
+            # Governance/structure rules carry no audit finding: they
+            # stay planned until an enforcing work package lands them.
+            assert rule["status"] == "planned"
+            assert rule.get("checker_implemented") is False
 
 
 def test_registry_implemented_checkers_exist() -> None:

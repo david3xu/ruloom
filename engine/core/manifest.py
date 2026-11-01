@@ -73,6 +73,12 @@ def _require(mapping: Mapping[str, Any], key: str, where: str) -> Any:
     return mapping[key]
 
 
+#: Declarations naming how an advisory critic's failure is handled.
+#: ``required`` blocks the run; ``optional`` records a visible
+#: advisory failure and the run continues on deterministic evidence.
+CRITIC_POLICIES = ("required", "optional")
+
+
 def _check_capability(
     cap_id: str, spec: Any, check_ids: set[str]
 ) -> dict[str, Any]:
@@ -81,7 +87,7 @@ def _check_capability(
     if not isinstance(spec.get("impl"), str) or not spec["impl"]:
         raise ManifestError(f"capability {cap_id!r}: missing 'impl' reference")
     for key in spec:
-        if key in ("impl", "stage"):
+        if key in ("impl", "stage", "critic_policy"):
             continue
         if key not in PERMISSION_KEYS:
             raise ManifestError(
@@ -98,6 +104,18 @@ def _check_capability(
         if flag in spec and not isinstance(spec[flag], bool):
             raise ManifestError(
                 f"capability {cap_id!r}: {flag!r} must be true or false"
+            )
+    policy = spec.get("critic_policy")
+    if policy is not None:
+        if policy not in CRITIC_POLICIES:
+            raise ManifestError(
+                f"capability {cap_id!r}: 'critic_policy' must be one of "
+                f"{', '.join(CRITIC_POLICIES)}, got {policy!r}"
+            )
+        if spec.get("advisory") is not True:
+            raise ManifestError(
+                f"capability {cap_id!r}: 'critic_policy' is declared only "
+                "on advisory capabilities"
             )
     _ = check_ids
     return dict(spec)

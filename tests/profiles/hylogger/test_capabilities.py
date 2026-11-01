@@ -132,13 +132,17 @@ def test_generic_path_matches_compat_path(
         monkeypatch.setattr("sys.stdin", io.StringIO("accept\nok\n"))
         code = cli_module.main(argv, model=FakeModel([{"seed": 8, "n_rows": 8}]))
         assert code == 0
-        children = list((out_dir / "runs").iterdir())
-        assert len(children) == 1
-        return children[0]
+        run_dirs = [
+            c for c in (out_dir / "runs").iterdir()
+            if (c / "run.json").is_file()
+        ]
+        assert len(run_dirs) == 1
+        return run_dirs[0]
 
     compat = run([])
     generic = run(["--profile", "hylogger"])
-    assert compat.name == generic.name
+    # Unique persistent runs: identical payload bytes, distinct run ids.
+    assert compat.name != generic.name
     for name in ("data.csv", "plan.json", "validation-report.json",
                  "seed.txt"):
         assert (compat / name).read_bytes() == (generic / name).read_bytes()
@@ -162,13 +166,15 @@ def test_generic_path_matches_compat_path(
         assert compat_sums[name] == generic_sums[name]
     # Provenance carries the per-run id, so only its content shape matches.
     for artifact in (compat, generic):
+        record = json.loads((artifact / "run.json").read_text(encoding="utf-8"))
         lines = (artifact / "provenance.md").read_text(
             encoding="utf-8"
         ).splitlines()
         assert lines[0] == "# Provenance"
         assert any(line.startswith("Run: ") for line in lines)
         assert any(
-            line.startswith("Artifact sha256: " + compat.name) for line in lines
+            line.startswith("Artifact sha256: " + record["artifact_sha256"])
+            for line in lines
         )
     for artifact in (compat, generic):
         with zipfile.ZipFile(artifact / "release.zip") as archive:

@@ -59,6 +59,7 @@ from .records import (
     Run,
     VALID_CHECK_STATUSES,
 )
+from .runstore import RunStore
 from .verdict import (
     CONDITION_IMAGES_PRESENT,
     applicable_required_ids,
@@ -334,6 +335,20 @@ class RunContext:
                 "is not a mapping"
             )
         self._engine.store_plan(_must_json(dict(plan), "plan", self.capability_id))
+
+    def plan_bounds(self) -> dict[str, Any]:
+        """Immutable copy of the manifest limits bounding plans."""
+        return self._engine.plan_bounds()
+
+    def selected_plan(self) -> dict[str, Any]:
+        """Immutable copy of the engine-selected attempt's plan.
+
+        Packaging must write this plan (and its seed) with the
+        selected artifact: the current plan may belong to a later,
+        worse attempt, while the selected record is the whole attempt
+        the engine chose.
+        """
+        return self._engine.selected_plan_record()
 
     def reference_stats(self) -> dict[str, Any]:
         """Immutable copy of the source-derived reference statistics."""
@@ -664,10 +679,19 @@ class _Runner:
             },
             limits=dict(manifest.limits),
         )
+        # The durable history exists before intake runs: the directory
+        # is created here and every later log event is persisted
+        # write-through, so even a failure in the first capability
+        # leaves a durable failed run record instead of an in-memory id.
+        self.store = RunStore(out, self.run)
+        self.log.set_sink(self.store.append_event)
         try:
             self.source_bytes = source.read_bytes()
         except OSError as exc:
-            raise RunnerError(f"cannot read source {source}: {exc}") from exc
+            failure = f"cannot read source {source}: {exc}"
+            self.log.append("source_intake", "error", {"error": failure})
+            self.store.update_run("error", error=failure)
+            raise RunnerError(failure) from exc
         self._models: dict[str, Any] = {}
 
     def say(self, message: str) -> None:
@@ -762,8 +786,56 @@ class _Runner:
             raise RunnerError("no generation plan recorded yet")
         return copy.deepcopy(self._plan)
 
+    def plan_bounds(self) -> dict[str, Any]:
+        """Immutable copy of the manifest limits bounding plans.
+
+        Profiles read this to give the plan schema its explicit
+        maximum (for example ``max_rows`` bounding ``n_rows``); the
+        engine enforces the same bounds authoritatively in
+        :meth:`store_plan` before any generation or check runs.
+        """
+        return copy.deepcopy(dict(self.manifest.limits))
+
+    def _enforce_plan_bounds(self, plan: Mapping[str, Any]) -> None:
+        """Refuse an over-limit plan before generation or checks run.
+
+        Every manifest ``max_<field>`` limit bounds the plan's
+        ``<field>`` entry, with ``max_rows`` bounding the plan's
+        ``n_rows`` entry. An oversize plan is refused loudly here -- at
+        plan-store time, so the generator never starts -- and the
+        refusal propagates to a durable failed run record through the
+        normal error path.
+        """
+        limits = self.manifest.limits
+        if not isinstance(limits, Mapping):
+            return
+        for key, ceiling in limits.items():
+            if not isinstance(key, str) or not key.startswith("max_"):
+                continue
+            if (
+                isinstance(ceiling, bool)
+                or not isinstance(ceiling, int)
+                or ceiling < 1
+            ):
+                continue
+            stripped = key[len("max_"):]
+            field = {"rows": "n_rows"}.get(stripped, stripped)
+            value = plan.get(field) if isinstance(plan, Mapping) else None
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= ceiling
+            ):
+                continue
+            raise RunnerError(
+                f"plan refused before generation: {field} {value} "
+                f"exceeds manifest limit {key} {ceiling} "
+                "(no work started; see the durable failed run record)"
+            )
+
     def store_plan(self, plan: dict[str, Any]) -> None:
         """Store a generation plan as the current plan."""
+        self._enforce_plan_bounds(plan)
         self._plan = copy.deepcopy(dict(plan))
 
     def reference_stats_record(self) -> dict[str, Any]:
@@ -815,6 +887,19 @@ class _Runner:
     def selected_artifact_record(self) -> str | None:
         """The engine-selected artifact hash, once a loop has decided."""
         return self._selected_artifact_sha
+
+    def selected_plan_record(self) -> dict[str, Any]:
+        """The engine-selected attempt's own plan (loud when undecided).
+
+        The current plan may belong to a later, worse attempt; only the
+        selected record's plan replays the selected artifact.
+        """
+        if self._best is None:
+            raise RunnerError(
+                "no attempt selected yet: the engine selects an attempt "
+                "only after a loop decides"
+            )
+        return copy.deepcopy(dict(self._best.plan_ref))
 
     def artifact_dir_record(self) -> str | None:
         """The engine-registered artifact directory, once prepared."""
@@ -903,16 +988,37 @@ class _Runner:
         self.pending_checks.extend(bound)
 
     def prepare_artifact_dir(self, capability_id: str) -> Path:
-        """Create and register the directory for the selected artifact."""
+        """Return the run's own directory and sync the payload cache.
+
+        The directory is ``runs/<run-id>/``: every execution owns its
+        history, so identical output bytes never overwrite a previous
+        run's plan, log, decision, or release reference. Payload bytes
+        are additionally mirrored into the content-addressed
+        ``runs/<payload-sha>/`` cache for readers resolving bytes by
+        hash; run-scoped history never lives there.
+        """
         sha = self._selected_artifact_sha
         if sha is None:
             raise RunnerError(
                 f"capability {capability_id!r} cannot prepare an artifact "
                 "directory before the engine selects an artifact"
             )
-        artifact_dir = self.out / "runs" / sha
+        artifact_dir = self.store.run_dir
         artifact_dir.mkdir(parents=True, exist_ok=True)
         self._artifact_dir = str(artifact_dir)
+        try:
+            payload = self.artifact_payloads[sha]
+        except KeyError as exc:
+            raise RunnerError(
+                f"no stored payload for selected artifact {sha}"
+            ) from exc
+        cache_files: dict[str, bytes] = {"data.csv": bytes(payload)}
+        image_sha = self._companion.get("image_artifact_sha")
+        if isinstance(image_sha, str) and image_sha in self.artifact_payloads:
+            cache_files["synthetic.png"] = bytes(
+                self.artifact_payloads[image_sha]
+            )
+        self.store.sync_payload_cache(sha, cache_files)
         return artifact_dir
 
     def provenance_record(self) -> str:
@@ -922,13 +1028,19 @@ class _Runner:
         meta = self._source_meta
         verdict, _ = self.final_decision()
         self._final_verdict = verdict
+        if self._best is not None and isinstance(
+            self._best.plan_ref, Mapping
+        ):
+            plan = dict(self._best.plan_ref)
+        else:
+            plan = dict(self._plan) if isinstance(self._plan, Mapping) else {}
         return _build(
             source_name=str(meta.get("source_name", "")),
             source_sha256=str(meta.get("source_sha256", "")),
             licence=meta.get("licence"),
             attribution=meta.get("attribution"),
             artifact_sha256=str(self._selected_artifact_sha or ""),
-            plan=dict(self._plan) if isinstance(self._plan, Mapping) else {},
+            plan=plan,
             verdict=verdict,
             run_id=self.log.run_id,
         )
@@ -985,6 +1097,27 @@ class _Runner:
     def final_failed_value(self) -> list[str]:
         """The unsatisfied required checks from the final verdict."""
         return list(self._final_failed)
+
+    def persist_terminal_record(
+        self, status: str, error: str | None = None
+    ) -> None:
+        """Mark the durable run record terminal (never overwrites history).
+
+        The per-run directory already holds every event write-through;
+        this only stamps the terminal status, the error (if any), the
+        human decision, and the selected artifact onto ``run.json``.
+        """
+        source_sha = self._source_meta.get("source_sha256", "")
+        self.store.update_run(
+            status,
+            error=error,
+            attempts=len(self.attempts),
+            artifact_sha256=self.selected_artifact_record(),
+            source_sha256=(
+                source_sha if isinstance(source_sha, str) else ""
+            ),
+            decision=self._decision,
+        )
 
     def loop_verdict_value(self) -> str | None:
         """The engine-owned loop verdict, once a loop has decided."""
@@ -1065,7 +1198,61 @@ class _Runner:
         )
 
     def run_capability(self, capability_id: str) -> None:
-        self.registry[capability_id](self.scoped(capability_id))
+        """Run one capability, enforcing the critic failure policy.
+
+        A capability declaring ``critic_policy: optional`` never fails
+        the run: any failure (including budget exhaustion) is recorded
+        visibly as an advisory failure and the run continues on its
+        deterministic evidence, which alone decides the verdict. A
+        ``required`` critic -- or no declared policy -- fails loudly.
+        Permission denials always propagate: they are authority errors,
+        never advisory output.
+        """
+        policy = self.manifest.capabilities.get(capability_id, {}).get(
+            "critic_policy"
+        )
+        try:
+            self.registry[capability_id](self.scoped(capability_id))
+        except PermissionDenied:
+            raise
+        except BudgetExceeded as exc:
+            if policy != "optional":
+                raise
+            self._record_advisory_failure(
+                capability_id, exc, budget_exhausted=True
+            )
+        except Exception as exc:  # noqa: BLE001 -- policy-recorded
+            if policy != "optional":
+                raise
+            self._record_advisory_failure(
+                capability_id, exc, budget_exhausted=False
+            )
+
+    def _record_advisory_failure(
+        self,
+        capability_id: str,
+        exc: Exception,
+        *,
+        budget_exhausted: bool,
+    ) -> None:
+        """Record an optional critic's failure without touching the verdict."""
+        reason = f"{type(exc).__name__}: {exc}"
+        payload = {
+            "status": "advisory-failed",
+            "error": reason,
+            "budget_exhausted": budget_exhausted,
+        }
+        self.store_advisory(capability_id, "advisory-failed", payload)
+        self.log.append(
+            f"{capability_id}:advisory",
+            "advisory-failed",
+            {"name": "advisory-failed", **payload},
+        )
+        cause = "budget exhausted; " if budget_exhausted else ""
+        self.say(
+            f"[{capability_id}] advisory failed ({cause}recorded, "
+            f"run continues on deterministic evidence): {exc}"
+        )
 
     def enforce_limits(self) -> None:
         """Enforce manifest limits against the current plan, when present."""
@@ -1109,6 +1296,11 @@ class _Runner:
             for attempt_number in range(1, self.max_attempts + 1):
                 self.pending_checks = []
                 self.attempt_artifacts = []
+                # Bounds are validated before work: an oversize plan is
+                # refused here -- before the generator runs -- as well
+                # as at plan-store time.
+                self.enforce_limits()
+                tokens_before = self.model_tokens
                 for capability_id in body:
                     self.run_capability(capability_id)
                 self.enforce_limits()
@@ -1125,14 +1317,35 @@ class _Runner:
                     if isinstance(self._plan, Mapping)
                     else {}
                 )
+                source_sha = self._source_meta.get("source_sha256", "")
                 attempt = Attempt(
                     n=attempt_number,
                     plan_ref=plan_snapshot,
                     artifact_refs=list(self.attempt_artifacts),
                     check_results=list(self.pending_checks),
                     status=verdict,
+                    manifest_digest=self.manifest.digest,
+                    source_sha256=(
+                        source_sha if isinstance(source_sha, str) else ""
+                    ),
+                    seed=plan_snapshot.get("seed"),
+                    tokens=self.model_tokens - tokens_before,
                 )
                 self.attempts.append(attempt)
+                self.store.write_attempt(
+                    attempt,
+                    [
+                        {
+                            "sha256": record.sha256,
+                            "media_type": record.media_type,
+                            "name": record.name,
+                            "produced_by": record.produced_by,
+                            "attempt": record.attempt,
+                        }
+                        for record in self.artifact_records
+                        if record.sha256 in set(self.attempt_artifacts)
+                    ],
+                )
                 self.log.append(
                     stage,
                     "ok" if verdict == ATTEMPT_PASS else "fail",
@@ -1202,6 +1415,7 @@ class _Runner:
             "decided_by": record.decided_by,
             "at": record.at,
         }
+        self.store.write_decision(self._decision)
         self.log.append(
             gate_id,
             decision if decision in ("accept", "modify", "reject") else "invalid",
@@ -1339,21 +1553,30 @@ def execute(
                     runner.say(
                         f"[{gate_id}] {decision.verdict}: no release written"
                     )
+                    runner.persist_terminal_record("declined")
                     return EXIT_DECLINED, _outcome(runner, "declined")
                 runner.say(
                     f"[{gate_id}] invalid decision {decision.verdict!r}: "
                     "no release written"
                 )
+                runner.persist_terminal_record("invalid")
                 return EXIT_DECLINED, _outcome(runner, "invalid")
     except PermissionDenied as exc:
         runner.say(f"[engine] permission denied: {exc}")
+        runner.log.append("engine", "error", {"error": str(exc)})
+        runner.persist_terminal_record("error", str(exc))
         return EXIT_FAILED, _outcome(runner, "error", str(exc))
     except RunnerError as exc:
         runner.say(f"[engine] error: {exc}")
+        runner.log.append("engine", "error", {"error": str(exc)})
+        runner.persist_terminal_record("error", str(exc))
         return EXIT_FAILED, _outcome(runner, "error", str(exc))
     except Exception as exc:  # noqa: BLE001 -- capability fault, logged
         runner.say(f"[engine] capability failed: {exc}")
+        runner.log.append("engine", "error", {"error": str(exc)})
+        runner.persist_terminal_record("error", str(exc))
         return EXIT_FAILED, _outcome(runner, "error", str(exc))
+    runner.persist_terminal_record("released")
     return EXIT_OK, _outcome(runner, "released")
 
 
@@ -1420,4 +1643,5 @@ def _refuse_gate(
             artifact_sha256=runner.selected_artifact_record(),
         )
         runner.log.write_jsonl(Path(str(artifact_dir)) / "run.jsonl")
+    runner.persist_terminal_record("failed")
     return EXIT_FAILED, _outcome(runner, "failed")

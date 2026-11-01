@@ -30,11 +30,14 @@ PLAN_SCHEMA: dict[str, Any] = {
 }
 
 
-def validate_plan(data: Any) -> dict[str, Any]:
+def validate_plan(data: Any, max_rows: int | None = None) -> dict[str, Any]:
     """Validate a plan dict against :data:`PLAN_SCHEMA`.
 
     Returns a plain ``dict`` copy of the conforming plan. Raises
-    :class:`PlanError` when the value is not a conforming plan.
+    :class:`PlanError` when the value is not a conforming plan. When
+    the profile declares a row maximum (the manifest ``max_rows``
+    limit), ``max_rows`` carries it and a larger ``n_rows`` is refused
+    here, before any generation or check runs.
     """
     if not isinstance(data, Mapping):
         raise PlanError(f"plan must be an object, got {type(data).__name__}")
@@ -47,6 +50,11 @@ def validate_plan(data: Any) -> dict[str, Any]:
         value = plan[key]
         if isinstance(value, bool) or not isinstance(value, int):
             raise PlanError(f"plan {key!r} must be an integer, got {value!r}")
+    if max_rows is not None and plan["n_rows"] > max_rows:
+        raise PlanError(
+            f"plan n_rows {plan['n_rows']} exceeds maximum {max_rows}: "
+            "refused before generation"
+        )
     return plan
 
 
@@ -68,19 +76,23 @@ def build_prompt(profile: TabularProfile) -> str:
     )
 
 
-def propose(model: Any, profile: TabularProfile) -> Any:
+def propose(
+    model: Any, profile: TabularProfile, max_rows: int | None = None
+) -> Any:
     """Ask ``model`` for a plan and validate it against :data:`PLAN_SCHEMA`.
 
     Returns the completion whose ``data`` is the validated plan. Raises
     :class:`PlanError` when the answer is not a conforming plan and
     :class:`ValueError` when the profile is not a tabular profile.
+    ``max_rows`` carries the profile-declared row maximum when one is
+    declared.
     """
     if not isinstance(profile, TabularProfile):
         raise PlanError(
             f"profile must be a TabularProfile, got {type(profile).__name__}"
         )
     completion = model.complete(build_prompt(profile), PLAN_SCHEMA)
-    completion_data = validate_plan(completion.data)
+    completion_data = validate_plan(completion.data, max_rows=max_rows)
     return completion.__class__(
         data=completion_data, usage=completion.usage, meta=completion.meta
     )

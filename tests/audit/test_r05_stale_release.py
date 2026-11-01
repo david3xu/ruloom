@@ -1,10 +1,12 @@
 """Audit counterexample fixture: R05 rejected rerun leaves a stale release.
 
-Repeating identical data overwrites the run evidence under the same
-``runs/<hash>`` directory, so rejecting the second run still leaves the
-first run's ``release.zip`` behind. The test asserts the corrected
-behaviour (no release reference after a reject); it currently fails
-because the stale ZIP survives, recorded as strict xfail.
+Repeating identical data used to overwrite the run evidence under a
+single ``runs/<hash>`` directory, so rejecting the second run still
+left the first run's ``release.zip`` behind. Every execution now gets
+a unique run id and its own durable history under ``runs/<run-id>/``;
+identical output bytes only reuse the content-addressed payload cache
+(``runs/<payload-sha>/data.csv``) and never overwrite another run's
+plan, log, decision, or release reference.
 """
 
 from __future__ import annotations
@@ -13,16 +15,11 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-import pytest
-
+from engine.audit.runlog import RunLog
 from engine.core.manifest import load_manifest
 from engine.core.runner import EXIT_DECLINED, EXIT_OK, execute
 from models.base import Completion, Usage
 from profiles.tabular.capabilities import CAPABILITIES
-
-needs_fix = pytest.mark.xfail(
-    strict=True, reason="audit R05 open: rejected rerun leaves stale release.zip"
-)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = load_manifest(REPO_ROOT / "profiles" / "tabular" / "profile.json")
@@ -75,7 +72,10 @@ def _run(
     )
 
 
-@needs_fix
+def _run_record(run_dir: Path) -> dict[str, Any]:
+    return json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+
+
 def test_accept_then_reject_leaves_no_release(tmp_path: Path) -> None:
     source = _write_source(tmp_path)
     out = tmp_path / "out"
@@ -84,12 +84,44 @@ def test_accept_then_reject_leaves_no_release(tmp_path: Path) -> None:
         source, out, [{"seed": 1, "n_rows": 100}], ["accept", "first accepted"]
     )
     assert code == EXIT_OK
-    artifact = Path(str(first["artifact_dir"]))
-    assert (artifact / "release.zip").is_file()
+    first_dir = Path(str(first["artifact_dir"]))
+    assert (first_dir / "release.zip").is_file()
+    first_release = (first_dir / "release.zip").read_bytes()
 
     code, second = _run(
         source, out, [{"seed": 1, "n_rows": 100}], ["reject", "second rejected"]
     )
     assert code == EXIT_DECLINED
     assert second["status"] == "declined"
-    assert not (artifact / "release.zip").exists()
+    second_dir = Path(str(second["artifact_dir"]))
+
+    # Unique persistent runs: the rerun owns a different directory.
+    assert second["run_id"] != first["run_id"]
+    assert second_dir != first_dir
+
+    # The rejected run has NO release reference of its own.
+    assert not (second_dir / "release.zip").exists()
+    assert not (second_dir / "checksums.sha256").exists()
+    second_record = _run_record(second_dir)
+    assert second_record["status"] == "declined"
+    assert second_record["decision"]["verdict"] == "reject"
+    assert second_record["decision"]["note"] == "second rejected"
+    rejected_log = RunLog.read_jsonl(second_dir / "run.jsonl")
+    assert rejected_log.verify()
+
+    # The earlier accepted release remains attached to its own run.
+    assert (first_dir / "release.zip").read_bytes() == first_release
+    first_record = _run_record(first_dir)
+    assert first_record["status"] == "released"
+    assert first_record["decision"]["verdict"] == "accept"
+    assert first_record["decision"]["note"] == "first accepted"
+    accepted_log = RunLog.read_jsonl(first_dir / "run.jsonl")
+    assert accepted_log.verify()
+
+    # Identical output bytes reuse the content-addressed payload cache,
+    # which still resolves the shared payload by hash.
+    payload_sha = first["artifact_sha256"]
+    assert payload_sha == second["artifact_sha256"]
+    cached = out / "runs" / str(payload_sha) / "data.csv"
+    assert cached.is_file()
+    assert cached.read_bytes() == (first_dir / "data.csv").read_bytes()

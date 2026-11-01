@@ -100,9 +100,11 @@ def test_end_to_end_accept(
         model=FakeModel([{"seed": 7, "n_rows": 20}]),
     )
     assert code == 0
-    children = list((out_dir / "runs").iterdir())
-    assert len(children) == 1
-    artifact = children[0]
+    run_dirs = [
+        c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()
+    ]
+    assert len(run_dirs) == 1
+    artifact = run_dirs[0]
     for name in (
         "data.csv",
         "plan.json",
@@ -167,7 +169,11 @@ def test_end_to_end_reject(
         model=FakeModel([{"seed": 7, "n_rows": 20}]),
     )
     assert code != 0
-    (artifact,) = list((out_dir / "runs").iterdir())
+    run_dirs = [
+        c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()
+    ]
+    assert len(run_dirs) == 1
+    (artifact,) = run_dirs
     assert not (artifact / "release.zip").exists()
     log = RunLog.read_jsonl(artifact / "run.jsonl")
     assert log.verify()

@@ -97,6 +97,19 @@ def _sibling_manifest(source_path: Path, config: Any) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def _plan_max_rows(ctx: Any) -> int | None:
+    """The manifest-declared row maximum, when the profile declares one."""
+    bounds = ctx.plan_bounds()
+    ceiling = bounds.get("max_rows") if isinstance(bounds, dict) else None
+    if (
+        isinstance(ceiling, bool)
+        or not isinstance(ceiling, int)
+        or ceiling < 1
+    ):
+        return None
+    return ceiling
+
+
 def _catalog(ctx: Any) -> dict[str, dict[str, Any]]:
     return {entry["id"]: entry for entry in ctx.declared_checks}
 
@@ -200,7 +213,9 @@ def plan(ctx: Any) -> None:
     """Ask the planner role for a generation plan (statistics only)."""
     profile = ctx.profile()
     try:
-        completion = propose(ctx.model("planner"), profile)
+        completion = propose(
+            ctx.model("planner"), profile, max_rows=_plan_max_rows(ctx)
+        )
     except Exception as exc:  # noqa: BLE001 -- logged, then reported
         ctx.event("plan", "error", {"error": f"{type(exc).__name__}: {exc}"})
         ctx.say(f"[plan] error: {exc}")
@@ -273,7 +288,9 @@ def repair(ctx: Any) -> None:
         completion = ctx.model("planner").complete(
             prompt, PLAN_SCHEMA
         )
-        new_plan = validate_plan(completion.data)
+        new_plan = validate_plan(
+            completion.data, max_rows=_plan_max_rows(ctx)
+        )
     except Exception as exc:  # noqa: BLE001 -- logged, then reported
         ctx.event("repair", "error", {"error": f"{type(exc).__name__}: {exc}"})
         ctx.say(f"[repair] error: {exc}")
@@ -377,8 +394,11 @@ def image_critique(ctx: Any) -> None:
     """Advisory vision note on the synthetic PNG (never a verdict).
 
     The vision role sees the rendered synthetic artifact only. Any
-    failure here is recorded as an advisory error payload; the run
-    verdict is untouched either way.
+    failure here -- including budget exhaustion -- propagates to the
+    engine, which applies the manifest ``critic_policy`` for this
+    capability (``optional``: recorded visibly as an advisory failure
+    and the run continues; ``required``: the run fails loudly). The
+    run verdict is untouched either way: it never reads advisories.
     """
     import tempfile
 
@@ -395,17 +415,10 @@ def image_critique(ctx: Any) -> None:
         handle.write(payload)
         synthetic_path = Path(handle.name)
     try:
-        try:
-            client = ctx.model("critic")
-            note = critique_synthetic(client, synthetic_path, summary)
-            ctx.record_advisory("vision_note", note)
-            ctx.say("[image_critique] advisory vision note recorded")
-        except Exception as exc:  # noqa: BLE001 -- advisory, never fatal
-            ctx.record_advisory(
-                "vision_note",
-                {"error": f"{type(exc).__name__}: {exc}"},
-            )
-            ctx.say(f"[image_critique] advisory critique failed: {exc}")
+        client = ctx.model("critic")
+        note = critique_synthetic(client, synthetic_path, summary)
+        ctx.record_advisory("vision_note", note)
+        ctx.say("[image_critique] advisory vision note recorded")
     finally:
         synthetic_path.unlink(missing_ok=True)
 
@@ -433,10 +446,15 @@ def local_critique(ctx: Any) -> None:
 
 
 def package_artifact(ctx: Any) -> None:
-    """Write the artifact directory with data, plan, report, and log."""
+    """Write the artifact directory with data, plan, report, and log.
+
+    The plan and seed written here are the engine-selected attempt's
+    own: the current plan may belong to a later, worse attempt, while
+    only the selected record replays the packaged artifact.
+    """
     sha = ctx.selected_artifact_sha()
     payload = ctx.artifact_payload(sha)
-    plan = ctx.plan()
+    plan = ctx.selected_plan()
     report = ctx.report_for(sha)
     artifact_dir = ctx.prepare_artifact_dir()
     (artifact_dir / "data.csv").write_bytes(payload)

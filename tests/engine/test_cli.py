@@ -119,10 +119,11 @@ def _run(
 
 
 def _artifact_dir(out_dir: str) -> Path:
+    """The run's own directory: every execution owns its history."""
     runs = Path(out_dir) / "runs"
-    children = list(runs.iterdir())
-    assert len(children) == 1
-    return children[0]
+    run_dirs = [c for c in runs.iterdir() if (c / "run.json").is_file()]
+    assert len(run_dirs) == 1
+    return run_dirs[0]
 
 
 def test_accept_writes_release_and_verifies_chain(
