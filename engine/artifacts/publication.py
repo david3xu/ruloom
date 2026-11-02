@@ -25,6 +25,27 @@ digests equal to the persisted ones and a requested profile equal to
 the run's own. A foreign authority, a mismatched digest, or an
 unverifiable bundle all refuse before any byte is copied.
 
+Request-to-run binding: the dispatch request's bound identity
+(profile, pinned source-content digest, pinned normalised spec
+digest) must equal the identity the run's acceptance record binds
+and the identity the run's own record delivers. Profile-name equality
+alone never suffices; a request that pins nothing shippable refuses.
+A declared row bound (``max_rows``, top-level or spec-carried) must
+also cover the run's executed bound: the shipped row count must
+satisfy the requested bound.
+
+Single-snapshot publication: the run ZIP is read once into an
+immutable in-memory snapshot staged through a private temp file; the
+consumer check and the acceptance resolution both run against that
+snapshot, and the copy ships from it -- the run file is never
+re-read for bytes that ship. A stability guard re-checks the run
+file's digest after acceptance (refusing on any change, so bytes
+swapped under the gate never ship); the guard's re-read can only
+refuse, never supply shippable bytes. Before the record is marked
+complete the snapshot digest, the destination digest, and the
+persisted accepted ZIP digest must all agree, and the returned
+identity derives from the snapshot alone.
+
 Interruption recovery: the publication record
 (``<base>/publications/<item_id>.json``) moves ``in_progress`` before
 any copy starts and ``complete`` only after the destination bytes and
@@ -53,7 +74,11 @@ import zipfile
 from pathlib import Path
 from typing import Any, Mapping
 
-from ..core.dispatch import AuthorityDenied, DispatchStore
+from ..core.dispatch import (
+    AuthorityDenied,
+    DispatchStore,
+    effective_max_rows,
+)
 from .consumer import ReleaseVerificationError, verify_release
 from .hashing import sha256_bytes
 from .package import (
@@ -248,8 +273,75 @@ def _check_required_coverage(report: Any, required: Any) -> None:
             )
 
 
+def _capture_snapshot(zip_path: Path, run_name: str) -> bytes:
+    """Read the run ZIP once into an immutable in-memory snapshot.
+
+    This is the only read whose bytes may ship: verification, the
+    acceptance resolution, and the copy all operate on this snapshot,
+    never on a fresh read of the run file.
+    """
+    try:
+        return zip_path.read_bytes()
+    except OSError as exc:
+        raise PublicationError(
+            f"run {run_name!r} release is unreadable: refusing"
+        ) from exc
+
+
+def _stage_snapshot(store_dir: Path, item_id: str, snapshot: bytes) -> Path:
+    """Stage the snapshot through a private temp file for verification.
+
+    Zip-based checks need a file; the staged copy carries exactly the
+    snapshot bytes (verified on return) and is unlinked by the caller.
+    The name is unique per staging, so a crashed publish leaves only
+    inert bytes no later publish ever reads.
+    """
+    handle, tmp_name = tempfile.mkstemp(
+        dir=str(store_dir), prefix=f"{item_id}.snapshot."
+    )
+    try:
+        with os.fdopen(handle, "wb") as tmp:
+            tmp.write(snapshot)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return Path(tmp_name)
+
+
+def _verify_snapshot_stable(zip_path: Path, snapshot_digest: str) -> None:
+    """Refuse when the run file changed after the snapshot capture.
+
+    This is the tripwire at the acceptance/copy boundary: acceptance
+    resolved against the snapshot, so bytes swapped under the gate
+    must refuse instead of shipping the snapshot or the new bytes.
+    This re-read can only refuse -- its bytes are never shipped or
+    attested.
+    """
+    try:
+        current_digest = sha256_bytes(zip_path.read_bytes())
+    except OSError as exc:
+        raise PublicationError(
+            f"run {zip_path.parent.name!r} release is unreadable "
+            f"after acceptance: refusing ({exc})"
+        ) from exc
+    if current_digest != snapshot_digest:
+        raise PublicationError(
+            f"run {zip_path.parent.name!r} release.zip changed after "
+            "acceptance: refusing (never ship bytes the gate did not bind)"
+        )
+
+
 def _resolve_acceptance(
-    run_path: Path, manifest: Mapping[str, Any]
+    run_path: Path,
+    manifest: Mapping[str, Any],
+    *,
+    zip_bytes: bytes,
+    snapshot_path: Path,
 ) -> dict[str, Any]:
     """Resolve the run's persisted acceptance record, or refuse.
 
@@ -259,15 +351,11 @@ def _resolve_acceptance(
     manifest matches that digest, the release manifest matches the
     frozen evidence member for member, the shipped report passes with
     full required coverage, and a single selected attempt's receipt
-    records ``pass`` for the artifact. Anything else is not an
-    accepted release, however the worker described it.
+    records ``pass`` for the artifact. The ZIP bytes and the report
+    member both come from the captured snapshot, never from a fresh
+    read of the run file. Anything else is not an accepted release,
+    however the worker described it.
     """
-    try:
-        zip_bytes = (run_path / RELEASE_ZIP_NAME).read_bytes()
-    except OSError as exc:
-        raise PublicationError(
-            f"run {run_path.name!r} release is unreadable: refusing"
-        ) from exc
     zip_sha = sha256_bytes(zip_bytes)
     try:
         sidecar = (run_path / RELEASE_HASH_NAME).read_text(encoding="utf-8")
@@ -375,7 +463,7 @@ def _resolve_acceptance(
             "passing gate: refusing"
         )
     try:
-        with zipfile.ZipFile(run_path / RELEASE_ZIP_NAME) as archive:
+        with zipfile.ZipFile(snapshot_path) as archive:
             report_raw = archive.read(REPORT_MEMBER)
     except (OSError, KeyError, RuntimeError) as exc:
         raise PublicationError(
@@ -414,16 +502,150 @@ def _resolve_acceptance(
         )
     run_record = _read_json_file(run_path / RUN_RECORD_NAME, what="run record")
     run_meta = run_record.get("run")
-    profile = run_meta.get("profile_ref") if isinstance(run_meta, Mapping) else None
+    if not isinstance(run_meta, Mapping):
+        raise PublicationError(
+            f"run {run_path.name!r} run record carries no run: refusing"
+        )
+    profile = run_meta.get("profile_ref")
     if not isinstance(profile, str) or not profile:
         raise PublicationError(
             f"run {run_path.name!r} run record names no profile: refusing"
+        )
+    source_sha = run_record.get("source_sha256")
+    if not isinstance(source_sha, str) or not source_sha:
+        raise PublicationError(
+            f"run {run_path.name!r} run record carries no measured "
+            "source digest: refusing"
+        )
+    run_request = run_meta.get("request")
+    if not isinstance(run_request, Mapping):
+        raise PublicationError(
+            f"run {run_path.name!r} run record carries no request: refusing"
+        )
+    spec_digest = run_request.get("spec_digest")
+    if not isinstance(spec_digest, str) or not spec_digest:
+        raise PublicationError(
+            f"run {run_path.name!r} run record carries no spec digest: "
+            "refusing"
+        )
+    max_rows: int | None = None
+    run_spec = run_request.get("spec")
+    if isinstance(run_spec, Mapping):
+        limits = run_spec.get("limits")
+        if isinstance(limits, Mapping) and "max_rows" in limits:
+            bound = limits.get("max_rows")
+            if (
+                isinstance(bound, bool)
+                or not isinstance(bound, int)
+                or bound < 1
+            ):
+                raise PublicationError(
+                    f"run {run_path.name!r} run record carries an "
+                    "unusable row bound: refusing"
+                )
+            max_rows = bound
+    acceptance_bound = acceptance.get("request_identity")
+    if not isinstance(acceptance_bound, Mapping):
+        raise PublicationError(
+            f"run {run_path.name!r} acceptance binds no request "
+            "identity: refusing (only bound runs ship)"
         )
     return {
         "zip_sha256": zip_sha,
         "artifact_sha256": artifact,
         "run_profile": profile,
+        "source_sha256": source_sha,
+        "spec_digest": spec_digest,
+        "max_rows": max_rows,
+        "request_identity": {
+            "profile": acceptance_bound.get("profile"),
+            "source_sha256": acceptance_bound.get("source_sha256"),
+            "spec_digest": acceptance_bound.get("spec_digest"),
+        },
     }
+
+
+def _check_request_binding(
+    item_id: str, item: Mapping[str, Any], acceptance: Mapping[str, Any]
+) -> None:
+    """Require persisted == acceptance-bound == delivered identities.
+
+    The dispatch item persists the bound identity at submit; the run's
+    acceptance block binds the identity the run was launched for; the
+    run record delivers the measured values. All three must agree on
+    profile, source-content digest, and normalised spec digest --
+    profile-name equality alone never suffices. The coarse checks run
+    first (profile, source, row scope) so a refused bound names the
+    bound; the exact spec-digest identity runs last. A declared row
+    bound must also cover the run's executed bound, so the shipped row
+    count satisfies the requested bound.
+    """
+    persisted = item.get("request_identity")
+    if not isinstance(persisted, Mapping):
+        raise PublicationError(
+            f"item {item_id!r} binds no request identity: refusing "
+            "(only bound requests ship)"
+        )
+    bound = acceptance.get("request_identity")
+    if not isinstance(bound, Mapping):
+        raise PublicationError(
+            f"run acceptance binds no request identity: refusing "
+            "(only bound runs ship)"
+        )
+    for field in ("profile", "source_sha256"):
+        wanted = persisted.get(field)
+        accepted = bound.get(field)
+        if wanted != accepted:
+            raise PublicationError(
+                f"item {item_id!r} request binding {field!r} "
+                f"({wanted!r}) does not match the accepted binding "
+                f"({accepted!r}): refusing"
+            )
+    for field, delivered_key in (
+        ("profile", "run_profile"),
+        ("source_sha256", "source_sha256"),
+    ):
+        accepted = bound.get(field)
+        delivered = acceptance.get(delivered_key)
+        if accepted != delivered:
+            raise PublicationError(
+                f"accepted request binding {field!r} ({accepted!r}) "
+                "does not match the delivered run "
+                f"({delivered!r}): refusing (the run changed after "
+                "acceptance)"
+            )
+    wanted_rows = effective_max_rows(
+        item.get("request") if isinstance(item.get("request"), Mapping)
+        else {}
+    )
+    if wanted_rows is not None:
+        delivered_rows = acceptance.get("max_rows")
+        if (
+            not isinstance(delivered_rows, int)
+            or isinstance(delivered_rows, bool)
+            or delivered_rows > wanted_rows
+        ):
+            raise PublicationError(
+                f"item {item_id!r} requests max_rows {wanted_rows}, "
+                f"but the accepted run allows {delivered_rows}: "
+                "refusing (the shipped row count must satisfy the "
+                "requested bound)"
+            )
+    wanted_spec = persisted.get("spec_digest")
+    accepted_spec = bound.get("spec_digest")
+    if wanted_spec != accepted_spec:
+        raise PublicationError(
+            f"item {item_id!r} request binding 'spec_digest' "
+            f"({wanted_spec!r}) does not match the accepted binding "
+            f"({accepted_spec!r}): refusing"
+        )
+    if accepted_spec != acceptance.get("spec_digest"):
+        raise PublicationError(
+            "accepted request binding 'spec_digest' "
+            f"({accepted_spec!r}) does not match the delivered run "
+            f"({acceptance.get('spec_digest')!r}): refusing (the run "
+            "changed after acceptance)"
+        )
 
 
 class Publisher:
@@ -475,6 +697,12 @@ class Publisher:
         record, and the reported digests must equal the persisted
         ones. A claim pointing at unaccepted, altered, or
         foreign-profile bytes refuses even over a live lease.
+
+        The run ZIP is read once into an immutable snapshot; the
+        consumer check, the acceptance resolution, and the copy all
+        operate on that snapshot, and the returned identity derives
+        from it alone. Bytes swapped into the run file after
+        acceptance refuse at the stability guard and never ship.
         """
         at = _resolve_now(now)
         clean_id = _check_item_id(item_id)
@@ -488,14 +716,59 @@ class Publisher:
                 "must both exist): nothing to publish"
             )
         manifest = _read_json_file(manifest_path, what="release manifest")
+        snapshot = _capture_snapshot(zip_path, run_path.name)
+        snapshot_digest = sha256_bytes(snapshot)
+        snapshot_path = _stage_snapshot(self.dir, clean_id, snapshot)
         try:
-            identity = verify_release(zip_path, manifest=manifest)
-        except ReleaseVerificationError as exc:
-            raise PublicationError(
-                f"run {run_path.name!r} release fails consumer "
-                f"verification: refusing ({exc})"
-            ) from exc
-        acceptance = _resolve_acceptance(run_path, manifest)
+            try:
+                identity = verify_release(snapshot_path, manifest=manifest)
+            except ReleaseVerificationError as exc:
+                raise PublicationError(
+                    f"run {run_path.name!r} release fails consumer "
+                    f"verification: refusing ({exc})"
+                ) from exc
+            if identity["zip_sha256"] != snapshot_digest:
+                raise PublicationError(
+                    f"run {run_path.name!r} snapshot changed during "
+                    "verification: refusing"
+                )
+            acceptance = _resolve_acceptance(
+                run_path,
+                manifest,
+                zip_bytes=snapshot,
+                snapshot_path=snapshot_path,
+            )
+            _verify_snapshot_stable(zip_path, snapshot_digest)
+            return self._publish_snapshot(
+                clean_id,
+                run_path,
+                identity,
+                acceptance,
+                snapshot,
+                snapshot_digest,
+                authority=authority,
+                now=at,
+            )
+        finally:
+            try:
+                snapshot_path.unlink()
+            except OSError:
+                pass
+
+    def _publish_snapshot(
+        self,
+        clean_id: str,
+        run_path: Path,
+        identity: Mapping[str, Any],
+        acceptance: Mapping[str, Any],
+        snapshot: bytes,
+        snapshot_digest: str,
+        *,
+        authority: str,
+        now: float,
+    ) -> dict[str, Any]:
+        """Ship one verified snapshot after all guards have passed."""
+        at = now
         item = self.dispatch.get(clean_id)
         if item.get("authority") != authority:
             raise AuthorityDenied(
@@ -536,8 +809,7 @@ class Publisher:
                 f"the accepted run is profile "
                 f"{acceptance['run_profile']!r}: refusing"
             )
-        zip_bytes = zip_path.read_bytes()
-        zip_sha = sha256_bytes(zip_bytes)
+        _check_request_binding(clean_id, item, acceptance)
         dest_name = f"{clean_id}.zip"
         dest = self.dest_dir / dest_name
         if dest.resolve().parent != self.dest_dir.resolve():
@@ -550,27 +822,27 @@ class Publisher:
         if (
             isinstance(prior, dict)
             and prior.get("status") == COMPLETE
-            and prior.get("zip_sha256") == zip_sha
+            and prior.get("zip_sha256") == snapshot_digest
             and dest.is_file()
-            and sha256_bytes(dest.read_bytes()) == zip_sha
+            and sha256_bytes(dest.read_bytes()) == snapshot_digest
         ):
             return {
                 "item_id": clean_id,
                 "dest": str(dest),
-                "zip_sha256": zip_sha,
+                "zip_sha256": snapshot_digest,
                 "artifact_sha256": identity["artifact_sha256"],
                 "members": list(identity["members"]),
             }
         if (
             isinstance(prior, dict)
             and prior.get("status") == COMPLETE
-            and prior.get("zip_sha256") != zip_sha
+            and prior.get("zip_sha256") != snapshot_digest
         ):
             raise PublicationError(
-                f"item {item_id!r} already published different bytes: "
+                f"item {clean_id!r} already published different bytes: "
                 "one item ships one release, refusing"
             )
-        if dest.is_file() and sha256_bytes(dest.read_bytes()) != zip_sha:
+        if dest.is_file() and sha256_bytes(dest.read_bytes()) != snapshot_digest:
             if prior is None:
                 raise PublicationError(
                     f"destination {dest_name!r} holds bytes no record "
@@ -583,30 +855,30 @@ class Publisher:
             "item_id": clean_id,
             "authority": authority,
             "run_id": run_path.name,
-            "zip_sha256": zip_sha,
+            "zip_sha256": snapshot_digest,
             "artifact_sha256": identity["artifact_sha256"],
             "dest_name": dest_name,
             "status": IN_PROGRESS,
             "updated_at": at,
         }
         _atomic_write_json(record_path, record)
-        if dest.is_file() and sha256_bytes(dest.read_bytes()) == zip_sha:
+        if dest.is_file() and sha256_bytes(dest.read_bytes()) == snapshot_digest:
             pass  # Bytes already match: adopt them, skip the copy.
         else:
             _remove_stale_tmps(self.dest_dir, dest_name)
-            _stage_and_commit(self.dest_dir, dest_name, zip_bytes)
-        if sha256_bytes(dest.read_bytes()) != zip_sha:
+            _stage_and_commit(self.dest_dir, dest_name, snapshot)
+        if sha256_bytes(dest.read_bytes()) != snapshot_digest:
             raise PublicationError(
                 f"destination {dest_name!r} does not match the accepted "
                 "bytes after copy: refusing"
             )
         sidecar = self.dest_dir / f"{dest_name}.sha256"
-        _atomic_write_bytes(sidecar, f"{zip_sha}  {dest_name}\n".encode("utf-8"))
+        _atomic_write_bytes(sidecar, f"{snapshot_digest}  {dest_name}\n".encode("utf-8"))
         record = {
             "item_id": clean_id,
             "authority": authority,
             "run_id": run_path.name,
-            "zip_sha256": zip_sha,
+            "zip_sha256": snapshot_digest,
             "artifact_sha256": identity["artifact_sha256"],
             "dest_name": dest_name,
             "status": COMPLETE,
@@ -616,7 +888,7 @@ class Publisher:
         return {
             "item_id": clean_id,
             "dest": str(dest),
-            "zip_sha256": zip_sha,
+            "zip_sha256": snapshot_digest,
             "artifact_sha256": identity["artifact_sha256"],
             "members": list(identity["members"]),
         }

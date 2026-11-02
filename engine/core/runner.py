@@ -1485,6 +1485,13 @@ class _Runner:
                         "verdict": verdict,
                         "failed": list(failed),
                         "required_checks": sorted(required_checks),
+                        "request_identity": {
+                            "profile": self.run.profile_ref,
+                            "source_sha256": str(
+                                self._source_meta.get("source_sha256", "")
+                            ),
+                            "spec_digest": str(self._spec_digest),
+                        },
                     },
                 },
             )

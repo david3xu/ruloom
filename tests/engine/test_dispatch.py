@@ -448,7 +448,7 @@ def test_explicit_id_same_authority_changed_request_refuses(
     first = _explicit(store)
     store.claim(first["item_id"], worker="w1", lease_seconds=600.0, now=T0)
     with pytest.raises(DispatchError):
-        _explicit(store, request=_request(extra="changed"))
+        _explicit(store, request=_request(max_attempts=2))
     intact = store.get("fixed-id")
     assert intact["request"] == _request()
     assert intact["status"] == "claimed"
@@ -664,3 +664,80 @@ def test_attempts_persisted_separately_from_failures(tmp_path: Path) -> None:
     record = store.get(item["item_id"])
     assert record["attempts"] == 2
     assert record["retries_used"] == 1
+
+
+def test_submit_refuses_unknown_request_fields(tmp_path: Path) -> None:
+    """DP-01 C01: unknown request fields are refused, never unenforced."""
+    store = _store(tmp_path)
+    with pytest.raises(DispatchError, match="unsupported request field"):
+        store.submit(
+            authority="team-a",
+            request=_request(extra="changed"),
+            now=T0,
+        )
+    with pytest.raises(DispatchError, match="unsupported request field"):
+        store.submit(
+            authority="team-a",
+            request=_request(n_rows=9999),
+            now=T0,
+        )
+    assert store.list_items() == []
+
+
+def test_submit_validates_request_bounds_and_pins(tmp_path: Path) -> None:
+    """DP-01 C01: malformed bounds and pins refuse at submit time."""
+    store = _store(tmp_path)
+    bad_requests = [
+        _request(profile=""),
+        _request(source=""),
+        _request(max_attempts=0),
+        _request(max_attempts=-1),
+        _request(max_attempts=True),
+        _request(max_attempts="1"),
+        _request(max_rows=0),
+        _request(max_rows=-2),
+        _request(max_rows=False),
+        _request(source_sha256="not-a-digest"),
+        _request(source_sha256="0" * 63),
+        _request(spec_digest="F" * 64),
+        _request(spec=["limits"]),
+        _request(spec={"limits": {"max_rows": "many"}}),
+        _request(max_rows=5, spec={"limits": {"max_rows": 6}}),
+    ]
+    for bad in bad_requests:
+        with pytest.raises(DispatchError):
+            store.submit(authority="team-a", request=bad, now=T0)
+    assert store.list_items() == []
+
+
+def test_submit_persists_canonical_request_identity(tmp_path: Path) -> None:
+    """DP-01 C01: submit persists the bound request identity."""
+    store = _store(tmp_path)
+    pinned = _request(
+        source_sha256="a" * 64,
+        spec_digest="b" * 64,
+        spec={"limits": {"max_rows": 7}},
+    )
+    item = store.submit(authority="team-a", request=pinned, now=T0)
+    assert item["request_identity"] == {
+        "profile": "tabular",
+        "source_sha256": "a" * 64,
+        "spec_digest": "b" * 64,
+    }
+    assert item["request"] == pinned
+    assert store.get(item["item_id"])["request_identity"] == item[
+        "request_identity"
+    ]
+
+
+def test_submit_unpinned_request_carries_empty_identity(
+    tmp_path: Path,
+) -> None:
+    """DP-01 C01: a request pinning nothing binds nothing shippable."""
+    store = _store(tmp_path)
+    item = store.submit(authority="team-a", request=_request(), now=T0)
+    assert item["request_identity"] == {
+        "profile": "tabular",
+        "source_sha256": None,
+        "spec_digest": None,
+    }

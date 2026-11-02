@@ -92,6 +92,134 @@ def _request_digest(request: Any) -> str:
     return sha256_canonical(dict(request))
 
 
+#: Top-level fields a submit request may declare. Anything else is
+#: refused at submit: publication binds every declared bound, so an
+#: unknown field could never be enforced and must never be silently
+#: kept.
+SUPPORTED_REQUEST_KEYS = (
+    "profile",
+    "source",
+    "source_sha256",
+    "spec",
+    "spec_digest",
+    "max_attempts",
+    "max_rows",
+)
+
+#: Lowercase hex digests only (mirrors the consumer checksum rule).
+_HEX64_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _check_pin(value: Any, *, field: str) -> str | None:
+    """Validate an optional 64-hex digest pin, or refuse loudly."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _HEX64_RE.fullmatch(value):
+        raise DispatchError(
+            f"request {field} must be a 64-character lowercase hex "
+            f"digest, got {value!r}: refusing"
+        )
+    return value
+
+
+def _check_bound(value: Any, *, field: str) -> int | None:
+    """Validate an optional positive-integer caller bound, or refuse."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise DispatchError(
+            f"request {field} must be a positive integer, got "
+            f"{value!r}: refusing"
+        )
+    return value
+
+
+def effective_max_rows(request: Mapping[str, Any]) -> int | None:
+    """The row bound a request declares, top-level or spec-carried.
+
+    A request may carry its row bound directly (``max_rows``) or inside
+    a GenerationSpec overlay (``spec.limits.max_rows``). Conflicting
+    declarations are refused: two bounds that disagree can never both
+    be enforced, so neither is silently picked.
+    """
+    top = request.get("max_rows")
+    nested: Any = None
+    spec = request.get("spec")
+    if spec is not None:
+        if not isinstance(spec, Mapping):
+            raise DispatchError(
+                f"request 'spec' must be a mapping, got {spec!r}: refusing"
+            )
+        limits = spec.get("limits")
+        if limits is not None:
+            if not isinstance(limits, Mapping):
+                raise DispatchError(
+                    f"request spec 'limits' must be a mapping, got "
+                    f"{limits!r}: refusing"
+                )
+            if "max_rows" in limits:
+                nested = _check_bound(
+                    limits.get("max_rows"), field="spec 'limits.max_rows'"
+                )
+    if top is not None and nested is not None and top != nested:
+        raise DispatchError(
+            f"request declares conflicting max_rows bounds ({top!r} "
+            f"and {nested!r}): refusing"
+        )
+    return top if top is not None else nested
+
+
+def _normalize_request(request: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the declared request and project its bound identity.
+
+    Every top-level field must be supported (see
+    ``SUPPORTED_REQUEST_KEYS``); pins must be 64-hex digests and bounds
+    positive integers. The bound identity is the triple publication
+    enforces: the profile, the pinned source-content digest, and the
+    pinned normalised spec digest. Unpinned components persist as None
+    and can never match a real run's measured values, so a request
+    that pins nothing shippable refuses at publication instead of
+    shipping on profile-name equality alone.
+    """
+    for key in request:
+        if key not in SUPPORTED_REQUEST_KEYS:
+            raise DispatchError(
+                f"request declares unsupported request field {key!r}: "
+                "refusing (never silently unenforce a bound)"
+            )
+    profile = request.get("profile")
+    if profile is not None and (
+        not isinstance(profile, str) or not profile
+    ):
+        raise DispatchError(
+            "request 'profile' must be a non-empty string: refusing"
+        )
+    source = request.get("source")
+    if source is not None and (
+        not isinstance(source, str) or not source
+    ):
+        raise DispatchError(
+            "request 'source' must be a non-empty string: refusing"
+        )
+    spec = request.get("spec")
+    if spec is not None and not isinstance(spec, Mapping):
+        raise DispatchError(
+            f"request 'spec' must be a mapping, got {spec!r}: refusing"
+        )
+    _check_bound(request.get("max_attempts"), field="'max_attempts'")
+    _check_bound(request.get("max_rows"), field="'max_rows'")
+    effective_max_rows(request)
+    return {
+        "profile": profile,
+        "source_sha256": _check_pin(
+            request.get("source_sha256"), field="'source_sha256'"
+        ),
+        "spec_digest": _check_pin(
+            request.get("spec_digest"), field="'spec_digest'"
+        ),
+    }
+
+
 #: Item states. ``queued`` is actionable; ``claimed`` is leased to one
 #: worker; ``succeeded``, ``exhausted`` and ``cancelled`` are terminal.
 QUEUED = "queued"
@@ -266,6 +394,15 @@ class DispatchStore:
         fencing epoch. A changed request or a foreign authority is
         refused loudly, so no resubmission can rewrite another
         owner's history or reset its fencing.
+
+        The declared request is validated (supported fields only, pins
+        as 64-hex digests, bounds as positive integers) and its bound
+        identity -- profile, pinned source-content digest, pinned
+        normalised spec digest -- is persisted as ``request_identity``.
+        Publication later requires that identity to match the run's
+        accepted and delivered identities, so a request that pins
+        nothing shippable can never ship on profile-name equality
+        alone.
         """
         if not isinstance(authority, str) or not authority.strip():
             raise DispatchError("submit requires a non-empty authority")
@@ -284,11 +421,13 @@ class DispatchStore:
         if item_id is not None:
             check_item_id(item_id)
         at = _resolve_now(now)
+        identity = _normalize_request(request)
         with _store_lock(self.dir):
             if idempotency_key is not None:
                 return self._submit_keyed(
                     authority=authority,
                     request=request,
+                    request_identity=identity,
                     idempotency_key=idempotency_key,
                     max_retries=max_retries,
                     item_id=item_id,
@@ -298,6 +437,7 @@ class DispatchStore:
                 return self._submit_explicit(
                     authority=authority,
                     request=request,
+                    request_identity=identity,
                     item_id=item_id,
                     max_retries=max_retries,
                     now=at,
@@ -307,6 +447,7 @@ class DispatchStore:
                     "item_id": uuid.uuid4().hex,
                     "authority": authority,
                     "request": dict(request),
+                    "request_identity": dict(identity),
                     "idempotency_key": None,
                     "status": QUEUED,
                     "retries_used": 0,
@@ -369,6 +510,7 @@ class DispatchStore:
         *,
         authority: str,
         request: Mapping[str, Any],
+        request_identity: Mapping[str, Any],
         item_id: str,
         max_retries: int,
         now: float,
@@ -381,6 +523,7 @@ class DispatchStore:
                 "item_id": item_id,
                 "authority": authority,
                 "request": dict(request),
+                "request_identity": dict(request_identity),
                 "idempotency_key": None,
                 "status": QUEUED,
                 "retries_used": 0,
@@ -403,6 +546,7 @@ class DispatchStore:
         *,
         authority: str,
         request: Mapping[str, Any],
+        request_identity: Mapping[str, Any],
         idempotency_key: str,
         max_retries: int,
         item_id: str | None,
@@ -449,6 +593,7 @@ class DispatchStore:
                     "item_id": stored_id,
                     "authority": authority,
                     "request": dict(request),
+                    "request_identity": dict(request_identity),
                     "idempotency_key": idempotency_key,
                     "status": QUEUED,
                     "retries_used": 0,
@@ -477,6 +622,7 @@ class DispatchStore:
                 "item_id": chosen,
                 "authority": authority,
                 "request": dict(request),
+                "request_identity": dict(request_identity),
                 "idempotency_key": idempotency_key,
                 "status": QUEUED,
                 "retries_used": 0,

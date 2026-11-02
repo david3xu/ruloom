@@ -361,6 +361,32 @@ recorded to the run log (`models/meta_cli.py`,
 `engine/core/runner.py`,
 `tests/models/test_meta_cli_restrictions.py`).
 
+DP-01 closed the release-binding slice (re-audit C01+C02).
+`Q-ENGINE-DISPATCH` now validates the declared request at submit
+(supported fields only, 64-hex digest pins, positive-integer bounds,
+no conflicting row bounds) and persists the bound request identity
+(profile, pinned source-content digest, pinned normalised spec
+digest); unpinned components persist as None and can never match a
+real run, so a request that pins nothing shippable refuses at
+publication instead of shipping on profile-name equality alone.
+`Q-RELEASE-PUBLICATION` now requires persisted == acceptance-bound
+== delivered identities plus a declared row bound covering the run's
+executed bound, and verifies/copies one captured immutable byte
+snapshot (staged through a private temp file): the run file is never
+re-read for shippable bytes, a post-acceptance change refuses at the
+stability guard with the item never marked complete, and the
+snapshot, destination, and persisted accepted digests must agree
+before the complete mark. Evidence:
+`tests/engine/test_dispatch.py` (40 tests: unknown fields, malformed
+bounds/pins, conflicting `max_rows`, persisted identity) and
+`tests/engine/test_publication.py` (27 tests: wrong-source,
+tighter-row-bound, and changed-source refusals with nothing shipped;
+post-acceptance ZIP swaps, corrupt and well-formed, refused with no
+destination and no complete mark; round trips still publish). No
+generation bytes move: the PDD446 seed-42 golden artifact
+`55eb1c22e212…` is untouched (the acceptance block gains only the
+request-identity binding, which no attested digest covers).
+
 | Rule | Status | Checker or rationale |
 | --- | --- | --- |
 | `Q-STRUCT-FEATURE-MAP` | enforced | `scripts/force_pass.py:check_feature_map` -- the catalogue names every feature module (16 records, 37 modules), live in the gate |

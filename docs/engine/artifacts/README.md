@@ -123,11 +123,20 @@ artifact. The reported digests must equal the persisted ones (a
 worker claim of an all-zero artifact digest refuses instead of
 shipping different bytes), and a requested profile must equal the
 run's own. It ships only a `succeeded` dispatch item's reviewed bytes
-under the owning authority. The record moves `in_progress` before
+under the owning authority. Request-to-run binding (DP-01): the
+request's bound identity (profile, pinned source-content digest,
+pinned normalised spec digest) must equal the acceptance-bound and
+delivered identities, and a declared row bound must cover the run's
+executed bound -- profile-name equality alone never suffices. The
+record moves `in_progress` before
 any copy and `complete` only after the destination verifies, so an
 interrupted publication resumes to identical bytes and re-publishing
 is a no-op; unattributed destination bytes and second releases for
-one item are refused. `download` verifies the new bytes in a unique
+one item are refused. Verify and copy operate on one captured
+immutable byte snapshot: the run file is never re-read for shippable
+bytes, a post-acceptance change refuses at the stability guard, and
+the snapshot, destination, and persisted accepted digests must agree
+before the complete mark. `download` verifies the new bytes in a unique
 temporary sibling and commits atomically: a verified download
 overwrites the destination, an unverified one never touches it, so a
 good file already there survives byte-identical, and a same
