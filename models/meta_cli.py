@@ -16,13 +16,86 @@ answer raises :class:`ModelError`.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
 from .base import Completion, ModelError, Usage
+
+
+#: Environment keys the child process may inherit (explicit allowlist).
+#: Everything else -- including every ``RULOOM_*`` setting, API tokens,
+#: and MCP/tool configuration -- is stripped before the child starts, so
+#: ambient caller secrets can never leak into the model invocation.
+ALLOWED_ENV_KEYS = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_MESSAGES",
+    "TZ",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "SYSTEMROOT",
+    "SystemRoot",
+)
+
+#: Secret hints: any allowlisted key containing one of these substrings
+#: (case-insensitive) is still stripped, so a future allowlist edit can
+#: never smuggle a credential into the child environment.
+SECRET_HINTS = (
+    "TOKEN",
+    "SECRET",
+    "KEY",
+    "PASSWD",
+    "PASSWORD",
+    "CREDENTIAL",
+    "AUTH",
+    "PRIVATE",
+)
+
+
+def _looks_secret(key: str) -> bool:
+    """True when ``key`` smells like a credential carrier."""
+    upper = str(key).upper()
+    return any(hint in upper for hint in SECRET_HINTS)
+
+
+def restricted_env(source: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Build the child environment: allowlist minus secret-like keys.
+
+    ``source`` defaults to the live process environment; tests inject a
+    controlled mapping (including a probe secret) instead. Only keys in
+    :data:`ALLOWED_ENV_KEYS` survive, and secret-like keys never do, so
+    the returned mapping carries key names the gate may record without
+    ever carrying secret values into the log.
+    """
+    raw: Mapping[str, str] = os.environ if source is None else source
+    keep: dict[str, str] = {}
+    for key in ALLOWED_ENV_KEYS:
+        if key in raw and not _looks_secret(key):
+            value = raw[key]
+            if isinstance(value, str):
+                keep[key] = value
+    return keep
+
+
+def resolve_cwd(allowed_root: str | Path | None) -> str:
+    """Pin the child working directory explicitly (never inherit blindly).
+
+    An explicit ``allowed_root`` pins both the ``--workspace`` flag and
+    the child cwd to that root. Without one the child runs in the
+    invoking process's working directory -- the repo checkout under
+    normal CLI use -- resolved and recorded at call time. Either way
+    the effective directory is explicit in the invocation record.
+    """
+    if allowed_root is not None:
+        return str(Path(allowed_root))
+    return str(Path.cwd())
 
 
 @dataclass
@@ -60,8 +133,32 @@ class MuseCLIModel:
         argv += ["--contributor-mode", "on" if self.contributor else "off", prompt]
         return argv
 
+    last_invocation: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
+    """Effective permissions of the most recent child invocation.
+
+    Records ``argv``, the pinned ``cwd``, the inherited environment
+    *key names* (never values), the ``contributor`` flag, and the
+    requested/returned model identity. The run log stores this record
+    per model call; secret values never enter it.
+    """
+
     def _run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
-        """Run one ``muse exec`` argv; transport failures raise ModelError."""
+        """Run one ``muse exec`` argv under the restricted invocation.
+
+        The child gets a pinned working directory, the allowlisted
+        environment only, and exactly the argv built by :meth:`_argv` --
+        no inherited MCP servers, tool dispatch, or peer routing, which
+        the argv never names. Transport failures raise ModelError.
+        """
+        env = restricted_env()
+        cwd = resolve_cwd(self.allowed_root)
+        self.last_invocation = {
+            "argv": list(argv),
+            "cwd": cwd,
+            "env_keys": sorted(env),
+            "contributor": self.contributor,
+            "model": self.model,
+        }
         try:
             return subprocess.run(
                 argv,
@@ -69,6 +166,8 @@ class MuseCLIModel:
                 stderr=subprocess.PIPE,
                 text=True,
                 timeout=self.timeout_s,
+                env=env,
+                cwd=cwd,
             )
         except subprocess.TimeoutExpired as exc:
             raise ModelError(f"muse exec timed out: {exc}") from exc
@@ -89,7 +188,13 @@ class MuseCLIModel:
             proc = self._run(self._argv(schema_file, prompt))
         finally:
             Path(schema_file).unlink(missing_ok=True)
-        return self._parse(proc, schema_dict)
+        completion = self._parse(proc, schema_dict)
+        self.last_invocation = {
+            **self.last_invocation,
+            "returned_model": completion.usage.model,
+        }
+        completion.meta["invocation"] = dict(self.last_invocation)
+        return completion
 
     def complete_with_image(
         self,
@@ -115,7 +220,13 @@ class MuseCLIModel:
             proc = self._run(self._argv(schema_file, prompt, [image_path]))
         finally:
             Path(schema_file).unlink(missing_ok=True)
-        return self._parse(proc, schema_dict)
+        completion = self._parse(proc, schema_dict)
+        self.last_invocation = {
+            **self.last_invocation,
+            "returned_model": completion.usage.model,
+        }
+        completion.meta["invocation"] = dict(self.last_invocation)
+        return completion
 
     def _parse(
         self, proc: "subprocess.CompletedProcess[str]", schema_dict: dict

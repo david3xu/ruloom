@@ -104,6 +104,26 @@ every claim runs under a per-store lock (exactly one threaded
 winner); every record write is atomic, so a crash leaves the previous
 record intact.
 
+## Restricted model invocation
+
+Planner and critic calls reach the hosted model through one restricted
+path (`models/meta_cli.py`, composed in `engine/cli/__init__.py`). The
+child process gets a pinned working directory (the explicit
+`--workspace` root when set, otherwise the invoking directory, which
+is the repo checkout under normal CLI use), a minimal allowlisted
+environment (`PATH`, `HOME`, locale, timezone, and temp-dir keys only
+-- secrets and every `RULOOM_*` setting are stripped before the child
+starts), and exactly the `muse exec` argv the adapter builds, which
+names no MCP servers, tool dispatch, or peer routing. Every call
+records its effective invocation -- argv, pinned cwd, inherited env
+key names (never values), contributor flag, and the returned model
+identity -- to the adapter's `last_invocation` record and to a
+per-call `model_invocation` event in the run log
+(`engine/core/runner.py`), so the run record shows which restricted
+invocation acted. Secret values never enter the record. The default
+pins preserve the validated planner path unchanged; callers needing
+tighter confinement pass an explicit allowed root.
+
 ## Feature records
 
 The persistence features implemented here are registered under
@@ -118,6 +138,14 @@ test paths, and the quality rules they satisfy:
 - `F-ENGINE-GENERATION-SPEC` (RP-07, rules `Q-ENGINE-SPEC`,
   `Q-ENGINE-EVIDENCE`).
 - `F-ENGINE-DURABLE-DISPATCH` (RP-09, rule `Q-ENGINE-DISPATCH`).
+- `F-ENGINE-RESTRICTED-INVOCATION` (CP-05, rule
+  `Q-GOV-NO-PEER-DISPATCH`): the restricted invocation above with its
+  recorded effective permissions.
+- `F-ENGINE-GOVERNANCE-CHECKS` (CP-05, rules `Q-STRUCT-FEATURE-MAP`,
+  `Q-STRUCT-IMPORTS`, `Q-DOC-CLAIM-EVIDENCE`, `Q-GOV-SCOPED-WRITES`,
+  `Q-GRAPH-AUTHORITY`, `Q-RELEASE-COMPLETE`).
+- `F-ENGINE-TABULAR-QUALITY` (CP-05, rule `Q-EVAL-R09-ENGINE`): backfill
+  map for the tabular deterministic stages.
 
 ## GenerationSpec, bounded plans, and the evidence report
 

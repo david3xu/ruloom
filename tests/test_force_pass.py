@@ -617,3 +617,168 @@ def test_planted_engine_max_attempts_default_fails(tmp_path: Path) -> None:
     ok, evidence = gate.check_code7(tmp_path)
     assert not ok
     assert "default" in evidence
+
+
+# --- section-9 in-gate checkers (CP-05) ----------------------------------------
+
+
+def test_real_tree_feature_map() -> None:
+    ok, evidence = gate.check_feature_map(REPO_ROOT)
+    assert ok, evidence
+
+
+def test_real_tree_imports() -> None:
+    ok, evidence = gate.check_imports(REPO_ROOT)
+    assert ok, evidence
+
+
+def test_real_tree_claim_evidence() -> None:
+    ok, evidence = gate.check_claim_evidence(REPO_ROOT)
+    assert ok, evidence
+
+
+def _canary_rules_doc(rule: dict) -> str:
+    import json as _json
+
+    return _json.dumps({"version": 1, "layout": [], "rules": [rule]})
+
+
+def _canary_record(record_id: str, **over) -> dict:
+    record = {
+        "id": record_id,
+        "owner": "canary",
+        "status": "implemented",
+        "required_rules": ["Q-CANARY"],
+        "code": [],
+        "docs": [],
+        "tests": [],
+    }
+    record.update(over)
+    return record
+
+
+def _canary_enforced_rule(**over) -> dict:
+    rule = {
+        "id": "Q-CANARY",
+        "scope": "Q-TEST",
+        "requirement": "canary",
+        "checker": "tests/audit/test_canary.py",
+        "positive_fixture": "canary",
+        "violation_fixture": "canary",
+        "required_proof": "canary",
+        "owner": "canary",
+        "status": "enforced",
+        "checker_implemented": True,
+    }
+    rule.update(over)
+    return rule
+
+
+def test_planted_unnamed_feature_module_fails(tmp_path: Path) -> None:
+    import json as _json
+
+    _write(
+        tmp_path,
+        "docs/quality/rules.json",
+        _canary_rules_doc(_canary_enforced_rule()),
+    )
+    _write(
+        tmp_path,
+        "catalogue/features/engine/F-CANARY.json",
+        _json.dumps(_canary_record("F-CANARY", code=["engine/core/kept.py"])),
+    )
+    _write(tmp_path, "engine/core/kept.py", "VALUE = 1\n")
+    _write(tmp_path, "engine/core/evilmod.py", "VALUE = 2\n")
+    ok, evidence = gate.check_feature_map(tmp_path)
+    assert not ok
+    assert "evilmod.py" in evidence
+
+
+def test_planted_record_id_mismatch_fails(tmp_path: Path) -> None:
+    import json as _json
+
+    _write(
+        tmp_path,
+        "docs/quality/rules.json",
+        _canary_rules_doc(_canary_enforced_rule()),
+    )
+    _write(
+        tmp_path,
+        "catalogue/features/engine/F-CANARY.json",
+        _json.dumps(_canary_record("F-WRONG", code=["engine/core/kept.py"])),
+    )
+    _write(tmp_path, "engine/core/kept.py", "VALUE = 1\n")
+    ok, evidence = gate.check_feature_map(tmp_path)
+    assert not ok
+    assert "file stem" in evidence
+
+
+def test_planted_registry_import_violation_fails(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "profiles/hylogger/evil.py",
+        "from models.meta_cli import MuseCLIModel\n",
+    )
+    ok, evidence = gate.check_imports(tmp_path)
+    assert not ok
+    assert "evil.py" in evidence
+
+
+def test_planted_claim_missing_checker_fails(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "docs/quality/rules.json",
+        _canary_rules_doc(
+            _canary_enforced_rule(checker="tests/audit/test_missing.py")
+        ),
+    )
+    ok, evidence = gate.check_claim_evidence(tmp_path)
+    assert not ok
+    assert "Q-CANARY" in evidence
+
+
+def test_planted_claim_unregistered_readme_citation_fails(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path,
+        "docs/quality/rules.json",
+        _canary_rules_doc(_canary_enforced_rule()),
+    )
+    _write(tmp_path, "tests/audit/test_canary.py", "VALUE = 1\n")
+    _write(tmp_path, "docs/quality/README.md", "See `Q-NOPE-1` for details.\n")
+    ok, evidence = gate.check_claim_evidence(tmp_path)
+    assert not ok
+    assert "Q-NOPE-1" in evidence
+
+
+def test_planted_claim_dangling_doc_path_fails(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "docs/quality/rules.json",
+        _canary_rules_doc(_canary_enforced_rule()),
+    )
+    _write(tmp_path, "tests/audit/test_canary.py", "VALUE = 1\n")
+    _write(tmp_path, "docs/quality/README.md", "No citations here.\n")
+    _write(tmp_path, "docs/notes.md", "See `engine/core/nope.py`.\n")
+    ok, evidence = gate.check_claim_evidence(tmp_path)
+    assert not ok
+    assert "engine/core/nope.py" in evidence
+
+
+def test_planted_claim_dangling_symbol_suffix_fails(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path,
+        "docs/quality/rules.json",
+        _canary_rules_doc(_canary_enforced_rule()),
+    )
+    _write(tmp_path, "tests/audit/test_canary.py", "VALUE = 1\n")
+    _write(tmp_path, "docs/quality/README.md", "No citations here.\n")
+    _write(
+        tmp_path, "docs/notes.md", "See `engine/core/nope.py:member`.\n"
+    )
+    ok, evidence = gate.check_claim_evidence(tmp_path)
+    assert not ok
+    assert "engine/core/nope.py:member" in evidence

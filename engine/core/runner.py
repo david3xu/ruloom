@@ -140,12 +140,16 @@ class _BudgetedClient:
     The ceiling is checked before every call: once cumulative usage
     reaches ``budget`` the next call raises :class:`BudgetExceeded`
     without touching the wrapped client. Usage reported by each allowed
-    call accumulates on the runner.
+    call accumulates on the runner, and the call's effective invocation
+    (argv, pinned cwd, inherited env key names, contributor flag, and
+    the returned model identity) is recorded to the run log, so the
+    run record shows exactly which restricted invocation acted.
     """
 
-    def __init__(self, client: Any, runner: "_Runner") -> None:
+    def __init__(self, client: Any, runner: "_Runner", role: str) -> None:
         self._client = client
         self._runner = runner
+        self._role = role
 
     def _check_budget(self) -> None:
         budget = self._runner.model_budget
@@ -161,6 +165,9 @@ class _BudgetedClient:
         completion = self._client.complete(prompt, schema)
         self._runner.record_model_usage(completion.usage)
         self._runner.note_model_call(completion.usage)
+        self._runner.note_model_invocation(
+            self._role, self._client, completion
+        )
         return completion
 
     def complete_with_image(
@@ -172,6 +179,9 @@ class _BudgetedClient:
         )
         self._runner.record_model_usage(completion.usage)
         self._runner.note_model_call(completion.usage)
+        self._runner.note_model_invocation(
+            self._role, self._client, completion
+        )
         return completion
 
     def __getattr__(self, name: str) -> Any:
@@ -802,6 +812,43 @@ class _Runner:
     def note_model_call(self, usage: Any) -> None:
         """Remember the latest model usage for the attempt log entry."""
         self._last_usage = usage
+
+    def note_model_invocation(
+        self, role: str, client: Any, completion: Any
+    ) -> None:
+        """Record one model call's effective invocation to the run log.
+
+        The hosted adapter exposes its restricted invocation (argv,
+        pinned cwd, inherited env key names, contributor flag, and the
+        returned model identity); any other client records its type
+        plus the usage-reported model. Only key names are stored --
+        secret values never enter the record -- and the event rides the
+        write-through sink, so the invocation is durable per call.
+        """
+        details: dict[str, Any] = {
+            "role": role,
+            "client": type(client).__name__,
+        }
+        invocation = getattr(client, "last_invocation", None)
+        if isinstance(invocation, Mapping):
+            details["invocation"] = {
+                "argv": list(invocation.get("argv", [])),
+                "cwd": str(invocation.get("cwd", "")),
+                "env_keys": sorted(
+                    str(key) for key in invocation.get("env_keys", [])
+                ),
+                "contributor": bool(invocation.get("contributor", False)),
+                "model": str(invocation.get("model", "")),
+                "returned_model": str(
+                    invocation.get(
+                        "returned_model", invocation.get("model", "")
+                    )
+                ),
+            }
+        else:
+            usage = getattr(completion, "usage", None)
+            details["model"] = str(getattr(usage, "model", ""))
+        self.log.append("model_invocation", "ok", details)
 
     def source_meta_record(self) -> dict[str, Any]:
         """The recorded source identity record (possibly empty)."""
@@ -1544,7 +1591,7 @@ class _Runner:
                 f"model role {role!r} is disabled: treated as missing"
             )
         client = self.model_factory(role, dict(config))
-        guarded = _BudgetedClient(client, self)
+        guarded = _BudgetedClient(client, self, role)
         self._models[role] = guarded
         return guarded
 

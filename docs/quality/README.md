@@ -33,15 +33,19 @@ must be git-ignored, never required to exist).
 twelve FP checks it derives one outcome per `Q-` registry entry and
 executes it. `enforced` entries run their checker -- pytest files run
 as `python -m pytest -q <checker>` subprocesses, while an in-gate
-`scripts/force_pass.py:<check>` checker resolves to that check's FP
-outcome from the same run -- and any nonzero exit, missing checker
-file, or unimplemented checker fails the gate. `open_finding` entries
-block unconditionally; `planned` entries are reported but never
-executed. A missing or invalid registry fails closed. Canary tests in
-`tests/test_aggregate_gate.py` pin the behaviour: planted open
-findings, unimplemented or missing checkers, unknown statuses, and
-checker failures each block, and the default runner is proven to
-really execute pytest against witness files.
+`scripts/force_pass.py:<check>` checker first resolves to that check's
+FP outcome from the same run when the check is part of the FP stage,
+and otherwise executes the module-local `check_*` function live in
+this run -- and any nonzero exit, missing checker file, unknown
+member, raised error, or unimplemented checker fails the gate.
+`open_finding` entries block unconditionally; `planned` entries are
+reported but never executed. A missing or invalid registry fails
+closed. Canary tests in `tests/test_aggregate_gate.py` pin the
+behaviour: planted open findings, unimplemented or missing checkers,
+unknown statuses, checker failures, and raising in-gate checks each
+block, the module-local in-gate path is proven to execute live, and
+the default runner is proven to really execute pytest against witness
+files.
 
 ## The strict-xfail convention
 
@@ -342,3 +346,37 @@ per rule, each carrying its status token) is unchanged. No rule
 changes status and no bytes move: the registry, the suite, and the
 golden artifact are untouched. Evidence: `tests/test_aggregate_gate.py`
 (15 canary tests) and the gate's own per-checker execution lines.
+
+CP-05 closed the governance section-9 slice. Six of the nine planned
+rules now enforce with proven checkers, all executed live by the
+aggregate stage (twenty pytest files plus four in-gate checks); three
+stay planned with explicit rationale because no product mechanism can
+observe the worker behaviour they govern. The product half of the
+model-invocation boundary is enforced: the hosted adapter runs the
+child with a pinned working directory, an allowlisted environment
+(secrets never inherited), and an argv that names no peer-dispatch
+capability, and every call's effective invocation (argv, pinned cwd,
+inherited env key names, contributor flag, returned model identity) is
+recorded to the run log (`models/meta_cli.py`,
+`engine/core/runner.py`,
+`tests/models/test_meta_cli_restrictions.py`).
+
+| Rule | Status | Checker or rationale |
+| --- | --- | --- |
+| `Q-STRUCT-FEATURE-MAP` | enforced | `scripts/force_pass.py:check_feature_map` -- the catalogue names every feature module (16 records, 37 modules), live in the gate |
+| `Q-STRUCT-IMPORTS` | enforced | `scripts/force_pass.py:check_imports` -- the registry requirement through the `FP-CODE-2` scan, reconciled so they cannot drift, live in the gate |
+| `Q-DOC-CLAIM-EVIDENCE` | enforced | `scripts/force_pass.py:check_claim_evidence` -- every enforced rule cites a resolvable checker plus proof and fixtures, README citations resolve, doc paths exist or are declared generated, live in the gate |
+| `Q-GOV-SCOPED-WRITES` | enforced | `tests/governance/test_scoped_writes.py` -- no `data/` or `runs/` path tracked or ever committed, generated roots ignored, phased-branch topology present, no new merges |
+| `Q-GRAPH-AUTHORITY` | enforced | `tests/engine/test_graph_authority.py` -- the engine walks only declared graphs; undeclared stages refused at load; contexts expose no dispatch or peer authority |
+| `Q-RELEASE-COMPLETE` | enforced | `tests/audit/test_release_complete.py` -- both profiles release every declared member with frozen hashes rechecked on the extracted bundle; tampered or incomplete bundles refused |
+| `Q-GOV-NO-PEER-DISPATCH` | planned | Runtime-owned: task assignment and review routing happen in the Datacore coordinator. The product half (restricted invocation above) is enforced and recorded; a product test refusing a worker peer-dispatch would fabricate Runtime authority |
+| `Q-GOV-REVIEW-ISOLATION` | planned | Runtime-owned: verdicts arrive through the Runtime handoff and the product has no reviewer-identity channel, so a fake product checker would assert what the product cannot observe |
+| `Q-GOV-CURRENT-LEASE` | planned | Runtime-owned: task leases live in the coordinator. The engine dispatch leases in `engine/core/dispatch.py` (`Q-ENGINE-DISPATCH`) are the analogous local mechanism, stated as analogy rather than conflated proof |
+
+Evidence: `tests/test_aggregate_gate.py` (18 canary tests, including
+module-local in-gate execution and fail-closed raising checks),
+`tests/test_force_pass.py` (planted fixtures for all three in-gate
+checks), and the gate's own in-gate execution lines. Catalogue
+`F-ENGINE-RESTRICTED-INVOCATION`, `F-ENGINE-GOVERNANCE-CHECKS`, and
+`F-ENGINE-TABULAR-QUALITY` close the feature map; the invocation
+boundary is documented in `docs/engine/core/README.md`.

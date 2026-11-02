@@ -4,10 +4,11 @@ Runs the numbered FP-DOC / FP-CODE rules against the repository tree,
 then executes the aggregate Q stage: every registry rule with status
 ``enforced`` has its checker executed (pytest files run as subprocesses;
 in-gate ``scripts/force_pass.py`` checkers resolve to this run's FP
-outcome), every ``open_finding`` blocks, and ``planned`` stubs are
-reported but not executed. Prints one PASS/FAIL line per rule with
-evidence. Exits 0 only when every rule passes; any FAIL blocks merge
-and sends rework.
+outcome when they belong to the FP stage, and otherwise execute the
+module-local ``check_*`` function live), every ``open_finding`` blocks,
+and ``planned`` stubs are reported but not executed. Prints one
+PASS/FAIL line per rule with evidence. Exits 0 only when every rule
+passes; any FAIL blocks merge and sends rework.
 
 Usage (from the repo root)::
 
@@ -767,6 +768,411 @@ def check_code8(root: Path) -> tuple[bool, str]:
     return True, "no flat feature modules under engine/ or profile roots"
 
 
+#: Catalogue feature records live here (one JSON file per feature).
+CATALOGUE_DIR = Path("catalogue/features")
+
+#: Statuses a catalogue feature record may carry.
+FEATURE_STATUSES = ("implemented", "planned")
+
+#: Engine areas holding feature modules (FP-CODE-8); the engine root
+#: itself carries only ``__init__.py``.
+ENGINE_FEATURE_AREAS = ("core", "artifacts", "audit", "cli")
+
+#: Profile areas holding feature modules (FP-CODE-8, plus ``imaging/``
+#: for the HyLogger image extension); a profile root carries only
+#: ``__init__.py`` and ``capabilities.py`` as manifest/wiring.
+PROFILE_FEATURE_AREAS = (
+    "intake",
+    "analysis",
+    "generation",
+    "validation",
+    "imaging",
+)
+
+
+def _catalogue_records(root: Path) -> list[tuple[str, dict]]:
+    """Load every catalogue feature record as (relative path, payload)."""
+    base = root / CATALOGUE_DIR
+    if not base.is_dir():
+        return []
+    out: list[tuple[str, dict]] = []
+    for path in sorted(base.rglob("*.json")):
+        if "__pycache__" in path.parts:
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if isinstance(payload, dict):
+            out.append((_rel(path, root), payload))
+    return out
+
+
+def _feature_modules_map(root: Path) -> dict[str, None]:
+    """Every product feature module path (engine + profile areas).
+
+    Mirrors the FP-CODE-8 layout contract: ``engine/<area>/*.py`` and
+    ``profiles/<id>/<area>/*.py`` below the roots, excluding
+    ``__init__.py``. Manifest/wiring files at the roots
+    (``capabilities.py``) are not feature modules.
+    """
+    modules: dict[str, None] = {}
+    engine_base = root / ENGINE_DIR
+    if engine_base.is_dir():
+        for area in ENGINE_FEATURE_AREAS:
+            area_dir = engine_base / area
+            if not area_dir.is_dir():
+                continue
+            for path in sorted(area_dir.glob("*.py")):
+                if path.name == "__init__.py":
+                    continue
+                modules[_rel(path, root)] = None
+    profiles_base = root / PROFILES_DIR
+    if profiles_base.is_dir():
+        for profile_dir in sorted(
+            p
+            for p in profiles_base.iterdir()
+            if p.is_dir()
+            and not p.name.startswith(("_", "."))
+            and (p / "profile.json").is_file()
+        ):
+            for area in PROFILE_FEATURE_AREAS:
+                area_dir = profile_dir / area
+                if not area_dir.is_dir():
+                    continue
+                for path in sorted(area_dir.glob("*.py")):
+                    if path.name == "__init__.py":
+                        continue
+                    modules[_rel(path, root)] = None
+    return modules
+
+
+def check_feature_map(root: Path) -> tuple[bool, str]:
+    """Q-STRUCT-FEATURE-MAP: the catalogue names every feature module.
+
+    Forward: every ``catalogue/features/*/*.json`` record carries a
+    stable id (matching its file stem), a non-empty owner, a valid
+    status, non-empty registered ``required_rules``, and code/docs/tests
+    path lists whose every entry exists on disk. Reverse: every product
+    feature module (engine and profile areas per FP-CODE-8) is named by
+    at least one record's ``code`` list, so no implementation ships
+    without an owning record.
+    """
+    records = _catalogue_records(root)
+    if not records:
+        return False, "no catalogue feature records found"
+    payload = load_registry(root)
+    registered = (
+        {str(rule.get("id")) for rule in payload.get("rules", [])}
+        if isinstance(payload, dict) and isinstance(payload.get("rules"), list)
+        else set()
+    )
+    problems: list[str] = []
+    named: set[str] = set()
+    for rel, record in records:
+        stem = Path(rel).stem
+        if not isinstance(record.get("id"), str) or not record["id"]:
+            problems.append(f"{rel}: missing stable id")
+        elif record["id"] != stem:
+            problems.append(
+                f"{rel}: id {record['id']!r} does not match file stem"
+            )
+        if not isinstance(record.get("owner"), str) or not record["owner"]:
+            problems.append(f"{rel}: missing owner")
+        if record.get("status") not in FEATURE_STATUSES:
+            problems.append(
+                f"{rel}: status {record.get('status')!r} not in "
+                f"{list(FEATURE_STATUSES)}"
+            )
+        required = record.get("required_rules")
+        if (
+            not isinstance(required, list)
+            or not required
+            or any(not isinstance(item, str) for item in required)
+        ):
+            problems.append(f"{rel}: needs a non-empty required_rules list")
+        else:
+            for item in required:
+                if item not in registered:
+                    problems.append(
+                        f"{rel}: required rule {item!r} is not registered"
+                    )
+        for field in ("code", "docs", "tests"):
+            entries = record.get(field)
+            if entries is None:
+                continue
+            if (
+                not isinstance(entries, list)
+                or not entries
+                or any(not isinstance(item, str) for item in entries)
+            ):
+                problems.append(
+                    f"{rel}: {field!r} must be a non-empty path list"
+                )
+                continue
+            for entry in entries:
+                if not (root / entry).exists():
+                    problems.append(
+                        f"{rel}: {field} path {entry!r} does not exist"
+                    )
+        for entry in record.get("code", []) or []:
+            if isinstance(entry, str):
+                named.add(entry)
+    modules = _feature_modules_map(root)
+    if not modules:
+        problems.append("no product feature modules found")
+    unnamed = [path for path in modules if path not in named]
+    if unnamed:
+        problems.append(
+            "feature modules with no owning record: " + ", ".join(unnamed)
+        )
+    if problems:
+        return False, "; ".join(problems)
+    return (
+        True,
+        f"catalogue maps every feature module "
+        f"({len(records)} records, {len(modules)} modules named)",
+    )
+
+
+def check_imports(root: Path) -> tuple[bool, str]:
+    """Q-STRUCT-IMPORTS: layer import boundaries, registry requirement.
+
+    Reconciled with FP-CODE-2 (not a second mechanism): the registry
+    requirement -- profiles import no engine and no models except the
+    plan contract, models import no profiles and no engine, engine
+    imports no hosted model adapter outside the composition root -- is
+    exactly the FP-CODE-2 AST boundary, enforced here through the same
+    scan so the two rules cannot drift apart.
+    """
+    ok, evidence = check_code2(root)
+    if not ok:
+        return False, evidence
+    return True, f"registry import boundaries hold ({evidence})"
+
+
+#: Doc files whose backtick path references must resolve.
+CLAIM_DOC_GLOBS = ("docs/*.md", "docs/quality/*.md")
+
+#: Backtick references under these roots are declared generated output
+#: (git-ignored runtime or source-fetch areas): they resolve by policy,
+#: never by existence, and are distinguished from tracked paths.
+GENERATED_REF_ROOTS = ("runs/", "data/")
+
+#: Backtick references under these roots must exist on disk as files or
+#: directories (after stripping ``:line``, ``::symbol``, and ``<...>``
+#: placeholders, which are accepted as written).
+TRACKED_REF_ROOTS = (
+    "engine/",
+    "models/",
+    "profiles/",
+    "tests/",
+    "scripts/",
+    "catalogue/",
+    "docs/",
+)
+
+RULE_TOKEN_RE = re.compile(r"Q-[A-Za-z0-9_*.\-]+")
+BACKTICK_RE = re.compile(r"`([^`]+)`")
+LINE_SUFFIX_RE = re.compile(r"^(.*?):\d+(-\d+)?$")
+
+
+#: File tokens a fixture text may cite (test or script paths, with an
+#: optional ``::node`` suffix for a pytest node id).
+FIXTURE_PATH_RE = re.compile(
+    r"(tests/[A-Za-z0-9_/.\-]+\.py|scripts/[A-Za-z0-9_/.\-]+\.py)"
+    r"(::[A-Za-z0-9_]+)?"
+)
+
+
+def _fixture_paths_resolve(root: Path, fixture: str) -> bool:
+    """True when every file a fixture text cites exists on disk.
+
+    Fixture prose may describe the violation without naming a file
+    (accepted as written); when it does name test/script files, each
+    one must exist, so the cited evidence is never dangling.
+    """
+    text = str(fixture)
+    tokens = FIXTURE_PATH_RE.findall(text)
+    if not tokens:
+        return True
+    for path, _node in tokens:
+        try:
+            if not (root / path).is_file():
+                return False
+        except OSError:
+            return False
+    return True
+
+
+def _check_claim_rule_refs(
+    root: Path, rules: list[dict]
+) -> list[str]:
+    """Every ENFORCED rule cites resolvable evidence (checker + proof)."""
+    problems: list[str] = []
+    for rule in rules:
+        if not isinstance(rule, dict) or rule.get("status") != "enforced":
+            continue
+        rule_id = str(rule.get("id"))
+        checker = str(rule.get("checker", ""))
+        if not checker:
+            problems.append(f"{rule_id}: enforced with no checker")
+            continue
+        if not rule.get("checker_implemented"):
+            problems.append(f"{rule_id}: enforced with no implemented checker")
+            continue
+        target, sep, member = checker.partition(":")
+        if target == "scripts/force_pass.py" and sep:
+            func = globals().get(member)
+            if not callable(func):
+                problems.append(
+                    f"{rule_id}: in-gate checker {member!r} is not defined"
+                )
+        elif target.endswith(".py"):
+            if not (root / target).is_file():
+                problems.append(
+                    f"{rule_id}: checker file {target!r} does not exist"
+                )
+        else:
+            problems.append(
+                f"{rule_id}: checker shape {checker!r} is not resolvable"
+            )
+        for field in ("required_proof", "positive_fixture", "violation_fixture"):
+            value = rule.get(field)
+            if not isinstance(value, str) or not value.strip():
+                problems.append(f"{rule_id}: {field} is empty")
+            elif field != "required_proof" and not _fixture_paths_resolve(
+                root, value
+            ):
+                problems.append(
+                    f"{rule_id}: {field} cites a missing file"
+                )
+    return problems
+
+
+def _check_claim_readme_refs(root: Path, ids: set[str]) -> list[str]:
+    """Every rule citation in docs/quality/README.md resolves."""
+    problems: list[str] = []
+    try:
+        text = (root / "docs" / "quality" / "README.md").read_text(
+            encoding="utf-8"
+        )
+    except OSError:
+        return ["docs/quality/README.md is missing"]
+    for token in sorted(set(RULE_TOKEN_RE.findall(text))):
+        if token in ids:
+            continue
+        if token.endswith(("*", "-")):
+            prefix = token.rstrip("*-")
+            if any(
+                candidate == prefix or candidate.startswith(prefix)
+                for candidate in ids
+            ):
+                continue
+        problems.append(
+            f"docs/quality/README.md cites unregistered rule {token!r}"
+        )
+    return problems
+
+
+SYMBOL_SUFFIX_RE = re.compile(r"^(.*?):[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _normalise_doc_ref(ref: str, root: Path) -> str | None:
+    """Normalise a backtick doc reference, or None when not a repo path.
+
+    Commands (``scripts/evaluate.py --recompute ...``), prose with
+    spaces, and ``<...>`` placeholders are not path references and are
+    distinguished as such; only whitespace-free repo-rooted paths are
+    resolved. A trailing ``:line``, ``::symbol``, or ``:member``
+    suffix resolves to the file it names (the suffix must actually
+    resolve, so a dangling ``path:member`` still fails).
+    """
+    text = ref.strip()
+    if not text or ("<" in text and ">" in text):
+        return None
+    if any(part.isspace() for part in text):
+        return None
+    head = text.split("::")[0]
+    match = LINE_SUFFIX_RE.match(head)
+    if match:
+        head = match.group(1)
+    else:
+        symbol = SYMBOL_SUFFIX_RE.match(head)
+        if symbol and (root / symbol.group(1)).exists():
+            head = symbol.group(1)
+    for prefix in TRACKED_REF_ROOTS + GENERATED_REF_ROOTS:
+        if head == prefix.rstrip("/") or head.startswith(prefix):
+            return head
+    return None
+
+
+def _check_claim_doc_refs(root: Path) -> list[str]:
+    """Tracked doc path references exist; generated ones stay declared."""
+    problems: list[str] = []
+    seen: set[str] = set()
+    for pattern in CLAIM_DOC_GLOBS:
+        for path in sorted(root.glob(pattern)):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for ref in BACKTICK_RE.findall(text):
+                normalised = _normalise_doc_ref(ref, root)
+                if normalised is None or normalised in seen:
+                    continue
+                seen.add(normalised)
+                if normalised.startswith(GENERATED_REF_ROOTS):
+                    continue
+                if not (root / normalised).exists():
+                    problems.append(
+                        f"{path.name} references missing path "
+                        f"`{normalised}`"
+                    )
+    return problems
+
+
+def check_claim_evidence(root: Path) -> tuple[bool, str]:
+    """Q-DOC-CLAIM-EVIDENCE: every quality claim cites executed evidence.
+
+    Three mechanical parts: (1) every ENFORCED registry rule names a
+    resolvable checker (an existing file, or a defined in-gate check
+    function) plus non-empty ``required_proof`` and resolvable
+    positive/violation fixtures; (2) every rule id cited in
+    ``docs/quality/README.md`` resolves to a registry id (a trailing
+    ``*`` group reference resolves when it matches at least one id);
+    (3) every tracked-file-looking backtick path in ``docs/*.md`` and
+    ``docs/quality/*.md`` exists on disk, while ``runs/`` and ``data/``
+    references resolve as declared generated paths -- distinguished,
+    never fudged.
+    """
+    payload = load_registry(root)
+    if payload is None:
+        return False, "missing or invalid registry"
+    entries = payload.get("rules")
+    if not isinstance(entries, list):
+        return False, "registry has no rules list"
+    problems: list[str] = []
+    problems.extend(_check_claim_rule_refs(root, entries))
+    ids = {
+        str(rule.get("id")) for rule in entries if isinstance(rule, dict)
+    }
+    problems.extend(_check_claim_readme_refs(root, ids))
+    problems.extend(_check_claim_doc_refs(root))
+    if problems:
+        return False, "; ".join(problems)
+    enforced = sum(
+        1
+        for rule in entries
+        if isinstance(rule, dict) and rule.get("status") == "enforced"
+    )
+    return (
+        True,
+        f"all {enforced} enforced rules cite resolvable evidence; "
+        f"README citations and doc paths resolve",
+    )
+
+
 CHECKS = (
     ("FP-DOC-1", check_doc1),
     ("FP-DOC-2", check_doc2),
@@ -907,11 +1313,7 @@ def check_aggregate(
             target, member = _split_checker(checker)
             if target == "scripts/force_pass.py" and member:
                 hit = fp_results.get(member)
-                if hit is None:
-                    outcomes.append(
-                        (rule_id, False, f"ENFORCED{ref} — in-gate checker {member} not in this run")
-                    )
-                else:
+                if hit is not None:
                     fp_id, fp_ok = hit
                     outcomes.append(
                         (
@@ -920,6 +1322,43 @@ def check_aggregate(
                             f"ENFORCED{ref} — covered by {fp_id}: {'PASS' if fp_ok else 'FAIL'}",
                         )
                     )
+                else:
+                    # Module-local in-gate checks beyond the FP stage
+                    # (Q-STRUCT-*/Q-DOC-CLAIM-EVIDENCE): execute the named
+                    # ``check_*`` function live in this run. Anything
+                    # else -- an unknown member, a non-check attribute,
+                    # or a raised error -- blocks fail-closed.
+                    func = globals().get(member)
+                    if callable(func) and member.startswith("check_"):
+                        try:
+                            in_ok, in_evidence = func(root)
+                        except Exception as exc:
+                            outcomes.append(
+                                (
+                                    rule_id,
+                                    False,
+                                    f"ENFORCED{ref} — in-gate {member} "
+                                    f"raised {type(exc).__name__}: {exc}",
+                                )
+                            )
+                        else:
+                            outcomes.append(
+                                (
+                                    rule_id,
+                                    in_ok,
+                                    f"ENFORCED{ref} — in-gate {member}: "
+                                    f"{'PASS' if in_ok else 'FAIL'} — "
+                                    f"{in_evidence}",
+                                )
+                            )
+                    else:
+                        outcomes.append(
+                            (
+                                rule_id,
+                                False,
+                                f"ENFORCED{ref} — in-gate checker {member} not in this run",
+                            )
+                        )
                 continue
             ok, evidence = execute(root, checker)  # type: ignore[operator]
             outcomes.append((rule_id, ok, f"ENFORCED{ref} — executed {evidence}"))

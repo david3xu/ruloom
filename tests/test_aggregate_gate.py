@@ -286,3 +286,72 @@ def test_default_runner_rejects_member_shape(tmp_path: Path) -> None:
     ok, evidence = gate.run_q_checker(tmp_path, "scripts/force_pass.py:check_doc1")
     assert not ok
     assert "unsupported checker shape" in evidence
+
+
+# --- module-local in-gate checks execute live (CP-05) -------------------------
+
+
+def test_in_gate_module_local_check_executes_live(tmp_path: Path) -> None:
+    # check_code3 is a real module-local check_* function absent from the
+    # FP results: the gate executes it in this run instead of treating
+    # it as unknown. A stub runner would report "stub-passed" and an
+    # unknown member would block; the live evidence names the check.
+    _write(
+        tmp_path,
+        "docs/quality/rules.json",
+        _registry_doc(
+            [_rule("Q-INGATE-1", "enforced", checker="scripts/force_pass.py:check_code3")]
+        ),
+    )
+    ok, outcomes = gate.check_aggregate(
+        tmp_path, fp_results=dict(FP_OK), runner=_stub_runner()
+    )
+    assert ok, outcomes
+    assert outcomes[0][0] == "Q-INGATE-1"
+    assert "in-gate check_code3" in outcomes[0][2]
+    # A planted sha256 helper fails the same live check, so the gate
+    # executes rather than merely reporting the member.
+    _write(tmp_path, "engine/evil.py", "def evil_sha256(x):\n    return x\n")
+    ok, outcomes = gate.check_aggregate(
+        tmp_path, fp_results=dict(FP_OK), runner=_stub_runner()
+    )
+    assert not ok
+    assert "in-gate check_code3" in outcomes[0][2]
+    assert "evil_sha256" in outcomes[0][2]
+
+
+def test_in_gate_non_check_member_still_blocks(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "docs/quality/rules.json",
+        _registry_doc(
+            [_rule("Q-INGATE-1", "enforced", checker="scripts/force_pass.py:REGISTRY_REL")]
+        ),
+    )
+    ok, outcomes = gate.check_aggregate(
+        tmp_path, fp_results=dict(FP_OK), runner=_stub_runner()
+    )
+    assert not ok
+    assert "not in this run" in outcomes[0][2]
+
+
+def test_in_gate_raising_check_blocks_fail_closed(tmp_path: Path) -> None:
+    def _boom(root: Path) -> tuple[bool, str]:
+        raise RuntimeError("boom")
+
+    gate.check_boom_canary = _boom  # type: ignore[attr-defined]
+    try:
+        _write(
+            tmp_path,
+            "docs/quality/rules.json",
+            _registry_doc(
+                [_rule("Q-INGATE-1", "enforced", checker="scripts/force_pass.py:check_boom_canary")]
+            ),
+        )
+        ok, outcomes = gate.check_aggregate(
+            tmp_path, fp_results=dict(FP_OK), runner=_stub_runner()
+        )
+    finally:
+        del gate.check_boom_canary  # type: ignore[attr-defined]
+    assert not ok
+    assert "raised RuntimeError" in outcomes[0][2]
