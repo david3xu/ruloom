@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Sequence
 
 from ..intake.reader import Sample, read_scalar_csv
-from .statistics import FRAC_ND, SMALL_ND, percentile
+from .statistics import FRAC_ND, SMALL_ND, label_persistence, percentile
 
 #: Licence of the source data the bands are derived from.
 LICENCE = "CC-BY-4.0"
@@ -79,6 +79,7 @@ def scalar_summary(samples: Sequence[Sample]) -> dict[str, float | int | None]:
         )
     return {
         "n": n,
+        "tir_persistence": label_persistence(samples, "tir_group"),
         "spacing_median_m": (
             round(statistics.median(forward), SMALL_ND) if forward else None
         ),

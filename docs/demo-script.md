@@ -23,7 +23,7 @@ cd ~/workspace/ruloom
 
 At `Decision [accept/modify/reject]:` type `accept`, then a short note such
 as `demo run`. Expected: verdict `pass`, artifact
-`be9e26d7e6640c4acc8ef35b4f9487f2c3d114142d47b5b68d21daca76989ab3`,
+`55eb1c22e212cc61523548875af5e98b3c040aecdb7d9dc7ac59d7836f58d85f`,
 `release.zip` written. Run it a second time to show the identical hash.
 
 Optional, if the local critic is wanted on camera (server must be started

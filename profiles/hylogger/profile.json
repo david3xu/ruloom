@@ -304,6 +304,15 @@
       "required": true
     },
     {
+      "id": "tir_persistence_fidelity",
+      "kind": "fidelity",
+      "threshold": {
+        "source": "split_half_reference"
+      },
+      "required": true,
+      "note": "TIR run persistence tracks the source hole's own persistence within its split-half delta plus the frozen cross-hole p95 (0.155469) and a finite-sample allowance; A04."
+    },
+    {
       "id": "row_count_match",
       "kind": "constraint",
       "threshold": {
@@ -329,6 +338,24 @@
       },
       "required": true,
       "note": "The artifact end stays within the requested start-plus-step-times-rows extent; R02."
+    },
+    {
+      "id": "spacing_step_match",
+      "kind": "constraint",
+      "threshold": {
+        "source": "split_half_reference"
+      },
+      "required": true,
+      "note": "Median forward spacing matches the requested plan step within the frozen calibration split-half p95 (0.000248 m); uniform rescaling fails; A04."
+    },
+    {
+      "id": "depth_span_match",
+      "kind": "constraint",
+      "threshold": {
+        "source": "literal"
+      },
+      "required": true,
+      "note": "End depth equals the requested span after allowing exactly the artifact's own masked repeats (1e-6 m float slack); contraction or unmasked extension fails; A04."
     },
     {
       "id": "csv_schema",

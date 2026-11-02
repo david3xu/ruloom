@@ -54,4 +54,6 @@ photograph.
   release membership (`tests/audit/test_r04_image_release.py`) pass
   with five image check results.
 * Full suite, gate, and clean-archive check pass; the PDD446 golden
-  bytes reproduce unchanged.
+  bytes reproduce unchanged (at RP-06; CP-02 later versioned the
+  seed-42 golden artifact to `55eb1c22e212…`, see
+  `docs/quality/scorecard-cp02-addendum.md`).

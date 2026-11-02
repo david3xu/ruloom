@@ -203,8 +203,11 @@ only — see `docs/provenance.md`.
 First-stage product is complete: one command runs the full lifecycle
 (intake, profile, plan, generate, validate, bounded repair, human-gated
 release). Verified on a real PDD446 run: plan `{seed 42, n_rows 39300}`,
-validation verdict pass, artifact `be9e26d7e664…`, release ZIP
-`46c7c07110c5…` with a hash-chained run log that verifies end to end.
+validation verdict pass, artifact `55eb1c22e212…`, release ZIP
+`016edff18b3e…` with a hash-chained run log that verifies end to end.
+(CP-02 repaired TIR sequence generation and versioned the golden bytes
+deliberately; pre-repair values were artifact `be9e26d7e664…`, release
+`46c7c07110c5…` — see `docs/quality/scorecard-cp02-addendum.md`.)
 Test suite: 274 passed. Force-pass gate (`scripts/force_pass.py`):
 12/12 rules PASS. The engine is generic: profiles declare their
 step/loop/gate graphs and permissions, and the same engine code runs

@@ -130,6 +130,45 @@ def test_derive_no_csvs_raises(tmp_path: Path) -> None:
         derive_thresholds(tmp_path)
 
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CALIBRATION_DIR = REPO_ROOT / "data" / "calibration"
+
+requires_calibration_data = pytest.mark.skipif(
+    not CALIBRATION_DIR.is_dir(),
+    reason="requires git-ignored NVCL calibration cache under data/ (absent in clean checkout)",
+)
+
+
+@requires_calibration_data
+def test_tir_persistence_p95_matches_frozen_calibration() -> None:
+    """Pin the committed TIR persistence p95 to the frozen cache.
+
+    Recomputes the within-hole split-half |delta| of TIR persistence
+    across the 38 calibration holes and asserts the committed
+    ``TIR_PERSISTENCE_P95`` literal in the checks module. A drift means
+    the cache moved: re-derive deliberately, never silently.
+    """
+    import glob
+
+    from profiles.hylogger.analysis.calibration import split_halves
+    from profiles.hylogger.analysis.statistics import build_stats
+    from profiles.hylogger.intake.reader import read_scalar_csv
+    from profiles.hylogger.validation.checks import TIR_PERSISTENCE_P95
+
+    paths = sorted(glob.glob(str(CALIBRATION_DIR / "*-scalars.csv")))
+    assert len(paths) == 38
+    deltas = []
+    for path in paths:
+        samples = read_scalar_csv(path)
+        first, second = split_halves(samples)
+        persist_first = build_stats(first)["tir"]["persistence"]
+        persist_second = build_stats(second)["tir"]["persistence"]
+        assert persist_first is not None and persist_second is not None
+        deltas.append(abs(persist_first - persist_second))
+    deltas.sort()
+    assert TIR_PERSISTENCE_P95 == pytest.approx(deltas[int(0.95 * (len(deltas) - 1))], abs=1e-6)
+
+
 def test_thresholds_from_dict_defaults() -> None:
     thresholds = Thresholds.from_dict({})
     assert thresholds.bands == {}

@@ -61,6 +61,17 @@ def test_base_fixture_passes() -> None:
     assert report.failed == []
 
 
+def test_run_fixture_passes() -> None:
+    """Control: the block-structured run fixture passes uncorrupted."""
+    base = _run_fixture()
+    report = run_checks(
+        base, THRESHOLDS, source_samples=base,
+        expected_geometry=_expected(),
+    )
+    assert report.verdict == "pass"
+    assert report.failed == []
+
+
 def test_negative_depth_shift_must_not_pass() -> None:
     """Shifting every depth by -1000000 m must not pass."""
     base = _base()
@@ -115,3 +126,95 @@ def test_stretched_extent_must_not_pass() -> None:
     )
     assert report.verdict == "fail"
     assert "depth_end_within_requested" in report.failed
+
+
+def test_uniform_depth_contraction_must_not_pass() -> None:
+    """Scaling every depth by 0.7 must fail required geometry checks.
+
+    The 2026-11-02 re-audit (A04) counterexample: start stays 0.0, the
+    end contracts to 4.8965 m (inside the old one-sided extent bound)
+    and the median spacing 0.0035 m sits inside the calibration band,
+    so the corrupted artifact passed every check. Two-sided plan
+    fidelity (requested step and span) must refuse it.
+    """
+    base = _base()
+    contracted = [replace(s, depth_m=s.depth_m * 0.7) for s in base]
+    assert contracted[0].depth_m == 0.0
+    report = run_checks(
+        contracted, THRESHOLDS, source_samples=base,
+        expected_geometry=_expected(),
+    )
+    assert report.verdict == "fail"
+    assert "spacing_step_match" in report.failed
+    assert "depth_span_match" in report.failed
+
+
+def _scattered(order: int) -> list[int]:
+    """A deterministic scatter permutation of indices.
+
+    Golden-ratio stride: consecutive output positions draw from input
+    positions ~0.618*order apart, so block-structured runs are
+    thoroughly mixed while the label multiset is preserved exactly.
+    """
+    import math
+
+    step = max(2, int(order * 0.6180339887))
+    while math.gcd(step, order) != 1:
+        step -= 1
+    index = list(range(order))
+    index.sort(key=lambda i: (i * step) % order)
+    return index
+
+
+def _run_fixture(n: int = 1400) -> list[Sample]:
+    """Block-structured TIR runs over the standard depth lattice.
+
+    Valid rows answer TIR in blocks of 100 (SILICA, OLIVINE, CHLORITE
+    rotating), so neighbouring persistence is near 1.0 while three
+    labels keep richness/vocabulary honest.
+    """
+    samples = []
+    for i in range(n):
+        valid = i % 7 != 0
+        tir = None
+        if valid:
+            tir = ("SILICA", "OLIVINE", "CHLORITE")[(i // 100) % 3]
+        samples.append(
+            Sample(
+                depth_m=i * 0.005,
+                valid=valid,
+                swir_group=("CHLORITE" if valid else None),
+                tir_group=tir,
+            )
+        )
+    return samples
+
+
+def test_tir_run_derangement_must_not_pass() -> None:
+    """Scrambling TIR run order while keeping every marginal must fail.
+
+    A golden-ratio stride permutes answered TIR labels among the valid
+    rows: the label multiset (hence every marginal TVD), answer rates,
+    depths and row counts are unchanged, but neighbouring persistence
+    collapses. Only the TIR persistence-fidelity check may trip, proving
+    its specificity for local-sequence structure (A04).
+    """
+    base = _run_fixture()
+    answered = [i for i, s in enumerate(base) if s.valid and s.tir_group is not None]
+    labels = [base[i].tir_group for i in answered]
+    order = _scattered(len(labels))
+    assert order != sorted(order)
+    shuffled = [labels[k] for k in order]
+    assert sorted(shuffled) == sorted(labels)
+    assert shuffled != labels
+    mapping = dict(zip(answered, shuffled))
+    broken = [
+        replace(s, tir_group=mapping.get(i, s.tir_group))
+        for i, s in enumerate(base)
+    ]
+    report = run_checks(
+        broken, THRESHOLDS, source_samples=base,
+        expected_geometry=_expected(),
+    )
+    assert report.verdict == "fail"
+    assert report.failed == ["tir_persistence_fidelity"]

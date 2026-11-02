@@ -283,3 +283,34 @@ artifact
 `fda9cf255638a5f3fb274b4d61971ff9a37702fc3f5042a145fb2fc3a4a318e4`),
 recorded in `docs/dispatch-publication-rp09.md`. Full pytest 500
 passed; `force_pass.py` 12/12 exit 0; golden bytes unchanged.
+
+CP-02 repaired the remaining R02 depth/sequence defects (re-audit
+A04) with a full repair, not a disclosure. Three required checks are
+new, bringing the R01/R02 slice to fifteen: `spacing_step_match`
+(median forward spacing matches the requested plan step within the
+frozen calibration split-half p95, 0.000248 m -- a uniform 0.7x
+contraction fails it alongside the calibration band it used to hide
+inside), `depth_span_match` (end depth equals the requested span after
+allowing exactly the artifact's own masked repeats, 1e-6 m slack --
+contraction or unmasked extension fails), and
+`tir_persistence_fidelity` (synthetic TIR persistence tracks the
+source hole's own persistence within its split-half delta plus the
+frozen cross-hole p95 of 0.155469 and a finite-sample allowance).
+Both-answered rows now draw TIR through the TIR transition structure
+instead of the joint counts, and transition rows with fewer than two
+outgoing pairs fall back instead of absorbing the chain (PDD446
+GARNET). Evidence: `tests/audit/test_r02_depth_geometry.py` gains the
+0.7x-contraction and run-derangement corruptions (each fails only at
+the responsible new check) plus uncorrupted controls;
+`scripts/scorecard_cp02_addendum.py` regenerates
+`docs/quality/scorecard-cp02-addendum.md` (15/15 multi-seed synthetics
+pass across PDD446 plus the four held-out holes, synthetic TIR
+persistence within ~0.01 of source on every cell, declared band
+stated with its derivation). Joint SWIR/TIR agreement is lower than
+under the joint draw and is disclosed, not gated; depth-dependent
+interpretation needing joint co-occurrence stays unclaimed. The
+generator bytes move deliberately: PDD446 seed-42 golden artifact
+`be9e26d7e664…` becomes `55eb1c22e212…` (same profile/seed/n_rows,
+verdict pass, reproduced identically by a live CLI run and by direct
+computation). `Q-DATA-R02` is re-scoped to this contract; earlier
+per-RP paragraphs above are historical.

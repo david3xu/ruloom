@@ -18,7 +18,10 @@ from ..analysis.calibration import (
     channel_marginals,
     hole_scalars,
     marginal_tvd,
+    scalar_summary,
+    split_halves,
 )
+from ..analysis.statistics import build_stats
 from .dataset import read_csv_bytes, to_csv_bytes
 from ..intake.reader import Sample
 
@@ -38,6 +41,17 @@ TVD_VACUOUS_TOLERANCE = 1.0
 #: orders of magnitude below any real spacing step while covering the
 #: worst-case accumulation over the manifest row maximum.
 END_FLOAT_EPS_M = 1e-6
+
+#: p95 of the within-hole split-half ``|delta|`` of TIR neighbouring
+#: persistence across the 38 frozen calibration holes (the
+#: ``thresholds.json`` provenance set), computed 2026-11-02 as
+#: 0.155469. A synthetic holds its source hole's TIR run structure
+#: when its persistence sits within the hole's own split-half delta
+#: plus this cross-hole allowance (plus a finite-sample term). The
+#: derivation is recorded in ``docs/quality/scorecard-cp02-addendum.md``;
+#: ``tests/profiles/hylogger/test_calibration.py`` recomputes the value
+#: from ``data/calibration`` whenever the source cache is present.
+TIR_PERSISTENCE_P95 = 0.155469
 
 
 def _source_labels(samples: Sequence[Sample], channel: str) -> frozenset:
@@ -78,6 +92,13 @@ def source_fidelity_reference(
     source = list(source_samples)
     first, second = source[: len(source) // 2], source[len(source) // 2 :]
     hole = hole_scalars(source)
+    persist_all = scalar_summary(source)["tir_persistence"]
+    persist_first = scalar_summary(first)["tir_persistence"]
+    persist_second = scalar_summary(second)["tir_persistence"]
+    if persist_first is None or persist_second is None or persist_all is None:
+        persist_tolerance = None
+    else:
+        persist_tolerance = abs(float(persist_first) - float(persist_second))
     reference: dict[str, dict[str, Any]] = {}
     for channel in ("swir", "tir"):
         key = f"{channel}_group"
@@ -93,6 +114,8 @@ def source_fidelity_reference(
                 f"{channel}_answer_rate"
             ],
             "labels": sorted(_source_labels(source, channel)),
+            "persistence": persist_all,
+            "persistence_tolerance": persist_tolerance,
         }
     reference["invalid_label_rate"] = _invalid_label_rate(source)
     return reference
@@ -483,6 +506,57 @@ def run_checks(
                 band_position(distance, 0.0, tolerance),
             ))
 
+    tir_ref = _source_channel(source_reference, "tir")
+    if tir_ref is None:
+        add(CheckResult("tir_persistence_fidelity", SKIP,
+                        "no source samples provided"))
+    else:
+        source_persist = tir_ref.get("persistence")
+        persist_delta = tir_ref.get("persistence_tolerance")
+        synth_stats = build_stats(samples)
+        synth_persist = synth_stats["tir"]["persistence"]
+        n_pairs = synth_stats["tir"]["n_pairs"]
+        if (
+            not isinstance(source_persist, (int, float))
+            or isinstance(source_persist, bool)
+            or not isinstance(persist_delta, (int, float))
+            or isinstance(persist_delta, bool)
+        ):
+            add(CheckResult(
+                "tir_persistence_fidelity", SKIP,
+                "source cannot establish persistence tolerance"))
+        elif synth_persist is None or not n_pairs:
+            add(CheckResult(
+                "tir_persistence_fidelity", SKIP,
+                "artifact answers too few TIR pairs to compare"))
+        else:
+            # Tolerance mirrors the answer-fidelity pattern: the source
+            # hole's own split-half delta (its spatial heterogeneity),
+            # the cross-hole p95 widening from the frozen calibration,
+            # and a finite-sample allowance over the artifact's answered
+            # pairs. The re-audit's joint-conditioned draw drifts ~0.25
+            # below source, failing with margin; run-preserving draws
+            # sit an order of magnitude inside.
+            tolerance = (
+                abs(float(persist_delta))
+                + TIR_PERSISTENCE_P95
+                + (2.0 / math.sqrt(n_pairs))
+            )
+            drift = abs(float(synth_persist) - float(source_persist))
+            position = band_position(drift, 0.0, tolerance)
+            if drift <= tolerance:
+                add(CheckResult(
+                    "tir_persistence_fidelity", PASS,
+                    f"TIR persistence drift {drift:.6f} <= {tolerance:.6f}",
+                    position,
+                ))
+            else:
+                add(CheckResult(
+                    "tir_persistence_fidelity", FAIL,
+                    f"TIR persistence drift {drift:.6f} > {tolerance:.6f}",
+                    position,
+                ))
+
     n_expected = _expected_number(expected_geometry, "n_rows")
     n_int = (
         int(n_expected)
@@ -531,6 +605,69 @@ def run_checks(
             add(CheckResult(
                 "depth_end_within_requested", FAIL,
                 f"end {end} beyond requested extent {bound}"))
+
+    if n_int is None or start_expected is None or step_expected is None:
+        add(CheckResult(
+            "spacing_step_match", SKIP, "no requested geometry"))
+        add(CheckResult(
+            "depth_span_match", SKIP, "no requested geometry"))
+    else:
+        # Two-sided plan fidelity (A04): the median forward spacing must
+        # reproduce the requested plan step, and the end depth must equal
+        # the requested span after allowing exactly the artifact's own
+        # masked repeats. The step tolerance is the frozen calibration
+        # split-half p95 (no new band, thresholds.json untouched); the
+        # span tolerance is float accumulation slack only. Uniform
+        # contraction (or any rescaling) fails both; unmasked extension
+        # fails the span alongside the one-sided extent bound above.
+        median_spacing = observed["spacing_median_m"]
+        if median_spacing is None:
+            add(CheckResult(
+                "spacing_step_match", SKIP,
+                "no forward spacing to compare"))
+        else:
+            step_tolerance = (
+                abs(thresholds.split_half_p95.get("spacing_median_m", 0.0))
+                + END_FLOAT_EPS_M
+            )
+            step_drift = abs(float(median_spacing) - step_expected)
+            position = band_position(step_drift, 0.0, step_tolerance)
+            if step_drift <= step_tolerance:
+                add(CheckResult(
+                    "spacing_step_match", PASS,
+                    f"median spacing {median_spacing} matches requested "
+                    f"step {step_expected} (drift {step_drift:.6f} <= "
+                    f"{step_tolerance:.6f})",
+                    position,
+                ))
+            else:
+                add(CheckResult(
+                    "spacing_step_match", FAIL,
+                    f"median spacing {median_spacing} outside requested "
+                    f"step {step_expected} (drift {step_drift:.6f} > "
+                    f"{step_tolerance:.6f})",
+                    position,
+                ))
+        n_repeated = sum(1 for d in diffs if d == 0)
+        expected_end = (
+            start_expected + step_expected * (n_int - 1 - n_repeated)
+        )
+        span_drift = abs(samples[-1].depth_m - expected_end)
+        if span_drift <= END_FLOAT_EPS_M:
+            add(CheckResult(
+                "depth_span_match", PASS,
+                f"end {samples[-1].depth_m} matches requested span "
+                f"{expected_end} with {n_repeated} masked repeats",
+                band_position(span_drift, 0.0, END_FLOAT_EPS_M),
+            ))
+        else:
+            add(CheckResult(
+                "depth_span_match", FAIL,
+                f"end {samples[-1].depth_m} outside requested span "
+                f"{expected_end} with {n_repeated} masked repeats "
+                f"(drift {span_drift:.6f})",
+                band_position(span_drift, 0.0, END_FLOAT_EPS_M),
+            ))
     return report
 
 

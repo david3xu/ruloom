@@ -6,9 +6,14 @@ from pathlib import Path
 import pytest
 
 from profiles.hylogger.analysis.calibration import load_thresholds
+from profiles.hylogger.intake.reader import Sample
 from profiles.hylogger.validation.checks import run_checks
 from profiles.hylogger.validation.dataset import read
-from profiles.hylogger.generation.generate import generate
+from profiles.hylogger.generation.generate import (
+    _supported,
+    generate,
+    generate_samples,
+)
 from profiles.hylogger.intake.reader import read_scalar_csv
 from profiles.hylogger.analysis.statistics import Profile
 
@@ -42,6 +47,47 @@ def test_different_seed_differs() -> None:
     first = generate(profile, {"seed": 446, "n_rows": 2000})
     second = generate(profile, {"seed": 447, "n_rows": 2000})
     assert first != second
+
+
+def _trap_profile() -> Profile:
+    """Profile with a GARNET-shaped singleton self-loop trap.
+
+    TIR label ``Z`` closes the fixture with a single ``Z -> Z`` pair
+    (one outgoing pair, back to itself), mirroring PDD446's singleton
+    GARNET row. Trusting that row as a rule would absorb the chain:
+    entering ``Z`` once would answer ``Z`` forever.
+    """
+    samples = []
+    for i in range(300):
+        if i in (298, 299):
+            tir: str | None = "Z"
+        else:
+            tir = ("A", "B")[i % 2]
+        samples.append(
+            Sample(
+                depth_m=i * 0.005,
+                valid=True,
+                swir_group="CHLORITE",
+                tir_group=tir,
+            )
+        )
+    profile = Profile.from_samples(samples, "trap", "0" * 64)
+    assert profile.stats["tir"]["transitions"].get("Z") == {"Z": 1}
+    return profile
+
+
+def test_singleton_transition_row_is_not_trusted() -> None:
+    """A one-pair transition row must not become an absorbing state."""
+    profile = _trap_profile()
+    assert _supported({"Z": {"Z": 1}}) == {}
+    for seed in (7, 446, 12345):
+        synth = generate_samples(profile, seed, 2000)
+        tir = [s.tir_group for s in synth if s.valid]
+        assert tir, "expected answered TIR labels"
+        assert sum(1 for label in tir if label == "Z") / len(tir) < 0.2
+        first = generate(profile, {"seed": seed, "n_rows": 2000})
+        second = generate(profile, {"seed": seed, "n_rows": 2000})
+        assert first == second
 
 
 @requires_source_data

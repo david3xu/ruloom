@@ -80,6 +80,26 @@ def _describe_runs(runs: Sequence[int]) -> dict[str, Any]:
     }
 
 
+def label_persistence(samples: Sequence[Sample], channel: str) -> float | None:
+    """Neighbouring persistence of answered labels for one channel.
+
+    Fraction of consecutive valid-row answered pairs carrying the same
+    label (``None`` when fewer than one answered pair exists). Single
+    source of truth shared by :func:`build_stats` and the calibration
+    per-hole scalars, so checks and profiles can never disagree.
+    """
+    valid = [s for s in samples if s.valid]
+    labels = [getattr(s, channel) for s in valid]
+    pairs = [
+        (a, b)
+        for a, b in zip(labels, labels[1:])
+        if a is not None and b is not None
+    ]
+    if not pairs:
+        return None
+    return _r(sum(1 for a, b in pairs if a == b) / len(pairs), FRAC_ND)
+
+
 def _channel_stats(samples: Sequence[Sample], channel: str) -> dict[str, Any]:
     valid = [s for s in samples if s.valid]
     labels = [getattr(s, channel) for s in valid]
@@ -113,9 +133,7 @@ def _channel_stats(samples: Sequence[Sample], channel: str) -> dict[str, Any]:
         if n_pairs
         else {}
     )
-    persistence = (
-        _r(sum(1 for a, b in pairs if a == b) / n_pairs, FRAC_ND) if n_pairs else None
-    )
+    persistence = label_persistence(samples, channel)
 
     return {
         "n_valid": len(valid),
