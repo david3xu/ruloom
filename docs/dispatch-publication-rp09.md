@@ -113,8 +113,15 @@ persisted acceptance record before any byte is copied:
 - The record moves `in_progress` before any copy and `complete` only
   after the destination bytes and sidecar verify. A crash in between
   resumes to the same bytes on re-publication (no destination: copy
-  again; matching destination: adopt it). Re-publishing a complete
-  record whose destination still matches is a no-op.
+  again; matching destination: adopt it). An in-progress record
+  alone never establishes ownership of other bytes (IP-02, audit
+  B02): only a matching content digest adopts an existing
+  destination, in every phase, so foreign bytes planted after an
+  interrupted-before-copy publish refuse on retry with bytes and
+  record untouched instead of being overwritten. Only owned staging
+  files (the `dest_name.tmp.*` files beside the destination) are
+  recovered. Re-publishing a complete record whose destination still
+  matches is a no-op.
 - Once the record is complete the destination must keep attesting the
   recorded bytes (HP-02, audit A02): a missing, corrupt, or foreign
   destination refuses re-publication instead of being silently
@@ -190,10 +197,12 @@ Control cases (committed tests, no sleeps — clocks are injected):
   on retry (HP-01 A01): same key with a changed `max_rows`, a changed
   attempt bound, or a changed/added spec overlay refuses with history
   and fencing kept.
-- `tests/engine/test_publication.py` (31 tests): publish/download
+- `tests/engine/test_publication.py` (32 tests): publish/download
   round trip with hash equality to the reviewed `release.sha256`,
   idempotent re-publish, interrupted-copy resume to identical bytes,
-  interrupted-mark adoption, foreign-authority denial, unsucceeded /
+  interrupted-mark adoption, in-progress foreign-destination refusal
+  with bytes preserved and record staying in-progress (IP-02 B02),
+  foreign-authority denial, unsucceeded /
   wrong-run / changed-bytes refusal, missing and bit-flipped release
   refusal, foreign-destination refusal, one-item-one-release, download
   cleanup of unverifiable bundles, the full chain as one test, trust

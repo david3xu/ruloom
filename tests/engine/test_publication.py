@@ -304,6 +304,65 @@ def test_publish_never_overwrites_foreign_bytes(tmp_path: Path) -> None:
     assert (dest_dir / f"{item['item_id']}.zip").read_bytes() == b"not our bundle"
 
 
+def test_in_progress_foreign_destination_refuses_and_preserves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IP-02 B02: an in-progress record never adopts foreign bytes.
+
+    An interrupted-before-copy publish leaves a real in-progress
+    record with no destination; unrelated bytes planted at the
+    destination afterwards must refuse on retry (never overwritten,
+    never adopted), the record must stay in-progress, authorised
+    repair must refuse (it only restores complete records), and
+    removing the foreign bytes must let the retry converge.
+    """
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    _, item = _succeeded_item(base, run_dir, outcome)
+    publisher = _publisher(base)
+
+    def boom(dest_dir: Path, dest_name: str, payload: bytes) -> Path:
+        staged = dest_dir / (dest_name + ".tmp.crash")
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        staged.write_bytes(payload)
+        raise RuntimeError("injected copy failure")
+
+    monkeypatch.setattr(publication, "_stage_and_commit", boom)
+    with pytest.raises(RuntimeError, match="injected copy failure"):
+        publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0)
+    dest = base / "published" / f"{item['item_id']}.zip"
+    assert not dest.exists()
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "in_progress"
+    monkeypatch.undo()
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(b"not our bundle")
+    with pytest.raises(PublicationError, match="attributes to this item"):
+        publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0 + 5.0)
+    assert dest.read_bytes() == b"not our bundle"
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "in_progress"
+    with pytest.raises(PublicationError, match="no complete publication"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="stray copy",
+            now=T0 + 6.0,
+        )
+    assert dest.read_bytes() == b"not our bundle"
+
+    dest.unlink()
+    identity = publisher.publish(
+        item["item_id"], run_dir, authority="team-a", now=T0 + 10.0
+    )
+    reviewed = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
+    assert identity["zip_sha256"] == reviewed
+    assert publisher.get(item["item_id"])["status"] == "complete"
+    assert list((base / "published").glob("*.tmp.*")) == []
+
+
 def test_one_item_ships_one_release(tmp_path: Path) -> None:
     base = tmp_path / "out"
     run_dir, outcome = _accepted_run(base, _write_source(tmp_path))

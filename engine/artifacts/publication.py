@@ -54,7 +54,9 @@ Interruption recovery: the publication record
 any copy starts and ``complete`` only after the destination bytes and
 sidecar verify. A crash in between leaves either no destination (copy
 again) or a destination whose bytes hash to the source (adopt it and
-mark complete). Re-publishing a complete record whose destination
+mark complete). An in-progress record alone never establishes
+ownership of other bytes: only a matching content digest adopts an
+existing destination, in every phase. Re-publishing a complete record whose destination
 still matches is a no-op returning the same identity. Once the record
 is complete the destination must keep attesting the recorded bytes:
 a missing, corrupt, or foreign destination refuses re-publication
@@ -914,14 +916,19 @@ class Publisher:
                 "operation, never by re-publishing)"
             )
         if dest.is_file() and sha256_bytes(dest.read_bytes()) != snapshot_digest:
-            if prior is None:
-                raise PublicationError(
-                    f"destination {dest_name!r} holds bytes no record "
-                    "attributes to this item: refusing (never overwrite "
-                    "blindly)"
-                )
-            # Else: our own interrupted copy; the staged commit below
-            # replaces it atomically.
+            # Ownership needs a matching content digest in every phase:
+            # an in-progress record alone never establishes ownership
+            # of other bytes. A differing destination is never adopted
+            # as our own interrupted copy -- an interrupted copy leaves
+            # only staged tmp files beside the destination (cleared
+            # below), never a foreign destination. Refuse loudly; a
+            # complete record's diverged destination names the
+            # authorised repair path above.
+            raise PublicationError(
+                f"destination {dest_name!r} holds bytes no record "
+                "attributes to this item: refusing (never overwrite "
+                "blindly)"
+            )
         record = {
             "item_id": clean_id,
             "authority": authority,
