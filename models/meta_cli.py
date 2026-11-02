@@ -88,17 +88,36 @@ REQUESTED_PERMISSIONS: dict[str, str] = {
     "environment": "allowlist-only",
 }
 
-#: Flag prefixes the spawn gate refuses. Only dash-leading argv parts
-#: are scanned, so free-text values (prompts, paths) can never trip it.
-#: ``--contributor-mode`` is the one explicit capability flag and is
-#: allowed; everything naming MCP, tool, dispatch, peer, or delegate
-#: routing is denied at spawn.
+#: Flag prefixes the spawn gate refuses in option position. Only
+#: dash-leading argv parts sitting in an option slot are checked, so
+#: flag-like text in value slots (option values, paths) and in the
+#: prompt slot (the final argv element of a ``muse exec`` argv) can
+#: never trip it. ``--contributor-mode`` is the one explicit capability
+#: flag and is allowed; everything naming MCP, tool, dispatch, peer, or
+#: delegate routing as an option is denied at spawn.
 DENIED_SPAWN_FLAG_PREFIXES = (
     "--mcp",
     "--tool",
     "--dispatch",
     "--peer",
     "--delegate",
+)
+
+#: Options of the ``muse exec`` argv that take no value.
+_SPAWN_NO_VALUE_OPTIONS = frozenset({"--json"})
+
+#: Options of the ``muse exec`` argv that consume exactly one following
+#: argv element as their value (see :meth:`MuseCLIModel._argv`). A value
+#: is never refused, even when it looks like a flag.
+_SPAWN_SINGLE_VALUE_OPTIONS = frozenset(
+    {
+        "--effort",
+        "--model",
+        "--output-schema",
+        "--image",
+        "--workspace",
+        "--contributor-mode",
+    }
 )
 
 
@@ -133,26 +152,66 @@ def observed_permissions(cwd: str, env_keys: list[str]) -> dict[str, object]:
     }
 
 
+def _is_muse_exec_shape(argv: list[str]) -> bool:
+    """True when ``argv`` has the ``muse exec`` shape we build.
+
+    Either the subcommand reads ``exec`` or the argv carries the
+    ``--contributor-mode`` marker :meth:`MuseCLIModel._argv` always
+    emits. Only then does the final argv element hold the prompt, so
+    only then is it exempt from the option scan. Anything else (fixture
+    probes, hand-built transports) is scanned strictly.
+    """
+    texts = [str(part) for part in argv]
+    if len(texts) >= 2 and texts[1] == "exec":
+        return True
+    return any(text.lower() == "--contributor-mode" for text in texts)
+
+
 def enforce_spawn_policy(argv: list[str]) -> None:
     """Refuse a child argv that requests tool/dispatch capability.
 
     The adapter builds a tool-free argv by construction; this gate
-    makes that property ENFORCED for every caller of the spawn path:
-    any dash-leading part naming MCP, tool, dispatch, peer, or
-    delegate routing raises :class:`ModelError` before anything
-    spawns. Free-text parts (prompts, paths, values) are never
-    scanned, so legitimate wording cannot trip the gate.
+    makes that property ENFORCED for every caller of the spawn path.
+    It validates the known option/value structure instead of scanning
+    every string indiscriminately:
+
+    * a dash-leading part is refused only when it sits in an option
+      slot and names MCP, tool, dispatch, peer, or delegate routing
+      (``--opt=value`` spellings are judged by the option part before
+      the ``=``), raising :class:`ModelError` before anything spawns;
+    * the single value following a known single-value option
+      (``--effort``, ``--model``, ``--output-schema``, ``--image``,
+      ``--workspace``, ``--contributor-mode``) is never scanned, so a
+      flag-like path or value cannot trip the gate;
+    * the prompt -- the final element of a ``muse exec`` shaped argv --
+      is never scanned, so a literal prompt beginning ``--tool`` (or any
+      other denied-looking wording) passes while real capability
+      options appended around it are still refused.
+
+    Single-dash spellings (``-tool``) are not refused: no supported
+    ``muse exec`` flag has that shape, so the gate leaves that noted
+    limitation in place rather than guessing at short-flag meanings.
     """
-    for part in argv:
-        text = str(part)
+    texts = [str(part) for part in argv]
+    prompt_index = len(texts) - 1 if _is_muse_exec_shape(texts) else -1
+    expect_value = False
+    for index, text in enumerate(texts):
+        if index == prompt_index:
+            continue
+        if expect_value:
+            expect_value = False
+            continue
         if not text.startswith("-"):
             continue
-        lowered = text.lower()
+        option = text.split("=", 1)[0]
+        lowered = option.lower()
         if lowered.startswith(DENIED_SPAWN_FLAG_PREFIXES):
             raise ModelError(
                 f"child spawn refused: tool/dispatch capability "
                 f"{text!r} is outside the permission policy"
             )
+        if lowered in _SPAWN_SINGLE_VALUE_OPTIONS:
+            expect_value = True
 
 
 def restricted_env(source: Mapping[str, str] | None = None) -> dict[str, str]:

@@ -325,6 +325,96 @@ def test_spawn_gate_passes_real_argv_and_free_text(tmp_path: Path) -> None:
     enforce_spawn_policy(["muse", "exec", "--contributor-mode", "off", "prompt"])
 
 
+def test_spawn_gate_passes_flag_like_prompt(tmp_path: Path) -> None:
+    """A literal prompt beginning with a denied-looking flag passes.
+
+    P3: the old scan refused any dash-leading string, so a prompt that
+    starts ``--tool`` was denied despite the documented free-text
+    promise. The structural gate exempts the prompt slot instead.
+    """
+    model = MuseCLIModel(allowed_root=tmp_path)
+    schema_file = tmp_path / "schema.json"
+    schema_file.write_text(json.dumps({"type": "object"}), encoding="utf-8")
+    enforce_spawn_policy(
+        model._argv(str(schema_file), "--tool explain lateral dispatch to a peer")
+    )
+    enforce_spawn_policy(model._argv(str(schema_file), "--tool"))
+    enforce_spawn_policy(model._argv(str(schema_file), "--dispatch=peer --mcp config"))
+
+
+def test_spawn_gate_passes_flag_like_option_values() -> None:
+    """Flag-like text in a known option's value slot passes."""
+    enforce_spawn_policy(
+        ["muse", "exec", "--workspace", "--tool", "--contributor-mode", "on", "hi"]
+    )
+    enforce_spawn_policy(
+        ["muse", "exec", "--effort", "--dispatch", "--contributor-mode", "on", "hi"]
+    )
+    enforce_spawn_policy(
+        ["muse", "exec", "--output-schema", "--peer", "--contributor-mode", "on", "hi"]
+    )
+    enforce_spawn_policy(
+        ["muse", "exec", "--workspace=--tool", "--contributor-mode", "on", "hi"]
+    )
+
+
+def test_spawn_gate_still_refuses_real_options_in_option_slots(
+    tmp_path: Path,
+) -> None:
+    """Real capability options are refused with values handled as pairs."""
+    model = MuseCLIModel(allowed_root=tmp_path)
+    schema_file = tmp_path / "schema.json"
+    schema_file.write_text(json.dumps({"type": "object"}), encoding="utf-8")
+    # An appended capability option is refused even though the prompt passed.
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        enforce_spawn_policy(
+            model._argv(str(schema_file), "make a plan") + ["--tool", "delegate"]
+        )
+    # The value paired with a denied option does not hide the option.
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        enforce_spawn_policy(["muse", "exec", "--json", "--dispatch", "peer", "prompt"])
+    # The --opt=value spelling is judged by its option part.
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        enforce_spawn_policy(
+            [
+                "muse",
+                "exec",
+                "--json",
+                "--tool=delegate",
+                "--contributor-mode",
+                "on",
+                "hi",
+            ]
+        )
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        enforce_spawn_policy(
+            [
+                "muse",
+                "exec",
+                "--json",
+                "--MCP-config=x",
+                "--contributor-mode",
+                "on",
+                "hi",
+            ]
+        )
+    # Consuming a flag-like value must not swallow the following option.
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        enforce_spawn_policy(
+            [
+                "muse",
+                "exec",
+                "--workspace",
+                "--tool",
+                "--dispatch",
+                "peer",
+                "--contributor-mode",
+                "on",
+                "hi",
+            ]
+        )
+
+
 def test_complete_records_requested_and_observed_permissions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
