@@ -390,6 +390,33 @@ generation bytes move: the PDD446 seed-42 golden artifact
 `55eb1c22e212…` is untouched (the acceptance block gains only the
 request-identity binding, which no attested digest covers).
 
+DP-03 closed the child-capability slice (re-audit C04) and registered
+the C01-C04+G01 closeout with executable checkers. The C04 denial is
+proven child-side: `tests/models/test_child_capability.py` spawns a
+real fixture child through the real adapter path (restricted
+environment, pinned cwd, real spawn; never `muse exec`, so no live
+model call) and the child reports no probe secret, no `RULOOM_*` key,
+and no MCP/tool-routing config, with a positive control proving
+non-secret allowlisted keys still pass through and relative writes
+landing inside the pinned root. One honest platform allowance is
+recorded in the probes and in `docs/engine/core/README.md`: the live
+child may additionally report interpreter/platform-injected locale
+keys (`LC_CTYPE`, `__CF_USER_TEXT_ENCODING`) that the adapter never
+sent, named explicitly and audited for secret values. G01 is closed on
+the repo-observable half: `tests/governance/test_branch_protection.py`
+proves CI exposes the `gate` job running pytest plus `force_pass.py`
+on push and pull_request, and the live ruleset receipt
+(`docs/quality/branch-protection-g01.md`: id 26349205, `main-gate`,
+active, main-only, required `gate` context, rebase-only, empty
+bypass, required `gate` check passing on the merged DP-01/DP-01b/DP-02
+PRs) binds the repo to the GitHub-side settings, which stay receipt
+evidence rather than product assertions. Finding-to-checker map: C01
+`Q-ENGINE-DISPATCH` + `Q-RELEASE-PUBLICATION`, C02
+`Q-RELEASE-PUBLICATION`, C03 `Q-ENGINE-DISPATCH`, C04
+`Q-GOV-CHILD-CAPABILITY`, G01 `Q-GOV-BRANCH-PROTECTION`. No generation
+bytes move: the PDD446 seed-42 golden artifact `55eb1c22e212…` is
+untouched (no run-path or packaging file changed).
+
 | Rule | Status | Checker or rationale |
 | --- | --- | --- |
 | `Q-STRUCT-FEATURE-MAP` | enforced | `scripts/force_pass.py:check_feature_map` -- the catalogue names every feature module (16 records, 37 modules), live in the gate |
@@ -401,6 +428,8 @@ request-identity binding, which no attested digest covers).
 | `Q-GOV-NO-PEER-DISPATCH` | planned | Runtime-owned: task assignment and review routing happen in the Datacore coordinator. The product half (restricted invocation above) is enforced and recorded; a product test refusing a worker peer-dispatch would fabricate Runtime authority |
 | `Q-GOV-REVIEW-ISOLATION` | planned | Runtime-owned: verdicts arrive through the Runtime handoff and the product has no reviewer-identity channel, so a fake product checker would assert what the product cannot observe |
 | `Q-GOV-CURRENT-LEASE` | planned | Runtime-owned: task leases live in the coordinator. The engine dispatch leases in `engine/core/dispatch.py` (`Q-ENGINE-DISPATCH`) are the analogous local mechanism, stated as analogy rather than conflated proof |
+| `Q-GOV-CHILD-CAPABILITY` | enforced | `tests/models/test_child_capability.py` -- a real spawned fixture child reports no secret, no `RULOOM_*` key, and no MCP/tool-routing config, cwd pinned with writes contained, real argv naming no peer-dispatch flags (platform-injected locale keys named and audited) |
+| `Q-GOV-BRANCH-PROTECTION` | enforced | `tests/governance/test_branch_protection.py` -- CI exposes the `gate` job running pytest plus `force_pass.py` on push and pull_request; the recorded receipt binds the live ruleset shape, GitHub-side settings stay receipt evidence |
 
 Evidence: `tests/test_aggregate_gate.py` (18 canary tests, including
 module-local in-gate execution and fail-closed raising checks),
