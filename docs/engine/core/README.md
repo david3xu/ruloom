@@ -118,6 +118,9 @@ record intact.
 
 Planner and critic calls reach the hosted model through one restricted
 path (`models/meta_cli.py`, composed in `engine/cli/__init__.py`). The
+word "hosted" names the `muse exec` subprocess the CLI spawns, not a
+Ruloom service: the product is a local CLI plus libraries and runs no
+server of its own. The
 child process gets a pinned working directory (the explicit
 `--workspace` root when set, otherwise the invoking directory, which
 is the repo checkout under normal CLI use), a minimal allowlisted

@@ -352,7 +352,8 @@ rules now enforce with proven checkers, all executed live by the
 aggregate stage (twenty pytest files plus four in-gate checks); three
 stay planned with explicit rationale because no product mechanism can
 observe the worker behaviour they govern. The product half of the
-model-invocation boundary is enforced: the hosted adapter runs the
+model-invocation boundary is enforced: the hosted adapter (a local
+`muse exec` child process, not a Ruloom service) runs the
 child with a pinned working directory, an allowlisted environment
 (secrets never inherited), and an argv that names no peer-dispatch
 capability, and every call's effective invocation (argv, pinned cwd,

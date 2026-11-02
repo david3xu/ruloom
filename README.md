@@ -220,8 +220,11 @@ validation verdict pass, artifact `55eb1c22e212…`, release ZIP
 (CP-02 repaired TIR sequence generation and versioned the golden bytes
 deliberately; pre-repair values were artifact `be9e26d7e664…`, release
 `46c7c07110c5…` — see `docs/quality/scorecard-cp02-addendum.md`.)
-Test suite: 274 passed. Force-pass gate (`scripts/force_pass.py`):
-12/12 rules PASS. The engine is generic: profiles declare their
+Test suite: 621 passed (observed 2026-11-02 at `c35b063`;
+reproduce with `.venv/bin/python -m pytest -q -p no:cacheprovider`).
+Force-pass gate (`scripts/force_pass.py`): 41 PASS, 0 FAIL, exit 0
+(same date and revision; reproduce with
+`.venv/bin/python scripts/force_pass.py`). The engine is generic: profiles declare their
 step/loop/gate graphs and permissions, and the same engine code runs
 the HyLogger profile and the common tabular profile
 (`ruloom run --profile tabular ...`). Run it with:
@@ -248,6 +251,13 @@ are recorded per release (`provenance.md` plus the release manifest);
 no blanket licence promise is made here. Historical results in
 `docs/results.md` stay tied to the revisions and runs that produced
 them.
+
+Benchmark and scorecard evidence is machine-local: the numbers in
+`docs/results.md` trace to runs under git-ignored `runs/` plus
+git-ignored `data/` sources (re-fetchable from NVCL per the Data
+section above), so a fresh clone cannot regenerate them — receipts
+live on the machine that ran them. Implicitly settled product
+decisions are recorded in `docs/decisions.md`.
 
 ## Layout
 

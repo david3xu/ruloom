@@ -3,7 +3,10 @@
 Dispatch (who runs what, and who owns it) and publication (how an
 accepted release reaches recipients) are now durable, local-only, and
 separate steps. No platform code is imported: both stores are plain
-JSON records under the same output root the runs live under.
+JSON records under the same output root the runs live under. There is
+no hosted service here: dispatch and publication are local library
+calls the CLI makes on its own machine, not a server that accepts or
+publishes on anyone's behalf.
 
 ## Dispatch (`engine/core/dispatch.py`)
 
