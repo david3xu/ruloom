@@ -93,6 +93,31 @@ def _request_digest(request: Any) -> str:
     return sha256_canonical(dict(request))
 
 
+def _binding_digest(request: Mapping[str, Any]) -> str:
+    """Canonical digest of the enforced request fields (retry binding).
+
+    The key-to-request binding covers every field publication or
+    execution enforces -- the profile, the pinned source-content and
+    spec digests, the caller row/attempt bounds (top-level and
+    spec-carried), and the spec overlay itself -- so a retry changing
+    any bound refuses instead of collapsing onto the first item.
+    Fields nothing enforces (the source label) are excluded, so a
+    relabelled retry still returns the bound item.
+    """
+    spec = request.get("spec")
+    overlay = sha256_canonical(dict(spec)) if isinstance(spec, Mapping) else None
+    return sha256_canonical(
+        {
+            "profile": request.get("profile"),
+            "source_sha256": request.get("source_sha256"),
+            "spec_digest": request.get("spec_digest"),
+            "max_attempts": request.get("max_attempts"),
+            "max_rows": request.get("max_rows"),
+            "spec_overlay": overlay,
+        }
+    )
+
+
 #: Top-level fields a submit request may declare. Anything else is
 #: refused at submit: publication binds every declared bound, so an
 #: unknown field could never be enforced and must never be silently
@@ -395,7 +420,11 @@ class DispatchStore:
         Publication later requires that identity to match the run's
         accepted and delivered identities, so a request that pins
         nothing shippable can never ship on profile-name equality
-        alone.
+        alone. The canonical digest of the enforced request fields
+        (identity plus caller row/attempt bounds and the spec overlay)
+        is persisted as ``request_binding``: a same-key retry changing
+        any bound or the overlay is refused instead of returning the
+        first item.
         """
         if not isinstance(authority, str) or not authority.strip():
             raise DispatchError("submit requires a non-empty authority")
@@ -415,12 +444,14 @@ class DispatchStore:
             check_item_id(item_id)
         at = _resolve_now(now)
         identity = _normalize_request(request)
+        binding = _binding_digest(request)
         with _store_lock(self.dir):
             if idempotency_key is not None:
                 return self._submit_keyed(
                     authority=authority,
                     request=request,
                     request_identity=identity,
+                    request_binding=binding,
                     idempotency_key=idempotency_key,
                     max_retries=max_retries,
                     item_id=item_id,
@@ -442,6 +473,7 @@ class DispatchStore:
                     "authority": authority,
                     "request": dict(request),
                     "request_identity": dict(identity),
+                    "request_binding": binding,
                     "idempotency_key": None,
                     "status": QUEUED,
                     "retries_used": 0,
@@ -511,6 +543,7 @@ class DispatchStore:
                 "authority": authority,
                 "request": dict(request),
                 "request_identity": dict(request_identity),
+                "request_binding": _binding_digest(request),
                 "idempotency_key": None,
                 "status": QUEUED,
                 "retries_used": 0,
@@ -564,6 +597,7 @@ class DispatchStore:
         authority: str,
         request: Mapping[str, Any],
         request_identity: Mapping[str, Any],
+        request_binding: str,
         idempotency_key: str,
         max_retries: int,
         item_id: str | None,
@@ -572,11 +606,13 @@ class DispatchStore:
         """Submit guarded by an exclusively created key file (one winner).
 
         The key file persists the key-to-request binding (the
-        canonical request identity) at first submission. A retry
-        returns the bound item unchanged only when the caller and the
-        identity both match the binding; any other collision --
-        another authority, or the same key with a different request
-        -- is refused loudly.
+        canonical request identity plus the canonical digest of the
+        enforced request fields) at first submission. A retry returns
+        the bound item unchanged only when the caller, the identity,
+        and the enforced-fields digest all match the binding; any
+        other collision -- another authority, or the same key with a
+        different request, a changed row/attempt bound, or a changed
+        spec overlay -- is refused loudly.
         """
         key_path = _key_path(self.keys_dir, idempotency_key)
         try:
@@ -587,6 +623,7 @@ class DispatchStore:
                             "item_id": item_id or uuid.uuid4().hex,
                             "authority": authority,
                             "request_identity": dict(request_identity),
+                            "request_binding": request_binding,
                         },
                         sort_keys=True,
                     )
@@ -619,12 +656,20 @@ class DispatchStore:
                         f"idempotency key {idempotency_key!r} is bound "
                         "to a different request: refusing"
                     )
+                seen_binding = seen.get("request_binding")
+                if isinstance(seen_binding, str) and (seen_binding != request_binding):
+                    raise DispatchError(
+                        f"idempotency key {idempotency_key!r} is bound "
+                        "to a different request: refusing (same-key retries "
+                        "must repeat the bound row/attempt bounds and overlay)"
+                    )
                 return self._write(
                     {
                         "item_id": stored_id,
                         "authority": authority,
                         "request": dict(request),
                         "request_identity": dict(request_identity),
+                        "request_binding": request_binding,
                         "idempotency_key": idempotency_key,
                         "status": QUEUED,
                         "retries_used": 0,
@@ -655,6 +700,20 @@ class DispatchStore:
                     "a different request: refusing (same-key retries "
                     "must repeat the bound request identity)"
                 )
+            stored_binding = existing.get("request_binding")
+            if not isinstance(stored_binding, str):
+                stored_request = existing.get("request")
+                stored_binding = (
+                    _binding_digest(stored_request)
+                    if isinstance(stored_request, Mapping)
+                    else None
+                )
+            if stored_binding != request_binding:
+                raise DispatchError(
+                    f"idempotency key {idempotency_key!r} is bound to "
+                    "a different request: refusing (same-key retries "
+                    "must repeat the bound row/attempt bounds and overlay)"
+                )
             return _copy_record(existing)
         seen = json.loads(key_path.read_text(encoding="utf-8"))
         chosen = str(seen["item_id"])
@@ -678,6 +737,7 @@ class DispatchStore:
                 "authority": authority,
                 "request": dict(request),
                 "request_identity": dict(request_identity),
+                "request_binding": request_binding,
                 "idempotency_key": idempotency_key,
                 "status": QUEUED,
                 "retries_used": 0,
