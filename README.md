@@ -115,14 +115,26 @@ server unreachable, the run fails loudly with the adapter error instead
 of skipping the critique. To serve the model locally:
 
 ```bash
-llama-server -m ~/models/muse-glimmer/Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf --port 8080
+llama-server -m ~/models/muse-glimmer/Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf --port 8080 -c 32768
 ```
+
+The `-c 32768` context is required, not optional: the live-measured
+critique prompt on PDD446 is ~8.4k tokens, and the server must also fit
+the completion plus reasoning budget (`models/glimmer.py`
+`RECOMMENDED_CONTEXT_TOKENS`). A smaller context fails loudly with an
+actionable error instead of skipping the critique.
 
 then run with the default adapter base URL `http://127.0.0.1:8080`
 (override per role with the `base_url` binding, or per client with
 `GlimmerLocalModel(base_url=...)`). The image weights (`mmproj`) for
 Glimmer are not present, so Glimmer serves the text critique only; the
 Spark multimodal adapter stays the vision critic for synthetic renders.
+
+Live runs (2026-11-02): one Glimmer text-critic run through
+`ruloom run --local-critic` on PDD446 (verdict pass, advisory note
+recorded) and live vision-critic calls on a synthetic-only PNG. No
+claim beyond these runs; see `docs/quality/critic-receipts-gp01.md`
+for both receipts with usage.
 
 ## Model roles, budget, and overrides
 

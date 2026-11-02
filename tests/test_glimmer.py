@@ -137,6 +137,32 @@ def test_http_error_raises_model_error() -> None:
             client.complete("Prompt.", SCHEMA)
 
 
+def test_context_overflow_raises_actionable_model_error() -> None:
+    """A 400 context-window refusal must name the remedy (GP-01 live find).
+
+    The documented ``llama-server`` startup once used a context smaller
+    than the real critique prompt (~8.4k tokens on PDD446); the adapter
+    must fail loudly with the ``-c`` remedy, never a bare HTTP status.
+    """
+    body = {
+        "error": {
+            "code": 400,
+            "message": (
+                "request (8396 tokens) exceeds the available context "
+                "size (8192 tokens), try increasing it"
+            ),
+            "type": "exceed_context_size_error",
+        }
+    }
+    with _Stub(lambda payload: (400, body)) as stub:
+        client = GlimmerLocalModel(base_url=stub.url, timeout_s=30.0)
+        with pytest.raises(ModelError) as excinfo:
+            client.complete("Prompt.", SCHEMA)
+    message = str(excinfo.value)
+    assert "context" in message
+    assert "-c" in message
+
+
 def test_invalid_json_reply_raises_model_error() -> None:
     with _Stub(lambda payload: (200, "not json{{")) as stub:
         client = GlimmerLocalModel(base_url=stub.url, timeout_s=30.0)

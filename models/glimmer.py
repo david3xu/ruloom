@@ -42,6 +42,14 @@ DEFAULT_MODEL = "muse-glimmer-30B"
 #: the thinking and the short advisory note.
 MAX_TOKENS = 4096
 
+#: Minimum ``llama-server -c`` context for the text-critique seat. The
+#: live-measured critique prompt on PDD446 is ~8.4k tokens; the server
+#: must also fit the ``MAX_TOKENS`` completion plus reasoning headroom.
+#: The documented startup command (README, demo-script) uses this value.
+#: A smaller context fails loudly with an actionable ``ModelError``
+#: (see :meth:`GlimmerLocalModel._post`), never a silent skip.
+RECOMMENDED_CONTEXT_TOKENS = 32768
+
 
 def _check_conformance(data: Any, schema: Mapping[str, Any]) -> None:
     """Reject ``data`` that cannot satisfy a simple object ``schema``.
@@ -144,6 +152,17 @@ class GlimmerLocalModel:
                 detail = exc.read().decode("utf-8", "replace")[-2000:]
             except Exception:  # noqa: BLE001 -- best-effort error detail
                 detail = ""
+            lowered = detail.lower()
+            if exc.code == 400 and (
+                "exceed" in lowered and "context" in lowered
+            ):
+                raise ModelError(
+                    "local model prompt exceeds the server context "
+                    f"window: {detail} Restart llama-server with a "
+                    "larger context, e.g. "
+                    f"-c {RECOMMENDED_CONTEXT_TOKENS} (see README), "
+                    "so prompt + reasoning + completion fit."
+                ) from exc
             raise ModelError(
                 f"local model server returned HTTP {exc.code}: {detail}"
             ) from exc
