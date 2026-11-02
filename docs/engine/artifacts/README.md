@@ -127,8 +127,12 @@ under the owning authority. The record moves `in_progress` before
 any copy and `complete` only after the destination verifies, so an
 interrupted publication resumes to identical bytes and re-publishing
 is a no-op; unattributed destination bytes and second releases for
-one item are refused. `download` verifies the bundle at the
-destination and removes it when verification fails. Corruption inside
+one item are refused. `download` verifies the new bytes in a unique
+temporary sibling and commits atomically: a verified download
+overwrites the destination, an unverified one never touches it, so a
+good file already there survives byte-identical, and a same
+source/destination path verifies in place without deletion.
+Corruption inside
 the deflated bytes is a `ReleaseVerificationError` refusal, never a
 raw decoding crash.
 

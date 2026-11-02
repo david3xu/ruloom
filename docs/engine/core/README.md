@@ -90,10 +90,16 @@ outside the store's own items directory. Claims lease an item to one
 worker with a monotonic fencing token and an expiry (a live lease
 blocks rivals; an expired lease is re-dispatchable, which is the
 launcher-outage path), and every lease-holder operation must present
-the current token, so stale workers are fenced off after cancel or
-supersession. Cancellation and publication require the submitting
-authority; failures return the item to the queue until `max_retries`
-is spent, then it rests `exhausted`. Within one launcher process
+the current token, so stale workers are fenced off after cancel,
+supersession, or expiry. Cancellation and publication require the
+submitting authority; each reported failure and each expired lease
+(via the expired-claim reclaim or the recovery sweep) consumes one
+retry from `max_retries`, while the launch count persists separately
+in `attempts`. Until the budget is spent the item returns to the
+queue; then it rests `exhausted` (expiry exhaustion records
+`retries_exhausted_by_expiry`) and is never claimed again, so
+repeated crashes cannot trigger unbounded generation cost. Within
+one launcher process
 every claim runs under a per-store lock (exactly one threaded
 winner); every record write is atomic, so a crash leaves the previous
 record intact.

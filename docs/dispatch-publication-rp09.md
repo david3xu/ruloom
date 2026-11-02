@@ -37,9 +37,15 @@ One JSON record per submitted item under `<base>/dispatch/`:
   fencing off a worker still running after cancel.
 - Cancellation and publication require the submitting authority; any
   other authority is refused (`AuthorityDenied`).
-- Failures are bounded: each reported failure returns the item to the
-  queue until `max_retries` is spent, then the item rests terminal as
-  `exhausted` and is never claimed again.
+- Retries are bounded: each reported failure and each expired lease
+  (via the expired-claim reclaim or the `recover` sweep) consumes one
+  retry from `max_retries`, while the launch count persists separately
+  in `attempts`. Until the budget is spent the item returns to the
+  queue; then it rests terminal as `exhausted` — expiry exhaustion
+  records `retries_exhausted_by_expiry` — and is never claimed again,
+  so repeated crashes cannot trigger unbounded generation cost. The
+  token still moves on for every successful re-dispatch, and stale
+  tokens stay fenced off.
 
 Concurrency contract: within one launcher process every
 read-modify-write runs under a per-store lock, so racing threads
@@ -87,10 +93,14 @@ persisted acceptance record before any byte is copied:
   item ships exactly one release. Publication item ids take the same
   narrow canonical shape as dispatch ids, and destinations are
   verified to stay inside the published area.
-- `download` copies a published bundle to a chosen path and verifies
-  it there, returning the attested identity (zip hash, artifact hash,
-  member list). A bundle that fails verification is removed, never
-  left half-fetched.
+- `download` verifies the new bytes in a unique temporary sibling
+  inside the destination directory and commits atomically via rename,
+  returning the attested identity (zip hash, artifact hash, member
+  list). Replace policy: a verified download overwrites the
+  destination; an unverified one never touches it, so a good file
+  already at the destination survives byte-identical. A same
+  source/destination path verifies in place without deletion. No
+  half-fetched destination is ever left behind.
 
 Consumer hardening: corruption inside the deflated bytes used to
 escape `verify_release` as a raw decoding crash. Member reads and
@@ -117,31 +127,39 @@ report → publish → download, executed under a fresh `/tmp` root:
 
 Control cases (committed tests, no sleeps — clocks are injected):
 
-- `tests/engine/test_dispatch.py` (32 tests): idempotent submit,
+- `tests/engine/test_dispatch.py` (36 tests): idempotent submit,
   key-across-authorities denial, single-winner claim under 8 threads,
-  live-conflict vs expired-redispatch, terminal claim refusal,
-  heartbeat extension and stale/wrong-worker/expired refusal, cancel
-  fencing off an in-flight worker, cancel authority and state shapes,
-  recovery sweep, retry exhaustion (`max_retries=1`: queued then
-  exhausted) and zero-retry exhaustion, success binding, record-copy
-  isolation and listing, plus trust repair (CP-01): explicit-id
-  resubmission returning the immutable record, changed-request and
-  foreign-authority refusal with history and fencing kept, keyed
-  collision refusal, and traversal/shape id refusal at every entry
-  point with nothing written outside the store.
-- `tests/engine/test_publication.py` (19 tests): publish/download
+  live-conflict vs expired-redispatch (with retry budget to spend),
+  terminal claim refusal, heartbeat extension and stale/wrong-worker/
+  expired refusal, cancel fencing off an in-flight worker, cancel
+  authority and state shapes, recovery sweep (with retry budget to
+  spend), retry exhaustion (`max_retries=1`: queued then exhausted)
+  and zero-retry exhaustion, success binding, record-copy isolation
+  and listing, trust repair (CP-01): explicit-id resubmission returning
+  the immutable record, changed-request and foreign-authority refusal
+  with history and fencing kept, keyed collision refusal, and
+  traversal/shape id refusal at every entry point with nothing written
+  outside the store, plus atomic-retry repair (CP-03 A06):
+  expired-claim reclaim and recovery sweep each consume one retry with
+  `attempts` persisted separately, `retries_exhausted_by_expiry`
+  exhaustion, four-cycle bound, and fencing preserved.
+- `tests/engine/test_publication.py` (22 tests): publish/download
   round trip with hash equality to the reviewed `release.sha256`,
   idempotent re-publish, interrupted-copy resume to identical bytes,
   interrupted-mark adoption, foreign-authority denial, unsucceeded /
   wrong-run / changed-bytes refusal, missing and bit-flipped release
   refusal, foreign-destination refusal, one-item-one-release, download
-  cleanup of unverifiable bundles, the full chain as one test, plus
-  trust repair (CP-01): altered-report-with-stale-manifest refusal at
-  both consumer and publication, reported-digest binding refusal (the
+  cleanup of unverifiable bundles, the full chain as one test, trust
+  repair (CP-01): altered-report-with-stale-manifest refusal at both
+  consumer and publication, reported-digest binding refusal (the
   all-zero artifact claim), detached-hash requirement and mismatch
   refusal, accepted-decision binding refusal, request-profile binding
   refusal, required-coverage recording and unsatisfied-coverage
-  refusal, and traversal id refusal.
+  refusal, and traversal id refusal, plus atomic-download repair
+  (CP-03 A05): invalid download preserves an existing good destination
+  byte-identical, interrupted commit preserves the destination with no
+  stale tmp, and same source/destination verifies in place without
+  deletion.
 - `tests/engine/test_consumer.py` (14 tests): the producer-side
   guarantees above, plus trust repair (CP-01): stale-manifest hash
   refusal, recorded-size mismatch refusal, and non-`pass` verdict

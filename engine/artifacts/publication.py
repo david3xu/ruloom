@@ -37,8 +37,9 @@ record: foreign bytes refuse loudly instead.
 
 ``download`` is the recipient side: it copies a published bundle to a
 chosen path and verifies it there, returning the attested identity
-(zip hash, artifact hash, member list). A bundle that fails
-verification is removed, never left half-fetched.
+(zip hash, artifact hash, member list). The new bytes verify in a
+temporary sibling and commit atomically, so a bundle that fails
+verification never touches a pre-existing destination.
 """
 
 from __future__ import annotations
@@ -635,27 +636,63 @@ def download(
     """Fetch a published bundle to ``out_path`` and verify it there.
 
     Returns the attested identity (zip hash, artifact hash, member
-    list). A bundle that fails verification is removed from the
-    destination, never left half-fetched.
+    list). The download is atomic: the new bytes are verified in a
+    unique temporary sibling inside the destination directory, the
+    pre-existing destination (if any) is left untouched on every
+    failure path, and the verified bytes commit via rename only.
+
+    Replace policy (documented): a verified download overwrites the
+    destination; an unverified download never touches it, so a good
+    file already at the destination survives byte-identical. When
+    source and destination resolve to the same file, the file is
+    verified in place and never deleted: success returns its
+    identity, failure refuses with the bytes left where they were.
     """
     source = Path(zip_path)
     dest = Path(out_path)
+    try:
+        same = source.resolve() == dest.resolve()
+    except OSError:
+        same = False
+    if same:
+        try:
+            identity = verify_release(dest, manifest=manifest)
+        except ReleaseVerificationError as exc:
+            raise PublicationError(
+                f"downloaded bundle fails consumer verification: {exc}"
+            ) from exc
+        return {
+            "dest": str(dest),
+            "zip_sha256": sha256_bytes(dest.read_bytes()),
+            "artifact_sha256": identity["artifact_sha256"],
+            "members": list(identity["members"]),
+        }
     try:
         payload = source.read_bytes()
     except OSError as exc:
         raise PublicationError(f"cannot read published bundle: {exc}") from exc
     dest.parent.mkdir(parents=True, exist_ok=True)
+    handle, tmp_name = tempfile.mkstemp(
+        dir=str(dest.parent), prefix=dest.name + ".tmp."
+    )
+    tmp_path = Path(tmp_name)
     try:
-        dest.write_bytes(payload)
-        identity = verify_release(dest, manifest=manifest)
-    except (ReleaseVerificationError, OSError) as exc:
         try:
-            dest.unlink()
+            with os.fdopen(handle, "wb") as tmp:
+                tmp.write(payload)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            identity = verify_release(tmp_path, manifest=manifest)
+        except (ReleaseVerificationError, OSError) as exc:
+            raise PublicationError(
+                f"downloaded bundle fails consumer verification: {exc}"
+            ) from exc
+        os.replace(tmp_path, dest)
+    finally:
+        try:
+            tmp_path.unlink()
         except OSError:
             pass
-        raise PublicationError(
-            f"downloaded bundle fails consumer verification: {exc}"
-        ) from exc
     return {
         "dest": str(dest),
         "zip_sha256": sha256_bytes(payload),

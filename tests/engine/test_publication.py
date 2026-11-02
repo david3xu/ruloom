@@ -572,3 +572,81 @@ def test_publish_rejects_traversal_item_ids(tmp_path: Path) -> None:
             _publisher(base).publish(bad_id, run_dir, authority="team-a")
     assert not (base / "escape-test.json").exists()
     assert list((base / "publications").glob("*.json")) == []
+
+
+def test_download_failure_preserves_existing_good_destination(
+    tmp_path: Path,
+) -> None:
+    """CP-03 A05: an invalid download never clobbers a good destination."""
+    base = tmp_path / "out"
+    run_dir, _ = _accepted_run(base, _write_source(tmp_path))
+    good_source = run_dir / "release.zip"
+    dest = tmp_path / "fetch" / "release.zip"
+    first = download(good_source, dest)
+    good_bytes = dest.read_bytes()
+    reviewed = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
+    assert first["zip_sha256"] == reviewed
+    assert good_bytes == good_source.read_bytes()
+
+    broken = tmp_path / "broken.zip"
+    raw = bytearray(good_source.read_bytes())
+    raw[100] ^= 0xFF
+    broken.write_bytes(bytes(raw))
+    with pytest.raises(PublicationError, match="consumer verification"):
+        download(broken, dest)
+    assert dest.read_bytes() == good_bytes
+    fetched = download(good_source, dest)
+    assert fetched["zip_sha256"] == reviewed
+    assert dest.read_bytes() == good_bytes
+
+
+def test_download_interrupted_commit_preserves_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CP-03 A05: a crash at commit leaves the existing destination intact."""
+    import os as _os
+
+    base = tmp_path / "out"
+    run_dir, _ = _accepted_run(base, _write_source(tmp_path))
+    good_source = run_dir / "release.zip"
+    dest = tmp_path / "fetch" / "release.zip"
+    download(good_source, dest)
+    good_bytes = dest.read_bytes()
+    reviewed = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("injected commit failure")
+
+    monkeypatch.setattr(_os, "replace", boom)
+    try:
+        with pytest.raises(RuntimeError, match="injected commit failure"):
+            download(good_source, tmp_path / "fetch" / "release.zip")
+    finally:
+        monkeypatch.undo()
+    assert dest.read_bytes() == good_bytes
+    assert list((tmp_path / "fetch").glob("release.zip.tmp.*")) == []
+    fetched = download(good_source, dest)
+    assert dest.read_bytes() == good_bytes
+    assert fetched["zip_sha256"] == reviewed
+
+
+def test_download_same_source_and_destination_is_lossless(
+    tmp_path: Path,
+) -> None:
+    """CP-03 A05: same source/destination verifies in place, never deletes."""
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    published = run_dir / "release.zip"
+    good_bytes = published.read_bytes()
+    identity = download(published, published)
+    assert published.read_bytes() == good_bytes
+    assert identity["artifact_sha256"] == outcome["artifact_sha256"]
+
+    broken = tmp_path / "broken.zip"
+    raw = bytearray(good_bytes)
+    raw[100] ^= 0xFF
+    broken.write_bytes(bytes(raw))
+    broken_bytes = broken.read_bytes()
+    with pytest.raises(PublicationError, match="consumer verification"):
+        download(broken, broken)
+    assert broken.read_bytes() == broken_bytes

@@ -135,7 +135,9 @@ def test_claim_live_lease_conflicts_expired_lease_redispatches(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
-    item = _submit(store)
+    # Expiry consumes the retry budget, so the redispatch needs one
+    # retry to spend (CP-03: expiry counts against max_retries).
+    item = _submit(store, max_retries=1)
     first = store.claim(
         item["item_id"], worker="w1", lease_seconds=60.0, now=T0
     )
@@ -286,7 +288,9 @@ def test_cancel_shapes_queued_claimed_done_and_terminal(
 
 def test_crash_recovery_returns_expired_leases_only(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    dead = _submit(store, key="dead")
+    # The recovery sweep consumes the retry budget (CP-03), so the
+    # dead item needs one retry to spend for the requeue.
+    dead = _submit(store, key="dead", max_retries=1)
     store.claim(dead["item_id"], worker="gone", lease_seconds=60.0, now=T0)
     live = _submit(store, key="live")
     store.claim(live["item_id"], worker="here", lease_seconds=600.0, now=T0)
@@ -541,3 +545,122 @@ def test_item_id_rejects_traversal_and_shape_variants(
     assert sorted(
         path.name for path in (tmp_path / "out" / "dispatch" / "items").glob("*")
     ) == ["good-id.json"]
+
+
+def test_expiry_reclaim_consumes_budget_and_exhausts(tmp_path: Path) -> None:
+    """CP-03 A06: an expired-claim reclaim spends one retry, then exhausts."""
+    from engine.core.dispatch import EXHAUSTED_BY_EXPIRY
+
+    store = _store(tmp_path)
+    item = store.submit(
+        authority="team-a", request=_request(), max_retries=0, now=T0,
+    )
+    first = store.claim(
+        item["item_id"], worker="w1", lease_seconds=60.0, now=T0
+    )
+    assert first["attempts"] == 1
+    with pytest.raises(ClaimConflict):
+        store.claim(
+            item["item_id"], worker="w2", lease_seconds=60.0, now=T0 + 61.0
+        )
+    record = store.get(item["item_id"])
+    assert record["status"] == "exhausted"
+    assert record["retries_used"] == 1
+    assert record["error"] == EXHAUSTED_BY_EXPIRY
+    assert record["attempts"] == 1
+    assert record["history"][-1]["event"] == "exhausted"
+    assert record["history"][-1]["reason"] == EXHAUSTED_BY_EXPIRY
+    with pytest.raises(ClaimConflict):
+        store.claim(item["item_id"], worker="w3", lease_seconds=60.0, now=T0 + 62.0)
+
+
+def test_recover_sweep_consumes_budget_and_exhausts(tmp_path: Path) -> None:
+    """CP-03 A06: the recovery sweep spends one retry, then exhausts."""
+    from engine.core.dispatch import EXHAUSTED_BY_EXPIRY
+
+    store = _store(tmp_path)
+    item = store.submit(
+        authority="team-a", request=_request(), max_retries=0, now=T0,
+    )
+    store.claim(item["item_id"], worker="gone", lease_seconds=60.0, now=T0)
+    recovered = store.recover(item["item_id"], now=T0 + 61.0)
+    assert recovered["status"] == "exhausted"
+    assert recovered["retries_used"] == 1
+    assert recovered["error"] == EXHAUSTED_BY_EXPIRY
+    assert recovered["history"][-1]["event"] == "exhausted"
+    with pytest.raises(ClaimConflict):
+        store.claim(item["item_id"], worker="fresh", lease_seconds=60.0, now=T0 + 61.0)
+
+
+def test_repeated_expiry_cycles_cannot_requeue_forever(tmp_path: Path) -> None:
+    """CP-03 A06: four claim/expire/recover cycles exhaust a budget of 2."""
+    from engine.core.dispatch import EXHAUSTED_BY_EXPIRY
+
+    store = _store(tmp_path)
+    item = store.submit(
+        authority="team-a", request=_request(), max_retries=2, now=T0,
+    )
+    base = T0
+    # Cycle 1: claim then expire via reclaim (spends 1, relaunches).
+    first = store.claim(
+        item["item_id"], worker="w1", lease_seconds=60.0, now=base
+    )
+    assert first["attempts"] == 1
+    second = store.claim(
+        item["item_id"], worker="w2", lease_seconds=60.0, now=base + 61.0
+    )
+    assert second["status"] == "claimed"
+    assert second["attempts"] == 2
+    assert second["retries_used"] == 1
+    assert second["lease"]["token"] == first["lease"]["token"] + 1
+    # Cycle 2: expire via the recovery sweep (spends 1, back to queue).
+    recovered = store.recover(item["item_id"], now=base + 122.0)
+    assert recovered["status"] == "queued"
+    assert recovered["retries_used"] == 2
+    third = store.claim(
+        item["item_id"], worker="w3", lease_seconds=60.0, now=base + 122.0
+    )
+    assert third["attempts"] == 3
+    # Cycle 3+: the next expiry spends the last retry and exhausts.
+    exhausted = store.recover(item["item_id"], now=base + 183.0)
+    assert exhausted["status"] == "exhausted"
+    assert exhausted["retries_used"] == 3
+    assert exhausted["error"] == EXHAUSTED_BY_EXPIRY
+    # A fourth cycle never requeues: the item is terminal.
+    with pytest.raises(ClaimConflict):
+        store.claim(
+            item["item_id"], worker="w4", lease_seconds=60.0, now=base + 244.0
+        )
+    assert store.get(item["item_id"])["status"] == "exhausted"
+    # The expired worker's token stays fenced off after exhaustion.
+    with pytest.raises(FencingError):
+        store.report_failure(
+            item["item_id"], worker="w3", token=third["lease"]["token"],
+            error="late", now=base + 244.0,
+        )
+
+
+def test_attempts_persisted_separately_from_failures(tmp_path: Path) -> None:
+    """CP-03 A06: launches count in attempts; reports spend retries_used."""
+    store = _store(tmp_path)
+    item = store.submit(
+        authority="team-a", request=_request(), max_retries=2, now=T0,
+    )
+    assert store.get(item["item_id"])["attempts"] == 0
+    lease = store.claim(
+        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
+    )["lease"]
+    assert store.get(item["item_id"])["attempts"] == 1
+    requeued = store.report_failure(
+        item["item_id"], worker="w1", token=lease["token"],
+        error="boom", now=T0,
+    )
+    assert requeued["attempts"] == 1
+    assert requeued["retries_used"] == 1
+    lease2 = store.claim(
+        item["item_id"], worker="w2", lease_seconds=600.0, now=T0
+    )["lease"]
+    assert lease2["token"] == lease["token"] + 1
+    record = store.get(item["item_id"])
+    assert record["attempts"] == 2
+    assert record["retries_used"] == 1

@@ -30,8 +30,12 @@ Authority: the submitting authority owns the item. Cancellation and
 publication (see ``engine.artifacts.publication``) require that
 authority; any other authority is refused with
 :class:`AuthorityDenied`. Retries are bounded: each reported failure
-returns the item to the queue until ``max_retries`` is spent, then the
-item rests terminal as ``exhausted`` and is never claimed again.
+and each expired lease (via the expired-claim reclaim or the recovery
+sweep) consumes one retry from ``max_retries``; the launch count rides
+in ``attempts`` separately from the failure count. Until the budget is
+spent the item returns to the queue, then it rests terminal as
+``exhausted`` (expiry exhaustion records
+``retries_exhausted_by_expiry``) and is never claimed again.
 """
 
 from __future__ import annotations
@@ -95,6 +99,13 @@ CLAIMED = "claimed"
 SUCCEEDED = "succeeded"
 EXHAUSTED = "exhausted"
 CANCELLED = "cancelled"
+
+#: Exhaustion reason recorded when expiry consumes the retry budget.
+#: Both the expired-claim reclaim path and the recovery sweep count
+#: an expired lease against ``max_retries``; once spent the item rests
+#: terminal as ``exhausted`` with this reason instead of requeueing,
+#: so repeated crashes cannot trigger unbounded generation cost.
+EXHAUSTED_BY_EXPIRY = "retries_exhausted_by_expiry"
 
 TERMINAL_STATUSES = (SUCCEEDED, EXHAUSTED, CANCELLED)
 
@@ -243,8 +254,10 @@ class DispatchStore:
         key returns the first submit's record unchanged -- no duplicate
         item is created. A key first seen under another authority is
         refused, so one authority cannot squat or adopt another's key.
-        ``max_retries`` bounds how many reported failures return the
-        item to the queue before it rests ``exhausted``.
+        ``max_retries`` bounds how many reported failures *and*
+        expired leases return the item to the queue before it rests
+        ``exhausted`` (expiry consumes the same budget; the launch
+        count persists separately in ``attempts``).
 
         An explicit ``item_id`` is create-only and collision-safe: the
         first submit creates the item, and a later submit naming the
@@ -297,6 +310,7 @@ class DispatchStore:
                     "idempotency_key": None,
                     "status": QUEUED,
                     "retries_used": 0,
+                    "attempts": 0,
                     "max_retries": max_retries,
                     "lease": None,
                     "fencing": 0,
@@ -370,6 +384,7 @@ class DispatchStore:
                 "idempotency_key": None,
                 "status": QUEUED,
                 "retries_used": 0,
+                    "attempts": 0,
                 "max_retries": max_retries,
                 "lease": None,
                 "fencing": 0,
@@ -437,6 +452,7 @@ class DispatchStore:
                     "idempotency_key": idempotency_key,
                     "status": QUEUED,
                     "retries_used": 0,
+                    "attempts": 0,
                     "max_retries": max_retries,
                     "lease": None,
                     "fencing": 0,
@@ -464,6 +480,7 @@ class DispatchStore:
                 "idempotency_key": idempotency_key,
                 "status": QUEUED,
                 "retries_used": 0,
+                    "attempts": 0,
                 "max_retries": max_retries,
                 "lease": None,
                 "fencing": 0,
@@ -490,10 +507,15 @@ class DispatchStore:
         """Lease one queued item to one worker (single winner).
 
         A live lease blocks every other claimant with
-        :class:`ClaimConflict`. An expired lease is re-dispatchable:
-        the fresh claim wins, the token moves on, and the history
+        :class:`ClaimConflict`. An expired lease consumes one retry
+        from the budget: while ``retries_used`` stays within
+        ``max_retries`` the fresh claim wins, the token moves on, the
+        launch count (``attempts``) grows by one, and the history
         records the recovery, so a dead launcher's work resumes
-        instead of wedging. Terminal items are never claimable.
+        instead of wedging. Once the budget is spent the item rests
+        terminal as ``exhausted`` with reason
+        ``retries_exhausted_by_expiry`` and the reclaim refuses with
+        :class:`ClaimConflict`. Terminal items are never claimable.
         """
         if not isinstance(worker, str) or not worker.strip():
             raise DispatchError("claim requires a non-empty worker id")
@@ -520,6 +542,22 @@ class DispatchStore:
                         f"{lease.get('expires_at')}: refusing"
                     )
                 record["lease"] = None
+                record["retries_used"] = int(record.get("retries_used", 0)) + 1
+                if int(record["retries_used"]) > int(record.get("max_retries", 0)):
+                    record["status"] = EXHAUSTED
+                    record["error"] = EXHAUSTED_BY_EXPIRY
+                    self._write(
+                        record,
+                        event="exhausted",
+                        now=at,
+                        worker=lease.get("worker"),
+                        reason=EXHAUSTED_BY_EXPIRY,
+                    )
+                    raise ClaimConflict(
+                        f"item {item_id!r} exhausted its retry budget "
+                        f"through expiry ({EXHAUSTED_BY_EXPIRY}): "
+                        "nothing to claim"
+                    )
                 record = self._write(
                     record,
                     event="lease_expired",
@@ -533,6 +571,7 @@ class DispatchStore:
                 )
             token = int(record.get("fencing", 0)) + 1
             record["fencing"] = token
+            record["attempts"] = int(record.get("attempts", 0)) + 1
             record["status"] = CLAIMED
             record["lease"] = {
                 "worker": worker,
@@ -702,11 +741,15 @@ class DispatchStore:
         """Return an expired lease to the queue (launcher-outage sweep).
 
         A fresh launcher runs this over claimed items after an outage:
-        leases whose time has passed go back to ``queued`` with the
-        spent attempt counted but the token untouched (the next claim
-        moves it on). Anything else -- live leases, actionable or
-        terminal items -- is returned unchanged, so a sweep is safe to
-        run blindly over the whole store.
+        leases whose time has passed consume one retry from the
+        budget and go back to ``queued`` with the token untouched
+        (the next claim moves it on and counts the launch in
+        ``attempts``). Once the budget is spent the item rests
+        terminal as ``exhausted`` with reason
+        ``retries_exhausted_by_expiry`` instead of requeueing.
+        Anything else -- live leases, actionable or terminal items --
+        is returned unchanged, so a sweep is safe to run blindly over
+        the whole store.
         """
         at = _resolve_now(now)
         with _store_lock(self.dir):
@@ -717,6 +760,17 @@ class DispatchStore:
             if at < float(lease.get("expires_at", 0.0)):
                 return _copy_record(record)
             record["lease"] = None
+            record["retries_used"] = int(record.get("retries_used", 0)) + 1
+            if int(record["retries_used"]) > int(record.get("max_retries", 0)):
+                record["status"] = EXHAUSTED
+                record["error"] = EXHAUSTED_BY_EXPIRY
+                return self._write(
+                    record,
+                    event="exhausted",
+                    now=at,
+                    worker=lease.get("worker"),
+                    reason=EXHAUSTED_BY_EXPIRY,
+                )
             record["status"] = QUEUED
             return self._write(
                 record, event="recovered", now=at, worker=lease.get("worker")
