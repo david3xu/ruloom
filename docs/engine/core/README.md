@@ -122,17 +122,35 @@ child process gets a pinned working directory (the explicit
 `--workspace` root when set, otherwise the invoking directory, which
 is the repo checkout under normal CLI use), a minimal allowlisted
 environment (`PATH`, `HOME`, locale, timezone, and temp-dir keys only
--- secrets and every `RULOOM_*` setting are stripped before the child
-starts), and exactly the `muse exec` argv the adapter builds, which
-names no MCP servers, tool dispatch, or peer routing. Every call
-records its effective invocation -- argv, pinned cwd, inherited env
-key names (never values), contributor flag, and the returned model
-identity -- to the adapter's `last_invocation` record and to a
-per-call `model_invocation` event in the run log
+-- secrets, every `RULOOM_*` setting, and any MCP/tool-routing config
+are stripped before the child starts), and exactly the `muse exec`
+argv the adapter builds, which names no MCP servers, tool dispatch, or
+peer routing. Every call records its effective invocation -- argv,
+pinned cwd, inherited env key names (never values), contributor flag,
+and the returned model identity -- to the adapter's `last_invocation`
+record and to a per-call `model_invocation` event in the run log
 (`engine/core/runner.py`), so the run record shows which restricted
 invocation acted. Secret values never enter the record. The default
 pins preserve the validated planner path unchanged; callers needing
 tighter confinement pass an explicit allowed root.
+
+Denial is proven child-side, not only asserted on the pre-exec dict
+(`tests/models/test_child_capability.py`, rule
+`Q-GOV-CHILD-CAPABILITY`): a real fixture child spawned through the
+real adapter path -- restricted environment, pinned cwd, real spawn --
+reports no probe secret, no `RULOOM_*` key, and no MCP/tool-routing
+config in its own environment, with a positive control proving
+non-secret allowlisted keys still pass through, and relative writes
+landing inside the pinned root. One honest platform allowance: the
+live child may additionally report interpreter/platform-injected
+locale keys (`LC_CTYPE`, exported by the Python runtime under locale
+coercion, and `__CF_USER_TEXT_ENCODING`, injected by macOS
+CoreFoundation) that the adapter never sent; the probes name them
+explicitly and audit their values for secrets instead of pretending
+the child sees exactly the pre-exec dict. The fixture child is the
+local Python interpreter, never `muse exec`, so no live model call is
+made; probes run on ubuntu-latest CI and local macOS, and no Windows
+run is claimed.
 
 ## Feature records
 
