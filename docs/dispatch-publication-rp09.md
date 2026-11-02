@@ -115,6 +115,15 @@ persisted acceptance record before any byte is copied:
   resumes to the same bytes on re-publication (no destination: copy
   again; matching destination: adopt it). Re-publishing a complete
   record whose destination still matches is a no-op.
+- Once the record is complete the destination must keep attesting the
+  recorded bytes (HP-02, audit A02): a missing, corrupt, or foreign
+  destination refuses re-publication instead of being silently
+  re-copied. Recovery goes through the authorised `repair` operation,
+  which re-runs every acceptance guard, restores exactly the recorded
+  bytes (never a new release), preserves any replaced bytes beside
+  the destination under a digest-derived name, and appends the
+  authorising decision (who, when, why, what was found) to the
+  record.
 - Publication never overwrites destination bytes it cannot attribute
   to its own record: unattributed foreign bytes refuse loudly, and one
   item ships exactly one release. Publication item ids take the same
@@ -181,7 +190,7 @@ Control cases (committed tests, no sleeps — clocks are injected):
   on retry (HP-01 A01): same key with a changed `max_rows`, a changed
   attempt bound, or a changed/added spec overlay refuses with history
   and fencing kept.
-- `tests/engine/test_publication.py` (27 tests): publish/download
+- `tests/engine/test_publication.py` (31 tests): publish/download
   round trip with hash equality to the reviewed `release.sha256`,
   idempotent re-publish, interrupted-copy resume to identical bytes,
   interrupted-mark adoption, foreign-authority denial, unsucceeded /
@@ -200,7 +209,13 @@ Control cases (committed tests, no sleeps — clocks are injected):
   deletion, plus request-binding and snapshot repair (DP-01 C01+C02):
   wrong-source, tighter-row-bound, and changed-source requests refused
   with nothing shipped, and post-acceptance ZIP swaps (corrupt and
-  well-formed variants) refused with the item never marked complete.
+  well-formed variants) refused with the item never marked complete,
+  plus safe recovery on republish (HP-02 A02): re-publication refuses
+  a missing or unexpected destination once complete with bytes and
+  record untouched, and authorised repair restores the recorded bytes
+  (preserving replaced bytes beside the destination and appending the
+  decision) while refusing without a reason or under a foreign
+  authority.
 - `tests/engine/test_consumer.py` (14 tests): the producer-side
   guarantees above, plus trust repair (CP-01): stale-manifest hash
   refusal, recorded-size mismatch refusal, and non-`pass` verdict

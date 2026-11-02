@@ -52,9 +52,15 @@ any copy starts and ``complete`` only after the destination bytes and
 sidecar verify. A crash in between leaves either no destination (copy
 again) or a destination whose bytes hash to the source (adopt it and
 mark complete). Re-publishing a complete record whose destination
-still matches is a no-op returning the same identity. Publication
-never overwrites destination bytes it cannot attribute to its own
-record: foreign bytes refuse loudly instead.
+still matches is a no-op returning the same identity. Once the record
+is complete the destination must keep attesting the recorded bytes:
+a missing, corrupt, or foreign destination refuses re-publication
+instead of being silently re-copied -- recovery goes through the
+authorised ``repair`` operation, which preserves any replaced bytes
+beside the destination and appends the authorising decision (who,
+when, why, what was found) to the record. Publication never
+overwrites destination bytes it cannot attribute to its own record:
+foreign bytes refuse loudly instead.
 
 ``download`` is the recipient side: it copies a published bundle to a
 chosen path and verifies it there, returning the attested identity
@@ -624,6 +630,60 @@ def _check_request_binding(
         )
 
 
+def _capture_verified_snapshot(
+    store_dir: Path, clean_id: str, run_path: Path
+) -> tuple[bytes, str, dict[str, Any], dict[str, Any], Path]:
+    """Capture the run ZIP and resolve its acceptance, or refuse.
+
+    Reads the run ZIP once into an immutable snapshot, stages it
+    through a private temp file for the consumer check, and resolves
+    the run's persisted acceptance record against that snapshot with
+    the stability guard applied. Returns the snapshot bytes, their
+    digest, the consumer identity, the acceptance record, and the
+    staged snapshot path; the caller owns the staged path and must
+    unlink it. Shared by publication and authorised repair, so both
+    ship only bytes the gate bound.
+    """
+    zip_path = run_path / RELEASE_ZIP_NAME
+    manifest_path = run_path / RELEASE_MANIFEST_NAME
+    if not zip_path.is_file() or not manifest_path.is_file():
+        raise PublicationError(
+            f"run {run_path.name!r} carries no accepted release "
+            f"({RELEASE_ZIP_NAME} and {RELEASE_MANIFEST_NAME} "
+            "must both exist): nothing to publish"
+        )
+    manifest = _read_json_file(manifest_path, what="release manifest")
+    snapshot = _capture_snapshot(zip_path, run_path.name)
+    snapshot_digest = sha256_bytes(snapshot)
+    snapshot_path = _stage_snapshot(store_dir, clean_id, snapshot)
+    try:
+        try:
+            identity = verify_release(snapshot_path, manifest=manifest)
+        except ReleaseVerificationError as exc:
+            raise PublicationError(
+                f"run {run_path.name!r} release fails consumer "
+                f"verification: refusing ({exc})"
+            ) from exc
+        if identity["zip_sha256"] != snapshot_digest:
+            raise PublicationError(
+                f"run {run_path.name!r} snapshot changed during verification: refusing"
+            )
+        acceptance = _resolve_acceptance(
+            run_path,
+            manifest,
+            zip_bytes=snapshot,
+            snapshot_path=snapshot_path,
+        )
+        _verify_snapshot_stable(zip_path, snapshot_digest)
+    except BaseException:
+        try:
+            snapshot_path.unlink()
+        except OSError:
+            pass
+        raise
+    return snapshot, snapshot_digest, dict(identity), acceptance, snapshot_path
+
+
 class Publisher:
     """Separate publication of accepted releases into a shared area.
 
@@ -682,38 +742,10 @@ class Publisher:
         at = _resolve_now(now)
         clean_id = _check_item_id(item_id)
         run_path = Path(run_dir)
-        zip_path = run_path / RELEASE_ZIP_NAME
-        manifest_path = run_path / RELEASE_MANIFEST_NAME
-        if not zip_path.is_file() or not manifest_path.is_file():
-            raise PublicationError(
-                f"run {run_path.name!r} carries no accepted release "
-                f"({RELEASE_ZIP_NAME} and {RELEASE_MANIFEST_NAME} "
-                "must both exist): nothing to publish"
-            )
-        manifest = _read_json_file(manifest_path, what="release manifest")
-        snapshot = _capture_snapshot(zip_path, run_path.name)
-        snapshot_digest = sha256_bytes(snapshot)
-        snapshot_path = _stage_snapshot(self.dir, clean_id, snapshot)
+        snapshot, snapshot_digest, identity, acceptance, snapshot_path = (
+            _capture_verified_snapshot(self.dir, clean_id, run_path)
+        )
         try:
-            try:
-                identity = verify_release(snapshot_path, manifest=manifest)
-            except ReleaseVerificationError as exc:
-                raise PublicationError(
-                    f"run {run_path.name!r} release fails consumer "
-                    f"verification: refusing ({exc})"
-                ) from exc
-            if identity["zip_sha256"] != snapshot_digest:
-                raise PublicationError(
-                    f"run {run_path.name!r} snapshot changed during "
-                    "verification: refusing"
-                )
-            acceptance = _resolve_acceptance(
-                run_path,
-                manifest,
-                zip_bytes=snapshot,
-                snapshot_path=snapshot_path,
-            )
-            _verify_snapshot_stable(zip_path, snapshot_digest)
             return self._publish_snapshot(
                 clean_id,
                 run_path,
@@ -730,20 +762,21 @@ class Publisher:
             except OSError:
                 pass
 
-    def _publish_snapshot(
+    def _require_shippable(
         self,
         clean_id: str,
         run_path: Path,
-        identity: Mapping[str, Any],
         acceptance: Mapping[str, Any],
-        snapshot: bytes,
-        snapshot_digest: str,
-        *,
         authority: str,
-        now: float,
     ) -> dict[str, Any]:
-        """Ship one verified snapshot after all guards have passed."""
-        at = now
+        """Require the dispatch item to authorise this shipment, or refuse.
+
+        The item must rest ``succeeded`` under the calling authority,
+        name this run, and report the persisted accepted digests; the
+        requested profile and request identity must bind the accepted
+        and delivered values. Shared by publication and authorised
+        repair: neither restores bytes the gate never bound.
+        """
         item = self.dispatch.get(clean_id)
         if item.get("authority") != authority:
             raise AuthorityDenied(
@@ -781,6 +814,23 @@ class Publisher:
                 f"{acceptance['run_profile']!r}: refusing"
             )
         _check_request_binding(clean_id, item, acceptance)
+        return dict(item)
+
+    def _publish_snapshot(
+        self,
+        clean_id: str,
+        run_path: Path,
+        identity: Mapping[str, Any],
+        acceptance: Mapping[str, Any],
+        snapshot: bytes,
+        snapshot_digest: str,
+        *,
+        authority: str,
+        now: float,
+    ) -> dict[str, Any]:
+        """Ship one verified snapshot after all guards have passed."""
+        at = now
+        self._require_shippable(clean_id, run_path, acceptance, authority)
         dest_name = f"{clean_id}.zip"
         dest = self.dest_dir / dest_name
         if dest.resolve().parent != self.dest_dir.resolve():
@@ -812,6 +862,20 @@ class Publisher:
             raise PublicationError(
                 f"item {clean_id!r} already published different bytes: "
                 "one item ships one release, refusing"
+            )
+        if (
+            isinstance(prior, dict)
+            and prior.get("status") == COMPLETE
+            and prior.get("zip_sha256") == snapshot_digest
+            and (
+                not dest.is_file() or sha256_bytes(dest.read_bytes()) != snapshot_digest
+            )
+        ):
+            raise PublicationError(
+                f"item {clean_id!r} is already published, but the "
+                "destination no longer attests the recorded bytes: "
+                "refusing (recover with the authorised repair "
+                "operation, never by re-publishing)"
             )
         if dest.is_file() and sha256_bytes(dest.read_bytes()) != snapshot_digest:
             if prior is None:
@@ -854,6 +918,165 @@ class Publisher:
             "dest_name": dest_name,
             "status": COMPLETE,
             "updated_at": at,
+        }
+        _atomic_write_json(record_path, record)
+        return {
+            "item_id": clean_id,
+            "dest": str(dest),
+            "zip_sha256": snapshot_digest,
+            "artifact_sha256": identity["artifact_sha256"],
+            "members": list(identity["members"]),
+        }
+
+    def repair(
+        self,
+        item_id: str,
+        run_dir: Path | str,
+        *,
+        authority: str,
+        reason: str,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        """Restore a complete publication's destination, recording why.
+
+        Plain re-publication refuses once the destination stops
+        attesting the recorded bytes; this is the only operation that
+        restores them. It re-runs every acceptance guard, restores
+        exactly the recorded bytes (never a new release -- one item
+        ships one release), preserves any replaced bytes beside the
+        destination under a digest-derived name instead of dropping
+        them, and appends the authorising decision to the record. A
+        destination that still matches needs no repair and returns
+        the same identity without recording anything.
+        """
+        at = _resolve_now(now)
+        clean_id = _check_item_id(item_id)
+        if not isinstance(reason, str) or not reason.strip():
+            raise PublicationError(
+                "repair restores published bytes under a recorded "
+                "decision: refusing without a reason"
+            )
+        run_path = Path(run_dir)
+        snapshot, snapshot_digest, identity, acceptance, snapshot_path = (
+            _capture_verified_snapshot(self.dir, clean_id, run_path)
+        )
+        try:
+            return self._repair_snapshot(
+                clean_id,
+                run_path,
+                identity,
+                acceptance,
+                snapshot,
+                snapshot_digest,
+                authority=authority,
+                reason=reason,
+                now=at,
+            )
+        finally:
+            try:
+                snapshot_path.unlink()
+            except OSError:
+                pass
+
+    def _repair_snapshot(
+        self,
+        clean_id: str,
+        run_path: Path,
+        identity: Mapping[str, Any],
+        acceptance: Mapping[str, Any],
+        snapshot: bytes,
+        snapshot_digest: str,
+        *,
+        authority: str,
+        reason: str,
+        now: float,
+    ) -> dict[str, Any]:
+        """Restore one verified snapshot over a diverged destination."""
+        at = now
+        self._require_shippable(clean_id, run_path, acceptance, authority)
+        record_path = self._record_path(clean_id)
+        prior = _read_record(record_path)
+        if not isinstance(prior, dict) or prior.get("status") != COMPLETE:
+            raise PublicationError(
+                f"item {clean_id!r} carries no complete publication: "
+                "refusing (publish first; repair only restores)"
+            )
+        if prior.get("zip_sha256") != snapshot_digest:
+            raise PublicationError(
+                f"item {clean_id!r} already published different bytes: "
+                "one item ships one release, refusing"
+            )
+        dest_name = prior.get("dest_name")
+        if not isinstance(dest_name, str) or not dest_name:
+            raise PublicationError(
+                f"item {clean_id!r} complete record names no destination: refusing"
+            )
+        dest = self.dest_dir / dest_name
+        if dest.resolve().parent != self.dest_dir.resolve():
+            raise PublicationError(
+                f"destination {dest_name!r} resolves outside the "
+                "published area: refusing"
+            )
+        if dest.is_file() and sha256_bytes(dest.read_bytes()) == snapshot_digest:
+            return {
+                "item_id": clean_id,
+                "dest": str(dest),
+                "zip_sha256": snapshot_digest,
+                "artifact_sha256": identity["artifact_sha256"],
+                "members": list(identity["members"]),
+            }
+        found: str
+        preserved: str | None = None
+        if dest.is_file():
+            found = sha256_bytes(dest.read_bytes())
+            preserved_path = self.dest_dir / f"{dest_name}.replaced.{found}"
+            if preserved_path.is_file():
+                if sha256_bytes(preserved_path.read_bytes()) != found:
+                    raise PublicationError(
+                        f"repair quarantine {preserved_path.name!r} holds "
+                        "unexpected bytes: refusing"
+                    )
+                dest.unlink()
+            else:
+                dest.rename(preserved_path)
+            preserved = preserved_path.name
+        else:
+            found = "absent"
+        _remove_stale_tmps(self.dest_dir, dest_name)
+        _stage_and_commit(self.dest_dir, dest_name, snapshot)
+        if sha256_bytes(dest.read_bytes()) != snapshot_digest:
+            raise PublicationError(
+                f"destination {dest_name!r} does not match the accepted "
+                "bytes after repair: refusing"
+            )
+        sidecar = self.dest_dir / f"{dest_name}.sha256"
+        _atomic_write_bytes(sidecar, f"{snapshot_digest}  {dest_name}\n".encode())
+        previous = prior.get("repairs", [])
+        if not isinstance(previous, list):
+            raise PublicationError(
+                f"item {clean_id!r} publication record carries a "
+                "malformed repair history: refusing"
+            )
+        record = {
+            "item_id": clean_id,
+            "authority": prior.get("authority"),
+            "run_id": prior.get("run_id"),
+            "zip_sha256": snapshot_digest,
+            "artifact_sha256": identity["artifact_sha256"],
+            "dest_name": dest_name,
+            "status": COMPLETE,
+            "updated_at": at,
+            "repairs": [
+                *previous,
+                {
+                    "at": at,
+                    "authority": authority,
+                    "reason": reason,
+                    "found": found,
+                    "restored": snapshot_digest,
+                    "preserved": preserved,
+                },
+            ],
         }
         _atomic_write_json(record_path, record)
         return {
