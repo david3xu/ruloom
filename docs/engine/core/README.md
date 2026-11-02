@@ -133,7 +133,9 @@ environment (`PATH`, `HOME`, locale, timezone, and temp-dir keys only
 are stripped before the child starts), and exactly the `muse exec`
 argv the adapter builds, which names no MCP servers, tool dispatch, or
 peer routing; a spawn gate (`enforce_spawn_policy`) refuses any
-MCP/tool/dispatch/peer/delegate flag before anything spawns. Every
+MCP/tool/dispatch/peer/delegate flag in an option slot before
+anything spawns, while flag-like text in a known option's value slot
+and in the prompt slot (the final argv element) passes. Every
 call records its effective invocation -- argv, pinned cwd, inherited
 env key names (never values), contributor flag, the requested model,
 and the observed model the transport reported -- to the adapter's
@@ -169,10 +171,12 @@ real adapter path -- restricted environment, pinned cwd, gated spawn --
 reports no probe secret, no `RULOOM_*` key, and no MCP/tool-routing
 config in its own environment, including a grandchild peer the fixture
 child dispatches to, with a positive control proving non-secret
-allowlisted keys still pass through; tool/dispatch flags are refused
-before anything spawns (on fixture and real `muse exec` argv shapes,
-with a positive control that flag-like wording in free text never
-trips the gate); and relative writes land inside the pinned root. One
+allowlisted keys still pass through; tool/dispatch flags in option
+slots are refused before anything spawns (on fixture and real
+`muse exec` argv shapes, with positive controls proving flag-like
+wording in free text -- including a literal prompt beginning
+`--tool` and flag-like option values -- never trips the gate); and
+relative writes land inside the pinned root. One
 honest platform allowance: the live child may additionally report
 interpreter/platform-injected locale keys (`LC_CTYPE`, exported by the
 Python runtime under locale coercion, and `__CF_USER_TEXT_ENCODING`,
