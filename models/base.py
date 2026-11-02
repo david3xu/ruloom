@@ -8,8 +8,9 @@ answer -- surfaces as :class:`ModelError`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol
+from typing import Any, Protocol
 
 
 class ModelError(Exception):
@@ -40,9 +41,7 @@ class Completion:
 class StructuredModel(Protocol):
     """A model that answers with JSON conforming to a given schema."""
 
-    def complete(
-        self, prompt: str, schema: Mapping[str, Any]
-    ) -> Completion:
+    def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
         """Return the model's structured answer for ``prompt``.
 
         Raises :class:`ModelError` when the model refuses, the transport

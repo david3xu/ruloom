@@ -22,9 +22,10 @@ before this stage (see README).
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from . import codec
 
@@ -59,8 +60,7 @@ class ImageStats:
             "width": self.width,
             "height": self.height,
             "histograms": {
-                channel: list(self.histograms[channel])
-                for channel in ("r", "g", "b")
+                channel: list(self.histograms[channel]) for channel in ("r", "g", "b")
             },
             "means": dict(self.means),
             "texture_h": dict(self.texture_h),
@@ -69,7 +69,7 @@ class ImageStats:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "ImageStats":
+    def from_dict(cls, data: Mapping[str, Any]) -> ImageStats:
         return cls(
             name=str(data["name"]),
             sha256=str(data["sha256"]),
@@ -80,12 +80,8 @@ class ImageStats:
                 for channel in ("r", "g", "b")
             },
             means={channel: float(data["means"][channel]) for channel in "rgb"},
-            texture_h={
-                channel: float(data["texture_h"][channel]) for channel in "rgb"
-            },
-            texture_v={
-                channel: float(data["texture_v"][channel]) for channel in "rgb"
-            },
+            texture_h={channel: float(data["texture_h"][channel]) for channel in "rgb"},
+            texture_v={channel: float(data["texture_v"][channel]) for channel in "rgb"},
             strips=[dict(strip) for strip in data.get("strips", [])],
         )
 
@@ -100,9 +96,7 @@ def compute_statistics(
 ) -> ImageStats:
     """Compute :class:`ImageStats` for one PNG payload (code only)."""
     if media_type != "image/png":
-        raise ValueError(
-            f"statistics support PNG only, got {media_type} for {name}"
-        )
+        raise ValueError(f"statistics support PNG only, got {media_type} for {name}")
     width, height, rows = codec.decode_png(payload)
     histograms = {channel: [0] * N_BINS for channel in "rgb"}
     totals = {"r": 0, "g": 0, "b": 0}
@@ -119,9 +113,7 @@ def compute_statistics(
     # Strip steps are structure (captured by the strip means below), not
     # texture: vertical pairs crossing a strip boundary are excluded so
     # the texture measures within-strip variation only.
-    boundaries = {
-        ((index + 1) * height) // N_STRIPS for index in range(N_STRIPS - 1)
-    }
+    boundaries = {((index + 1) * height) // N_STRIPS for index in range(N_STRIPS - 1)}
     horizontal = {"r": 0, "g": 0, "b": 0}
     for row in rows:
         for left, right in zip(row, row[1:]):
@@ -144,9 +136,7 @@ def compute_statistics(
     for index in range(N_STRIPS):
         row_lo = (index * height) // N_STRIPS
         row_hi = ((index + 1) * height) // N_STRIPS
-        strip_pixels = [
-            pixel for row in rows[row_lo:row_hi] for pixel in row
-        ]
+        strip_pixels = [pixel for row in rows[row_lo:row_hi] for pixel in row]
         count = len(strip_pixels) or 1
         strips.append(
             {

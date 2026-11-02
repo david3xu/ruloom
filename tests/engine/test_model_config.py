@@ -11,8 +11,9 @@ never resolve.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
@@ -206,9 +207,7 @@ def test_open_weight_local_binding_loads() -> None:
     payload = _raw_manifest()
     payload["models"]["roles"]["local_critic"]["adapter"] = "glimmer_local"
     manifest = validate_manifest(payload)
-    assert (
-        manifest.models["roles"]["local_critic"]["adapter"] == "glimmer_local"
-    )
+    assert manifest.models["roles"]["local_critic"]["adapter"] == "glimmer_local"
 
 
 def test_open_weight_hosted_binding_refused_by_composition_root() -> None:
@@ -254,14 +253,20 @@ def test_open_weight_hosted_binding_refused_before_any_model_call(
 
 
 def _budget_manifest(ceiling: int) -> Any:
-    return _manifest(models={"roles": {"planner": {"model": "fake"}},
-                             "budget": {"max_tokens_per_run": ceiling}})
+    return _manifest(
+        models={
+            "roles": {"planner": {"model": "fake"}},
+            "budget": {"max_tokens_per_run": ceiling},
+        }
+    )
 
 
 def test_budget_refuses_second_call_before_making_it(tmp_path: Path) -> None:
     manifest = _budget_manifest(50)
     client = FakeClient(_usage(input_tokens=60, output_tokens=30))
-    code, outcome = _run(tmp_path, manifest, _registry([["shape_ok"], []], client), client)
+    code, outcome = _run(
+        tmp_path, manifest, _registry([["shape_ok"], []], client), client
+    )
     assert code == EXIT_FAILED
     assert outcome["status"] == "error"
     assert "budget" in outcome["error"]
@@ -275,13 +280,14 @@ def test_budget_counts_input_output_and_reasoning(tmp_path: Path) -> None:
     # ceiling); the third call is refused before it is made.
     manifest = _budget_manifest(10)
     client = FakeClient(
-        _usage(input_tokens=4, output_tokens=1, reasoning_tokens=1,
-               cached_tokens=1000),
+        _usage(input_tokens=4, output_tokens=1, reasoning_tokens=1, cached_tokens=1000),
         plans=[{"rev": 0}, {"rev": 1}, {"rev": 2}],
     )
     code, outcome = _run(
-        tmp_path, manifest,
-        _registry([["shape_ok"], ["shape_ok"], []], client), client,
+        tmp_path,
+        manifest,
+        _registry([["shape_ok"], ["shape_ok"], []], client),
+        client,
         max_attempts=3,
     )
     assert code == EXIT_FAILED
@@ -346,9 +352,7 @@ def _roles_manifest() -> Any:
 
 
 def test_profile_values_apply_without_overrides() -> None:
-    resolved, sources = cli_module.resolve_role_bindings(
-        _roles_manifest(), env={}
-    )
+    resolved, sources = cli_module.resolve_role_bindings(_roles_manifest(), env={})
     assert resolved["planner"]["model"] == "profile-model"
     assert resolved["planner"]["reasoning_effort"] == "low"
     assert sources["planner"] == {"model": "profile", "reasoning_effort": "profile"}
@@ -404,8 +408,9 @@ def test_bad_assignment_shape_refused() -> None:
 
 
 def test_effective_bindings_recorded_in_run_log(tmp_path: Path) -> None:
-    resolved = {"planner": {"model": "fake", "adapter": "meta_cli",
-                            "reasoning_effort": "max"}}
+    resolved = {
+        "planner": {"model": "fake", "adapter": "meta_cli", "reasoning_effort": "max"}
+    }
     sources = {"planner": {"model": "profile", "reasoning_effort": "profile"}}
 
     def decide(ctx: Any) -> None:
@@ -477,9 +482,7 @@ def test_effective_bindings_recorded_in_run_log(tmp_path: Path) -> None:
     assert code == EXIT_OK
     log = RunLog.read_jsonl(tmp_path / "out" / "run.jsonl")
     assert log.verify()
-    bindings = next(
-        event for event in log.events if event["stage"] == "model_bindings"
-    )
+    bindings = next(event for event in log.events if event["stage"] == "model_bindings")
     assert bindings["status"] == "ok"
     planner = bindings["details"]["roles"]["planner"]
     assert planner["model"] == "fake"
@@ -494,9 +497,7 @@ def test_effective_bindings_recorded_in_run_log(tmp_path: Path) -> None:
 
 def test_reporter_seat_exists_but_stays_disabled() -> None:
     root = Path(__file__).resolve().parents[2]
-    manifest = cli_module.load_manifest(
-        root / "profiles" / "hylogger" / "profile.json"
-    )
+    manifest = cli_module.load_manifest(root / "profiles" / "hylogger" / "profile.json")
     reporter = manifest.models["roles"]["reporter"]
     assert reporter["adapter"] == "meta_cli"
     assert reporter["model"] == "muse-wonder-1.0"
@@ -508,9 +509,7 @@ def test_capability_bound_to_reporter_refused_at_composition(
     tmp_path: Path,
 ) -> None:
     root = Path(__file__).resolve().parents[2]
-    manifest = cli_module.load_manifest(
-        root / "profiles" / "hylogger" / "profile.json"
-    )
+    manifest = cli_module.load_manifest(root / "profiles" / "hylogger" / "profile.json")
     capabilities = dict(manifest.capabilities)
     capabilities["snoop"] = {"impl": "fake.snoop", "calls_model": "reporter"}
     graph = list(manifest.graph) + [{"step": "snoop"}]
@@ -520,9 +519,7 @@ def test_capability_bound_to_reporter_refused_at_composition(
         graph=[dict(node) for node in graph],
     )
     client = FakeClient(_usage())
-    registry = {
-        capability: (lambda ctx: None) for capability in capabilities
-    }
+    registry = {capability: (lambda ctx: None) for capability in capabilities}
     registry["snoop"] = lambda ctx: ctx.model("reporter")
     code, outcome = _run(tmp_path, variant, registry, client)
     assert code == EXIT_FAILED

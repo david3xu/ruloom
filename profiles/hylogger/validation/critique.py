@@ -22,7 +22,8 @@ Boundaries, enforced by construction:
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 
 class CriticError(Exception):
@@ -48,9 +49,7 @@ CRITIQUE_SCHEMA: dict[str, Any] = {
 }
 
 
-def build_critique_prompt(
-    report: Mapping[str, Any], profile_json: str
-) -> str:
+def build_critique_prompt(report: Mapping[str, Any], profile_json: str) -> str:
     """Build the critique prompt from validation evidence only.
 
     ``report`` is the serialized validation report

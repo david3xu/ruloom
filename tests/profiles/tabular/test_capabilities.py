@@ -10,8 +10,9 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import pytest
 
@@ -102,9 +103,7 @@ def test_end_to_end_accept(
         model=FakeModel([{"seed": 7, "n_rows": 20}]),
     )
     assert code == 0
-    run_dirs = [
-        c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()
-    ]
+    run_dirs = [c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()]
     assert len(run_dirs) == 1
     artifact = run_dirs[0]
     for name in (
@@ -130,9 +129,7 @@ def test_end_to_end_accept(
     assert log.verify()
     stages = [event["stage"] for event in log.events]
     assert "describe:advisory" in stages
-    advisories = [
-        event for event in stages if event == "describe:advisory"
-    ]
+    advisories = [event for event in stages if event == "describe:advisory"]
     assert advisories
     with zipfile.ZipFile(artifact / "release.zip") as archive:
         assert sorted(archive.namelist()) == sorted(
@@ -152,9 +149,7 @@ def test_end_to_end_accept(
     assert f"sha256={artifact.name}" not in printed  # artifact dir, not zip
 
 
-def test_end_to_end_reject(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_end_to_end_reject(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     csv_path = _write_source(tmp_path)
     monkeypatch.setenv("RULOOM_THRESHOLDS", str(_write_thresholds(tmp_path)))
     out_dir = tmp_path / "out"
@@ -173,9 +168,7 @@ def test_end_to_end_reject(
         model=FakeModel([{"seed": 7, "n_rows": 20}]),
     )
     assert code != 0
-    run_dirs = [
-        c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()
-    ]
+    run_dirs = [c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()]
     assert len(run_dirs) == 1
     (artifact,) = run_dirs
     assert not (artifact / "release.zip").exists()

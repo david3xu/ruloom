@@ -242,7 +242,9 @@ def test_plain_hashlib_call_is_not_a_helper(tmp_path: Path) -> None:
 def test_planted_missing_mirror_test_fails(tmp_path: Path) -> None:
     _write(tmp_path, "profiles/hylogger/profile.json", "{}\n")
     _write(tmp_path, "profiles/hylogger/generation/fram.py", "VALUE = 1\n")
-    _write(tmp_path, "tests/profiles/hylogger/test_other.py", "def test_x(): assert True\n")
+    _write(
+        tmp_path, "tests/profiles/hylogger/test_other.py", "def test_x(): assert True\n"
+    )
     ok, evidence = gate.check_code4(tmp_path)
     assert not ok
     assert "test_fram.py" in evidence
@@ -470,15 +472,20 @@ def test_registry_maps_every_audit_finding() -> None:
     payload = gate.load_registry(REPO_ROOT)
     assert payload is not None
     q_rules = [rule for rule in payload["rules"] if rule["id"].startswith("Q-")]
-    refs = sorted(
-        {rule.get("audit_ref") for rule in q_rules if rule.get("audit_ref")}
-    )
+    refs = sorted({rule.get("audit_ref") for rule in q_rules if rule.get("audit_ref")})
     assert refs == [f"R{i:02d}" for i in range(1, 13)]
     for rule in q_rules:
         assert rule["status"] in ("enforced", "open_finding", "planned")
         for field in (
-            "id", "scope", "requirement", "checker", "positive_fixture",
-            "violation_fixture", "required_proof", "owner", "status",
+            "id",
+            "scope",
+            "requirement",
+            "checker",
+            "positive_fixture",
+            "violation_fixture",
+            "required_proof",
+            "owner",
+            "status",
         ):
             assert field in rule, (rule.get("id"), field)
         if rule["status"] == "open_finding":
@@ -517,7 +524,11 @@ def test_registry_layout_marks_runs_generated() -> None:
 
 
 def test_generated_layout_path_passes_without_existing(tmp_path: Path) -> None:
-    _write(tmp_path, "README.md", "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n")
+    _write(
+        tmp_path,
+        "README.md",
+        "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n",
+    )
     _write(tmp_path, ".gitignore", "runs/\n")
     _write(
         tmp_path,
@@ -536,7 +547,11 @@ def test_generated_dir_absent_from_disk_still_ignored_in_git_repo(
     # misses a directory-only `runs/` pattern here, so the gate must
     # probe the directory form and/or a synthetic child.
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    _write(tmp_path, "README.md", "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n")
+    _write(
+        tmp_path,
+        "README.md",
+        "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n",
+    )
     _write(tmp_path, ".gitignore", "runs/\n")
     _write(
         tmp_path,
@@ -555,7 +570,11 @@ def test_generated_dir_without_ignore_rule_fails_in_git_repo(
     # Strict canary: the same fresh-clone shape but .gitignore does not
     # cover runs/ — the gate must fail, not silently pass.
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    _write(tmp_path, "README.md", "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n")
+    _write(
+        tmp_path,
+        "README.md",
+        "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n",
+    )
     _write(tmp_path, ".gitignore", "__pycache__/\n")
     _write(
         tmp_path,
@@ -571,7 +590,11 @@ def test_generated_dir_without_ignore_rule_fails_in_git_repo(
 
 def test_missing_registry_keeps_old_doc1_behaviour(tmp_path: Path) -> None:
     # Without a registry every Layout path is treated as tracked.
-    _write(tmp_path, "README.md", "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n")
+    _write(
+        tmp_path,
+        "README.md",
+        "## Layout\n\n| Path | What |\n|---|---|\n| `runs/` | output |\n",
+    )
     ok, _ = gate.check_doc1(tmp_path)
     assert not ok
 
@@ -728,9 +751,7 @@ def test_planted_claim_missing_checker_fails(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "docs/quality/rules.json",
-        _canary_rules_doc(
-            _canary_enforced_rule(checker="tests/audit/test_missing.py")
-        ),
+        _canary_rules_doc(_canary_enforced_rule(checker="tests/audit/test_missing.py")),
     )
     ok, evidence = gate.check_claim_evidence(tmp_path)
     assert not ok
@@ -776,9 +797,7 @@ def test_planted_claim_dangling_symbol_suffix_fails(
     )
     _write(tmp_path, "tests/audit/test_canary.py", "VALUE = 1\n")
     _write(tmp_path, "docs/quality/README.md", "No citations here.\n")
-    _write(
-        tmp_path, "docs/notes.md", "See `engine/core/nope.py:member`.\n"
-    )
+    _write(tmp_path, "docs/notes.md", "See `engine/core/nope.py:member`.\n")
     ok, evidence = gate.check_claim_evidence(tmp_path)
     assert not ok
     assert "engine/core/nope.py:member" in evidence

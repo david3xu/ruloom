@@ -20,27 +20,20 @@ class Thresholds:
         return {"mean_relative_tolerance": self.mean_relative_tolerance}
 
     @classmethod
-    def from_dict(cls, payload: dict) -> "Thresholds":
+    def from_dict(cls, payload: dict) -> Thresholds:
         tolerance = payload.get("mean_relative_tolerance", 0.25)
-        if isinstance(tolerance, bool) or not isinstance(
-            tolerance, (int, float)
-        ):
+        if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)):
             raise ValueError(
-                "mean_relative_tolerance must be a number, "
-                f"got {tolerance!r}"
+                f"mean_relative_tolerance must be a number, got {tolerance!r}"
             )
         if tolerance < 0:
-            raise ValueError(
-                f"mean_relative_tolerance must be >= 0, got {tolerance!r}"
-            )
+            raise ValueError(f"mean_relative_tolerance must be >= 0, got {tolerance!r}")
         return cls(mean_relative_tolerance=float(tolerance))
 
 
 def load_thresholds(path: PathLike) -> Thresholds:
     """Load thresholds from a JSON file."""
-    return Thresholds.from_dict(
-        json.loads(Path(path).read_text(encoding="utf-8"))
-    )
+    return Thresholds.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
 def write_thresholds(thresholds: Thresholds, path: PathLike) -> Path:

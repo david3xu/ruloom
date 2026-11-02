@@ -56,7 +56,8 @@ def _spawn_report(model: MuseCLIModel) -> dict:
 
 
 def test_child_side_env_denies_secrets_and_routing_config(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """The spawned child cannot see secrets or routing configuration."""
     monkeypatch.setenv(PROBE_KEY, PROBE_VALUE)
@@ -71,9 +72,9 @@ def test_child_side_env_denies_secrets_and_routing_config(
     assert "MCP_CONFIG" not in child_env
     assert "TOOL_ROUTING" not in child_env
     assert PROBE_VALUE not in json.dumps(child_env)
-    assert not any(
-        key.startswith("RULOOM_") for key in child_env
-    ), "a RULOOM_* setting leaked into the child"
+    assert not any(key.startswith("RULOOM_") for key in child_env), (
+        "a RULOOM_* setting leaked into the child"
+    )
     assert set(child_env) <= set(ALLOWED_ENV_KEYS) | PLATFORM_INJECTED_KEYS, (
         "child reports a key the adapter never sent and the platform "
         "does not inject -- update PLATFORM_INJECTED_KEYS only with a "
@@ -85,7 +86,8 @@ def test_child_side_env_denies_secrets_and_routing_config(
 
 
 def test_child_side_env_keeps_non_secret_allowlisted_keys(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Positive control: denial is selective, not a broken pipe."""
     monkeypatch.setenv("HOME", "/tmp/fake-child-home")
@@ -97,7 +99,8 @@ def test_child_side_env_keeps_non_secret_allowlisted_keys(
 
 
 def test_child_side_cwd_pinned_and_writes_contained(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """The child runs in the pinned root; relative writes land inside."""
     monkeypatch.setenv(PROBE_KEY, PROBE_VALUE)
@@ -122,7 +125,8 @@ def test_child_side_cwd_pinned_and_writes_contained(
 
 
 def test_child_side_default_cwd_is_invoking_directory(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Without an allowed root the child reports the invoking directory."""
     monkeypatch.chdir(tmp_path)
@@ -140,9 +144,7 @@ def test_real_argv_names_no_peer_dispatch_capability(
     schema_file = tmp_path / "schema.json"
     schema_file.write_text(json.dumps({"type": "object"}), encoding="utf-8")
     for contributor in (True, False):
-        model = MuseCLIModel(
-            allowed_root=tmp_path, contributor=contributor
-        )
+        model = MuseCLIModel(allowed_root=tmp_path, contributor=contributor)
         argv = model._argv(str(schema_file), "make a plan")
         assert argv[:2] == ["muse", "exec"]
         assert argv[argv.index("--workspace") + 1] == str(tmp_path)
@@ -157,12 +159,15 @@ def test_real_argv_names_no_peer_dispatch_capability(
 
 
 def test_real_run_records_secret_free_invocation(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """The real spawn path records argv/cwd/env-key names, never values."""
     monkeypatch.setenv(PROBE_KEY, PROBE_VALUE)
     model = MuseCLIModel(
-        model="muse-spark-1.3", effort="max", contributor=True,
+        model="muse-spark-1.3",
+        effort="max",
+        contributor=True,
         allowed_root=tmp_path,
     )
     report = _spawn_report(model)

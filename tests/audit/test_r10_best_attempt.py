@@ -12,8 +12,9 @@ attempt's own plan, seed, and artifact together.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from engine.core.manifest import load_manifest
 from engine.core.runner import EXIT_FAILED, EXIT_OK, execute
@@ -70,9 +71,7 @@ def _run(
     monkeypatch: Any,
 ) -> tuple[int, dict[str, Any]]:
     source = _write_source(tmp_path)
-    monkeypatch.setenv(
-        "RULOOM_THRESHOLDS", str(_write_thresholds(tmp_path, tolerance))
-    )
+    monkeypatch.setenv("RULOOM_THRESHOLDS", str(_write_thresholds(tmp_path, tolerance)))
     queue = list(answers)
     client = FakeModel(plans)
     return execute(
@@ -91,13 +90,13 @@ def _packaged_triple(artifact: Path) -> tuple[dict[str, Any], int, int]:
     """The packaged (plan, seed, data-row) triple of a run directory."""
     packaged = json.loads((artifact / "plan.json").read_text(encoding="utf-8"))
     seed = int((artifact / "seed.txt").read_text(encoding="utf-8").strip())
-    data_rows = len((artifact / "data.csv").read_text(encoding="utf-8").splitlines()) - 1
+    data_rows = (
+        len((artifact / "data.csv").read_text(encoding="utf-8").splitlines()) - 1
+    )
     return packaged, seed, data_rows
 
 
-def test_best_attempt_packages_its_own_plan(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_best_attempt_packages_its_own_plan(tmp_path: Path, monkeypatch: Any) -> None:
     """Tied failing attempts package the first (best) attempt's triple."""
     code, result = _run(
         tmp_path,
@@ -135,9 +134,7 @@ def test_first_attempt_success_packages_its_own_plan(
     assert (artifact / "release.zip").is_file()
 
 
-def test_final_success_packages_the_last_plan(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_final_success_packages_the_last_plan(tmp_path: Path, monkeypatch: Any) -> None:
     """Fail-then-pass packages the final (best) attempt's triple."""
     code, result = _run(
         tmp_path,

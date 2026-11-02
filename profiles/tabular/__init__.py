@@ -1,8 +1,7 @@
 """Tabular profile: plain CSV shape statistics and synthesis."""
 
 from .analysis.calibration import Thresholds, load_thresholds
-from .validation.checks import CheckReport, CheckResult, run_checks
-from .validation.dataset import read_csv_bytes, to_csv_bytes
+from .analysis.statistics import TabularProfile, build_stats
 from .generation.generate import generate
 from .generation.plan import (
     PLAN_SCHEMA,
@@ -12,7 +11,8 @@ from .generation.plan import (
     validate_plan,
 )
 from .intake.reader import read_tabular_csv
-from .analysis.statistics import TabularProfile, build_stats
+from .validation.checks import CheckReport, CheckResult, run_checks
+from .validation.dataset import read_csv_bytes, to_csv_bytes
 
 __all__ = [
     "Thresholds",

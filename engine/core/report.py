@@ -18,7 +18,8 @@ status.
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from .verdict import applicable_required_ids
 
@@ -140,11 +141,7 @@ def render_evidence_report(evidence: Mapping[str, Any]) -> str:
                 req = "yes"
             elif entry.get("required") is True:
                 condition = entry.get("applicable_when")
-                req = (
-                    f"no ({condition} unmet)"
-                    if condition
-                    else "no (declaration)"
-                )
+                req = f"no ({condition} unmet)" if condition else "no (declaration)"
             else:
                 req = "no"
             lines.append(

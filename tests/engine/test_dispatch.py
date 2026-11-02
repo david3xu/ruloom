@@ -43,7 +43,10 @@ def _request(**over: Any) -> dict[str, Any]:
 
 
 def _submit(
-    store: DispatchStore, *, authority: str = "team-a", key: str | None = "k1",
+    store: DispatchStore,
+    *,
+    authority: str = "team-a",
+    key: str | None = "k1",
     **over: Any,
 ) -> dict[str, Any]:
     return store.submit(
@@ -88,13 +91,9 @@ def test_submit_validates_inputs(tmp_path: Path) -> None:
     with pytest.raises(DispatchError):
         store.submit(authority="team-a", request={}, now=T0)
     with pytest.raises(DispatchError):
-        store.submit(
-            authority="team-a", request=_request(), max_retries=-1, now=T0
-        )
+        store.submit(authority="team-a", request=_request(), max_retries=-1, now=T0)
     with pytest.raises(DispatchError):
-        store.submit(
-            authority="team-a", request=_request(), max_retries=True, now=T0
-        )
+        store.submit(authority="team-a", request=_request(), max_retries=True, now=T0)
     with pytest.raises(DispatchError):
         store.submit(
             authority="team-a",
@@ -138,9 +137,7 @@ def test_claim_live_lease_conflicts_expired_lease_redispatches(
     # Expiry consumes the retry budget, so the redispatch needs one
     # retry to spend (CP-03: expiry counts against max_retries).
     item = _submit(store, max_retries=1)
-    first = store.claim(
-        item["item_id"], worker="w1", lease_seconds=60.0, now=T0
-    )
+    first = store.claim(item["item_id"], worker="w1", lease_seconds=60.0, now=T0)
     with pytest.raises(ClaimConflict):
         store.claim(item["item_id"], worker="w2", lease_seconds=60.0, now=T0)
     second = store.claim(
@@ -174,9 +171,9 @@ def test_claim_validates_worker_and_bound(tmp_path: Path) -> None:
 def test_heartbeat_extends_live_lease_only(tmp_path: Path) -> None:
     store = _store(tmp_path)
     item = _submit(store)
-    lease = store.claim(
-        item["item_id"], worker="w1", lease_seconds=60.0, now=T0
-    )["lease"]
+    lease = store.claim(item["item_id"], worker="w1", lease_seconds=60.0, now=T0)[
+        "lease"
+    ]
     moved = store.heartbeat(
         item["item_id"],
         worker="w1",
@@ -214,9 +211,9 @@ def test_heartbeat_extends_live_lease_only(tmp_path: Path) -> None:
 def test_cancel_fences_off_inflight_worker(tmp_path: Path) -> None:
     store = _store(tmp_path)
     item = _submit(store)
-    lease = store.claim(
-        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease = store.claim(item["item_id"], worker="w1", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     store.cancel(item["item_id"], authority="team-a", now=T0 + 1.0)
     with pytest.raises(FencingError):
         store.report_success(
@@ -253,13 +250,15 @@ def test_cancel_shapes_queued_claimed_done_and_terminal(
 ) -> None:
     store = _store(tmp_path)
     queued = _submit(store, key="q")
-    assert store.cancel(queued["item_id"], authority="team-a", now=T0)[
-        "status"
-    ] == "cancelled"
+    assert (
+        store.cancel(queued["item_id"], authority="team-a", now=T0)["status"]
+        == "cancelled"
+    )
     # Cancelling twice is a no-op returning the record.
-    assert store.cancel(queued["item_id"], authority="team-a", now=T0)[
-        "status"
-    ] == "cancelled"
+    assert (
+        store.cancel(queued["item_id"], authority="team-a", now=T0)["status"]
+        == "cancelled"
+    )
 
     leased = _submit(store, key="l")
     store.claim(leased["item_id"], worker="w1", lease_seconds=600.0, now=T0)
@@ -268,9 +267,9 @@ def test_cancel_shapes_queued_claimed_done_and_terminal(
     assert done["lease"] is None
 
     terminal = _submit(store, key="t")
-    lease = store.claim(
-        terminal["item_id"], worker="w1", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease = store.claim(terminal["item_id"], worker="w1", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     store.report_success(
         terminal["item_id"],
         worker="w1",
@@ -319,22 +318,28 @@ def test_retry_exhaustion_rests_the_item(tmp_path: Path) -> None:
         max_retries=1,
         now=T0,
     )
-    lease = store.claim(
-        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease = store.claim(item["item_id"], worker="w1", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     requeued = store.report_failure(
-        item["item_id"], worker="w1", token=lease["token"],
-        error="boom", now=T0,
+        item["item_id"],
+        worker="w1",
+        token=lease["token"],
+        error="boom",
+        now=T0,
     )
     assert requeued["status"] == "queued"
     assert requeued["retries_used"] == 1
-    lease2 = store.claim(
-        item["item_id"], worker="w2", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease2 = store.claim(item["item_id"], worker="w2", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     assert lease2["token"] == lease["token"] + 1
     spent = store.report_failure(
-        item["item_id"], worker="w2", token=lease2["token"],
-        error="boom again", now=T0,
+        item["item_id"],
+        worker="w2",
+        token=lease2["token"],
+        error="boom again",
+        now=T0,
     )
     assert spent["status"] == "exhausted"
     assert spent["retries_used"] == 2
@@ -345,12 +350,15 @@ def test_retry_exhaustion_rests_the_item(tmp_path: Path) -> None:
 def test_zero_retries_exhausts_on_first_failure(tmp_path: Path) -> None:
     store = _store(tmp_path)
     item = _submit(store)
-    lease = store.claim(
-        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease = store.claim(item["item_id"], worker="w1", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     spent = store.report_failure(
-        item["item_id"], worker="w1", token=lease["token"],
-        error="boom", now=T0,
+        item["item_id"],
+        worker="w1",
+        token=lease["token"],
+        error="boom",
+        now=T0,
     )
     assert spent["status"] == "exhausted"
 
@@ -358,25 +366,31 @@ def test_zero_retries_exhausts_on_first_failure(tmp_path: Path) -> None:
 def test_report_success_binds_the_accepted_run(tmp_path: Path) -> None:
     store = _store(tmp_path)
     item = _submit(store)
-    lease = store.claim(
-        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease = store.claim(item["item_id"], worker="w1", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     accepted = {
         "run_id": "abc123",
         "artifact_sha256": "a" * 64,
         "zip_sha256": "b" * 64,
     }
     done = store.report_success(
-        item["item_id"], worker="w1", token=lease["token"],
-        accepted_run=accepted, now=T0,
+        item["item_id"],
+        worker="w1",
+        token=lease["token"],
+        accepted_run=accepted,
+        now=T0,
     )
     assert done["status"] == "succeeded"
     assert done["accepted_run"] == accepted
     assert done["lease"] is None
     with pytest.raises(DispatchError):
         store.report_success(
-            item["item_id"], worker="w1", token=lease["token"],
-            accepted_run={}, now=T0,
+            item["item_id"],
+            worker="w1",
+            token=lease["token"],
+            accepted_run={},
+            now=T0,
         )
 
 
@@ -391,9 +405,9 @@ def test_records_are_copies_and_list_filters(tmp_path: Path) -> None:
     assert [item["item_id"] for item in store.list_items()] == sorted(
         [first["item_id"], second["item_id"]]
     )
-    assert [
-        item["item_id"] for item in store.list_items(status="cancelled")
-    ] == [first["item_id"]]
+    assert [item["item_id"] for item in store.list_items(status="cancelled")] == [
+        first["item_id"]
+    ]
 
 
 def _explicit(
@@ -417,9 +431,9 @@ def test_explicit_id_resubmission_returns_the_immutable_record(
 ) -> None:
     store = _store(tmp_path)
     first = _explicit(store)
-    lease = store.claim(
-        first["item_id"], worker="w1", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease = store.claim(first["item_id"], worker="w1", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     store.report_success(
         first["item_id"],
         worker="w1",
@@ -518,8 +532,9 @@ def test_item_id_rejects_traversal_and_shape_variants(
         store.submit(authority="team-a", request=_request(), item_id=bad_id)
     _explicit(store, item_id="good-id")
     for call in (
-        lambda: store.claim(f"no-such-{bad_id}", worker="w1",
-                            lease_seconds=60.0, now=T0),
+        lambda: store.claim(
+            f"no-such-{bad_id}", worker="w1", lease_seconds=60.0, now=T0
+        ),
         lambda: store.get(bad_id),
         lambda: store.cancel(bad_id, authority="team-a", now=T0),
         lambda: store.recover(bad_id, now=T0),
@@ -528,17 +543,27 @@ def test_item_id_rejects_traversal_and_shape_variants(
             call()
     with pytest.raises(DispatchError):
         store.report_success(
-            bad_id, worker="w1", token=1,
-            accepted_run={"run_id": "r", "artifact_sha256": "a",
-                          "zip_sha256": "z"}, now=T0,
+            bad_id,
+            worker="w1",
+            token=1,
+            accepted_run={"run_id": "r", "artifact_sha256": "a", "zip_sha256": "z"},
+            now=T0,
         )
     with pytest.raises(DispatchError):
         store.report_failure(
-            bad_id, worker="w1", token=1, error="boom", now=T0,
+            bad_id,
+            worker="w1",
+            token=1,
+            error="boom",
+            now=T0,
         )
     with pytest.raises(DispatchError):
         store.heartbeat(
-            bad_id, worker="w1", token=1, lease_seconds=60.0, now=T0,
+            bad_id,
+            worker="w1",
+            token=1,
+            lease_seconds=60.0,
+            now=T0,
         )
     escaped = tmp_path / "out" / "dispatch" / "escaped.json"
     assert not escaped.exists()
@@ -553,16 +578,15 @@ def test_expiry_reclaim_consumes_budget_and_exhausts(tmp_path: Path) -> None:
 
     store = _store(tmp_path)
     item = store.submit(
-        authority="team-a", request=_request(), max_retries=0, now=T0,
+        authority="team-a",
+        request=_request(),
+        max_retries=0,
+        now=T0,
     )
-    first = store.claim(
-        item["item_id"], worker="w1", lease_seconds=60.0, now=T0
-    )
+    first = store.claim(item["item_id"], worker="w1", lease_seconds=60.0, now=T0)
     assert first["attempts"] == 1
     with pytest.raises(ClaimConflict):
-        store.claim(
-            item["item_id"], worker="w2", lease_seconds=60.0, now=T0 + 61.0
-        )
+        store.claim(item["item_id"], worker="w2", lease_seconds=60.0, now=T0 + 61.0)
     record = store.get(item["item_id"])
     assert record["status"] == "exhausted"
     assert record["retries_used"] == 1
@@ -580,7 +604,10 @@ def test_recover_sweep_consumes_budget_and_exhausts(tmp_path: Path) -> None:
 
     store = _store(tmp_path)
     item = store.submit(
-        authority="team-a", request=_request(), max_retries=0, now=T0,
+        authority="team-a",
+        request=_request(),
+        max_retries=0,
+        now=T0,
     )
     store.claim(item["item_id"], worker="gone", lease_seconds=60.0, now=T0)
     recovered = store.recover(item["item_id"], now=T0 + 61.0)
@@ -598,13 +625,14 @@ def test_repeated_expiry_cycles_cannot_requeue_forever(tmp_path: Path) -> None:
 
     store = _store(tmp_path)
     item = store.submit(
-        authority="team-a", request=_request(), max_retries=2, now=T0,
+        authority="team-a",
+        request=_request(),
+        max_retries=2,
+        now=T0,
     )
     base = T0
     # Cycle 1: claim then expire via reclaim (spends 1, relaunches).
-    first = store.claim(
-        item["item_id"], worker="w1", lease_seconds=60.0, now=base
-    )
+    first = store.claim(item["item_id"], worker="w1", lease_seconds=60.0, now=base)
     assert first["attempts"] == 1
     second = store.claim(
         item["item_id"], worker="w2", lease_seconds=60.0, now=base + 61.0
@@ -628,15 +656,16 @@ def test_repeated_expiry_cycles_cannot_requeue_forever(tmp_path: Path) -> None:
     assert exhausted["error"] == EXHAUSTED_BY_EXPIRY
     # A fourth cycle never requeues: the item is terminal.
     with pytest.raises(ClaimConflict):
-        store.claim(
-            item["item_id"], worker="w4", lease_seconds=60.0, now=base + 244.0
-        )
+        store.claim(item["item_id"], worker="w4", lease_seconds=60.0, now=base + 244.0)
     assert store.get(item["item_id"])["status"] == "exhausted"
     # The expired worker's token stays fenced off after exhaustion.
     with pytest.raises(FencingError):
         store.report_failure(
-            item["item_id"], worker="w3", token=third["lease"]["token"],
-            error="late", now=base + 244.0,
+            item["item_id"],
+            worker="w3",
+            token=third["lease"]["token"],
+            error="late",
+            now=base + 244.0,
         )
 
 
@@ -644,22 +673,28 @@ def test_attempts_persisted_separately_from_failures(tmp_path: Path) -> None:
     """CP-03 A06: launches count in attempts; reports spend retries_used."""
     store = _store(tmp_path)
     item = store.submit(
-        authority="team-a", request=_request(), max_retries=2, now=T0,
+        authority="team-a",
+        request=_request(),
+        max_retries=2,
+        now=T0,
     )
     assert store.get(item["item_id"])["attempts"] == 0
-    lease = store.claim(
-        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease = store.claim(item["item_id"], worker="w1", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     assert store.get(item["item_id"])["attempts"] == 1
     requeued = store.report_failure(
-        item["item_id"], worker="w1", token=lease["token"],
-        error="boom", now=T0,
+        item["item_id"],
+        worker="w1",
+        token=lease["token"],
+        error="boom",
+        now=T0,
     )
     assert requeued["attempts"] == 1
     assert requeued["retries_used"] == 1
-    lease2 = store.claim(
-        item["item_id"], worker="w2", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease2 = store.claim(item["item_id"], worker="w2", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     assert lease2["token"] == lease["token"] + 1
     record = store.get(item["item_id"])
     assert record["attempts"] == 2
@@ -725,9 +760,7 @@ def test_submit_persists_canonical_request_identity(tmp_path: Path) -> None:
         "spec_digest": "b" * 64,
     }
     assert item["request"] == pinned
-    assert store.get(item["item_id"])["request_identity"] == item[
-        "request_identity"
-    ]
+    assert store.get(item["item_id"])["request_identity"] == item["request_identity"]
 
 
 def test_submit_unpinned_request_carries_empty_identity(
@@ -753,12 +786,18 @@ def test_keyed_retry_identical_returns_same_item_unchanged(
     """
     store = _store(tmp_path)
     first = store.submit(
-        authority="team-a", request=_request(), idempotency_key="k", now=T0,
+        authority="team-a",
+        request=_request(),
+        idempotency_key="k",
+        now=T0,
     )
     store.claim(first["item_id"], worker="w1", lease_seconds=600.0, now=T0)
     before = store.get(first["item_id"])
     second = store.submit(
-        authority="team-a", request=_request(), idempotency_key="k", now=T0,
+        authority="team-a",
+        request=_request(),
+        idempotency_key="k",
+        now=T0,
     )
     assert second == before
     assert second["history"] == before["history"]
@@ -777,7 +816,10 @@ def test_keyed_retry_changed_request_refuses(tmp_path: Path) -> None:
     """
     store = _store(tmp_path)
     first = store.submit(
-        authority="team-a", request=_request(), idempotency_key="k", now=T0,
+        authority="team-a",
+        request=_request(),
+        idempotency_key="k",
+        now=T0,
     )
     with pytest.raises(DispatchError):
         store.submit(
@@ -813,7 +855,10 @@ def test_keyed_retry_matches_on_canonical_identity_only(
     store = _store(tmp_path)
     pinned = _request(source_sha256="a" * 64, spec_digest="b" * 64)
     first = store.submit(
-        authority="team-a", request=pinned, idempotency_key="k", now=T0,
+        authority="team-a",
+        request=pinned,
+        idempotency_key="k",
+        now=T0,
     )
     second = store.submit(
         authority="team-a",
@@ -843,7 +888,9 @@ def test_unkeyed_resubmission_matching_foreign_item_refuses(
     """
     store = _store(tmp_path)
     foreign = store.submit(
-        authority="team-b", request=_request(), idempotency_key="bk",
+        authority="team-b",
+        request=_request(),
+        idempotency_key="bk",
         now=T0,
     )
     with pytest.raises(AuthorityDenied):

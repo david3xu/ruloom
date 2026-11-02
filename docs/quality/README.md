@@ -418,6 +418,28 @@ evidence rather than product assertions. Finding-to-checker map: C01
 bytes move: the PDD446 seed-42 golden artifact `55eb1c22e212…` is
 untouched (no run-path or packaging file changed).
 
+GP-03 closed the code-hygiene slice (plan gap G7). `ruff check .` and
+`ruff format --check .` run under the pinned `[tool.ruff]` contract in
+`pyproject.toml` (ruff 0.17.3; select E/F/I/UP/W with line length owned
+by the formatter and the two hand-edit-only rules deferred as documented
+there), enforced in CI beside the suite and the gate and by
+`Q-CODE-HYGIENE` (`tests/test_code_hygiene.py`, no skip-as-pass: a
+missing ruff binary fails closed with install instructions -- CI
+installs the pinned ruff beside the dev dependencies, a local venv
+gains it without touching the repo). The one mechanical
+`ruff check --fix` + `ruff format` pass touched only imports, aliases,
+and layout; the full suite caught the single real interaction (the
+`test_stdlib_transport_only` pin now names `collections` instead of the
+removed unused `socket`, stdlib-only intent unchanged).
+`tests/test_wheel_cli.py` builds a real wheel with the stdlib only,
+installs it into an isolated dir, and runs `ruloom --help` plus one
+fake-model accept run from outside the repo with all three package
+locations asserted under the install dir. The untracked `uv.lock`
+stays untouched by standing owner order (`docs/decisions.md`).
+`Q-CODE-HYGIENE` is enforced. The full suite, the gate, and the
+clean-archive check pass, and the golden PDD446 bytes reproduce
+unchanged.
+
 | Rule | Status | Checker or rationale |
 | --- | --- | --- |
 | `Q-STRUCT-FEATURE-MAP` | enforced | `scripts/force_pass.py:check_feature_map` -- the catalogue names every feature module (16 records, 37 modules), live in the gate |
@@ -431,6 +453,7 @@ untouched (no run-path or packaging file changed).
 | `Q-GOV-CURRENT-LEASE` | planned | Runtime-owned: task leases live in the coordinator. The engine dispatch leases in `engine/core/dispatch.py` (`Q-ENGINE-DISPATCH`) are the analogous local mechanism, stated as analogy rather than conflated proof |
 | `Q-GOV-CHILD-CAPABILITY` | enforced | `tests/models/test_child_capability.py` -- a real spawned fixture child reports no secret, no `RULOOM_*` key, and no MCP/tool-routing config, cwd pinned with writes contained, real argv naming no peer-dispatch flags (platform-injected locale keys named and audited) |
 | `Q-GOV-BRANCH-PROTECTION` | enforced | `tests/governance/test_branch_protection.py` -- CI exposes the `gate` job running pytest plus `force_pass.py` on push and pull_request; the recorded receipt binds the live ruleset shape, GitHub-side settings stay receipt evidence |
+| `Q-CODE-HYGIENE` | enforced | `tests/test_code_hygiene.py` -- the pinned ruff contract holds on the whole tree (`ruff check .` plus `ruff format --check .`, the same commands CI runs); a planted dirty file fails and a missing ruff fails closed, never skips |
 
 Evidence: `tests/test_aggregate_gate.py` (18 canary tests, including
 module-local in-gate execution and fail-closed raising checks),

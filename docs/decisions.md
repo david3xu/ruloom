@@ -1,9 +1,10 @@
 # Decision log: implicitly settled decisions
 
-Nine product decisions that were settled in code without a recorded
-decision note. Each entry names the date, the code that settles it,
-and the rationale where the code states one; where the code states no
-rationale, the entry names the introducing commit
+Ten product decisions: nine settled in code without a recorded decision
+note (entries 1-9), plus one standing owner constraint recorded for the
+gap programme (entry 10). Each entry names the date, the code that
+settles it, and the rationale where the code states one; where the code
+states no rationale, the entry names the introducing commit
 (decided-by-implementation). Verified against the tree on 2026-11-02.
 
 1. Attempts bind the manifest digest and source hash. `engine/core/records.py:117`
@@ -89,3 +90,14 @@ rationale, the entry names the introducing commit
    `models/meta_cli.py:199`. Decided-by-implementation: Glimmer text
    seat 2026-11-01 by 457b49d (Loop 9), vision seat 2026-11-01 by
    2db9a2b (Loop 8).
+
+10. The untracked `uv.lock` stays untouched until the owner orders
+    otherwise. Standing owner constraint recorded for the gap programme
+    (GP-03 ledger `lifecycle-gp03`, 2026-11-02): no worker adds,
+    deletes, modifies, or adopts the file in any slice. GP-03 therefore
+    pins `ruff==0.17.3` only where CI installs dev dependencies
+    (`.github/workflows/ci.yml`) and documents the local provision as
+    environment-only (a venv install, never the repo) instead of adding
+    a dev dependency that would require re-locking; the Q-CODE checker
+    (`tests/test_code_hygiene.py`) fails closed with those instructions
+    when ruff is absent. Revisit only on explicit owner order.

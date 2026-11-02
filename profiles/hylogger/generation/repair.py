@@ -13,19 +13,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from models.base import StructuredModel, Usage
 
+from ..analysis.calibration import Thresholds
+from ..analysis.statistics import Profile
+from ..intake.reader import Sample
+from ..validation.checks import CheckReport, CheckResult
 from ..validation.checks import run_checks as _run_checks
 from ..validation.dataset import read as _read_artifact
-from .generate import generate as _generate_artifact
 from . import plan as plan_module
-from ..analysis.calibration import Thresholds
-from ..validation.checks import CheckReport, CheckResult
-from ..intake.reader import Sample
-from ..analysis.statistics import Profile
+from .generate import generate as _generate_artifact
 
 
 @dataclass(frozen=True)
@@ -123,15 +124,11 @@ def repair(
     the failed measured properties plus ``supported_options``.
     """
     if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
-        raise TypeError(
-            f"max_attempts must be an integer, got {max_attempts!r}"
-        )
+        raise TypeError(f"max_attempts must be an integer, got {max_attempts!r}")
     if max_attempts < 1:
         raise ValueError(f"max_attempts must be >= 1, got {max_attempts!r}")
     if not isinstance(profile, Profile):
-        raise TypeError(
-            f"profile must be a Profile, got {type(profile).__name__}"
-        )
+        raise TypeError(f"profile must be a Profile, got {type(profile).__name__}")
     current_plan = plan_module.validate_plan(
         initial_plan, allowed_strategies=allowed_strategies
     )

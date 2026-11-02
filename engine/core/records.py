@@ -13,9 +13,10 @@ engine never interprets what a measurement means.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Mapping
+from datetime import UTC, datetime
+from typing import Any
 
 
 def _jsonable(value: Any) -> Any:
@@ -34,7 +35,7 @@ def _jsonable(value: Any) -> Any:
 
 def utc_now_iso() -> str:
     """Current UTC time as an ISO-8601 string."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass(frozen=True)
@@ -177,7 +178,7 @@ class Decision:
     decided_by: str
     at: str = ""
 
-    def with_time(self) -> "Decision":
+    def with_time(self) -> Decision:
         """Return a copy stamped with the current UTC time."""
         if self.at:
             return self

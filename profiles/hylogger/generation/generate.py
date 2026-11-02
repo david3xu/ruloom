@@ -27,11 +27,12 @@ Method, all fitted from Profile aggregates:
 from __future__ import annotations
 
 import random
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
-from ..validation.dataset import to_csv_bytes
-from ..intake.reader import Sample
 from ..analysis.statistics import Profile
+from ..intake.reader import Sample
+from ..validation.dataset import to_csv_bytes
 
 
 def _plan_seed_n_rows(plan: Mapping[str, Any]) -> tuple[int, int]:
@@ -117,14 +118,12 @@ def _pick_tir(
     targets = transitions.get(last, {}) if last is not None else {}
     if targets:
         names = sorted(targets)
-        return _weighted_choice(
-            rng, names, [float(targets[n]) for n in names])
+        return _weighted_choice(rng, names, [float(targets[n]) for n in names])
     if joint_first and swir_group is not None:
         partners = joint_counts.get(swir_group, {})
         if partners:
             names = sorted(partners)
-            return _weighted_choice(
-                rng, names, [float(partners[n]) for n in names])
+            return _weighted_choice(rng, names, [float(partners[n]) for n in names])
     return _weighted_choice(rng, labels, weights)
 
 
@@ -209,25 +208,38 @@ def generate_samples(profile: Profile, seed: int, n_rows: int) -> list[Sample]:
     last_tir: str | None = None
     for i in range(n_rows):
         if not flags[i]:
-            samples.append(Sample(depth_m=depths[i], valid=False,
-                                  swir_group=None, tir_group=None))
+            samples.append(
+                Sample(depth_m=depths[i], valid=False, swir_group=None, tir_group=None)
+            )
             continue
         pattern = _weighted_choice(rng, list(patterns), pattern_weights)
         swir_group: str | None = None
         tir_group: str | None = None
         if pattern in ("both", "swir_only"):
-            swir_group = pick_channel(swir_labels, swir_weights,
-                                      swir_transitions, last_swir)
+            swir_group = pick_channel(
+                swir_labels, swir_weights, swir_transitions, last_swir
+            )
             last_swir = swir_group
         if pattern in ("both", "tir_only"):
             tir_group = _pick_tir(
-                rng, tir_labels, tir_weights, tir_transitions,
-                joint_counts, swir_group, last_tir,
+                rng,
+                tir_labels,
+                tir_weights,
+                tir_transitions,
+                joint_counts,
+                swir_group,
+                last_tir,
                 joint_first=(pattern == "both"),
             )
             last_tir = tir_group
-        samples.append(Sample(depth_m=depths[i], valid=True,
-                              swir_group=swir_group, tir_group=tir_group))
+        samples.append(
+            Sample(
+                depth_m=depths[i],
+                valid=True,
+                swir_group=swir_group,
+                tir_group=tir_group,
+            )
+        )
     return samples
 
 

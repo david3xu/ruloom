@@ -58,9 +58,7 @@ def _files(payload: bytes | None = None) -> dict[str, bytes]:
 def _seal(tmp_path: Path, files: dict[str, bytes], name: str) -> Path:
     """Write an explicit ZIP (bypasses the producer self-check)."""
     ordered = {key: files[key] for key in sorted(files)}
-    payload = ordered | {
-        CHECKSUMS_NAME: build_checksums(ordered).encode("utf-8")
-    }
+    payload = ordered | {CHECKSUMS_NAME: build_checksums(ordered).encode("utf-8")}
     path = tmp_path / name
     path.write_bytes(build_zip_bytes(payload))
     return path
@@ -84,9 +82,7 @@ def test_valid_release_verifies(tmp_path: Path) -> None:
     outcome = verify_release(zip_path, manifest=list(_files()))
     assert outcome["artifact_sha256"] == hashlib.sha256(_payload()).hexdigest()
     assert outcome["members"] == sorted(_files())
-    assert outcome["zip_sha256"] == hashlib.sha256(
-        zip_path.read_bytes()
-    ).hexdigest()
+    assert outcome["zip_sha256"] == hashlib.sha256(zip_path.read_bytes()).hexdigest()
 
 
 def test_byte_flip_fails(tmp_path: Path) -> None:
@@ -116,9 +112,7 @@ def test_missing_member_fails(tmp_path: Path) -> None:
     remaining = {k: v for k, v in files.items() if k != "seed.txt"}
     ordered = {key: remaining[key] for key in sorted(remaining)}
     # The checksums still attest seed.txt, but the entry is gone.
-    payload = ordered | {
-        CHECKSUMS_NAME: build_checksums(files).encode("utf-8")
-    }
+    payload = ordered | {CHECKSUMS_NAME: build_checksums(files).encode("utf-8")}
     path = tmp_path / "t.zip"
     path.write_bytes(build_zip_bytes(payload))
     with pytest.raises(ReleaseVerificationError):
@@ -135,9 +129,7 @@ def test_missing_member_with_recut_checksums_fails_manifest_check(
     """
     remaining = {k: v for k, v in _files().items() if k != "seed.txt"}
     ordered = {key: remaining[key] for key in sorted(remaining)}
-    payload = ordered | {
-        CHECKSUMS_NAME: build_checksums(ordered).encode("utf-8")
-    }
+    payload = ordered | {CHECKSUMS_NAME: build_checksums(ordered).encode("utf-8")}
     path = tmp_path / "t.zip"
     path.write_bytes(build_zip_bytes(payload))
     with pytest.raises(ReleaseVerificationError):
@@ -165,8 +157,7 @@ def test_traversal_entry_fails(tmp_path: Path) -> None:
     files["../evil.txt"] = b"escape"
     path = _seal_raw(
         tmp_path,
-        files
-        | {CHECKSUMS_NAME: build_checksums(files).encode("utf-8")},
+        files | {CHECKSUMS_NAME: build_checksums(files).encode("utf-8")},
         "t.zip",
     )
     with pytest.raises(ReleaseVerificationError):
@@ -180,9 +171,7 @@ def test_absolute_entry_fails(tmp_path: Path) -> None:
         for name, data in files.items():
             archive.writestr(name, data)
         archive.writestr("/abs.txt", b"absolute")
-        archive.writestr(
-            CHECKSUMS_NAME, build_checksums(files).encode("utf-8")
-        )
+        archive.writestr(CHECKSUMS_NAME, build_checksums(files).encode("utf-8"))
     with pytest.raises(ReleaseVerificationError):
         verify_release(path)
 
@@ -240,8 +229,11 @@ def test_stale_manifest_hash_refuses_altered_member(tmp_path: Path) -> None:
     report = _report(files["data.csv"])
     report["verdict"] = "fail"
     report["results"] = [
-        {"name": "audit_counterexample", "status": "fail",
-         "detail": "changed after acceptance"}
+        {
+            "name": "audit_counterexample",
+            "status": "fail",
+            "detail": "changed after acceptance",
+        }
     ]
     files["validation-report.json"] = (
         json.dumps(report, indent=2, sort_keys=True).encode() + b"\n"
@@ -270,8 +262,11 @@ def test_non_pass_verdict_refuses(tmp_path: Path) -> None:
     report = _report(files["data.csv"])
     report["verdict"] = "fail"
     report["results"] = [
-        {"name": "audit_counterexample", "status": "fail",
-         "detail": "changed after acceptance"}
+        {
+            "name": "audit_counterexample",
+            "status": "fail",
+            "detail": "changed after acceptance",
+        }
     ]
     files["validation-report.json"] = (
         json.dumps(report, indent=2, sort_keys=True).encode() + b"\n"

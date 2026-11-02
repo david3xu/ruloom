@@ -54,7 +54,9 @@ def test_base_fixture_passes() -> None:
     """Control: the uncorrupted fixture passes, so failures below are real."""
     base = _base()
     report = run_checks(
-        base, THRESHOLDS, source_samples=base,
+        base,
+        THRESHOLDS,
+        source_samples=base,
         expected_geometry=_expected(),
     )
     assert report.verdict == "pass"
@@ -65,7 +67,9 @@ def test_run_fixture_passes() -> None:
     """Control: the block-structured run fixture passes uncorrupted."""
     base = _run_fixture()
     report = run_checks(
-        base, THRESHOLDS, source_samples=base,
+        base,
+        THRESHOLDS,
+        source_samples=base,
         expected_geometry=_expected(),
     )
     assert report.verdict == "pass"
@@ -95,7 +99,9 @@ def test_truncated_row_count_must_not_pass() -> None:
     """Fewer rows than the requested plan count must not pass."""
     base = _base()
     report = run_checks(
-        base[:100], THRESHOLDS, source_samples=base,
+        base[:100],
+        THRESHOLDS,
+        source_samples=base,
         expected_geometry=_expected(),
     )
     assert report.verdict == "fail"
@@ -107,7 +113,9 @@ def test_shifted_start_must_not_pass() -> None:
     base = _base()
     moved = [replace(s, depth_m=s.depth_m + 5.0) for s in base]
     report = run_checks(
-        moved, THRESHOLDS, source_samples=base,
+        moved,
+        THRESHOLDS,
+        source_samples=base,
         expected_geometry=_expected(),
     )
     assert report.verdict == "fail"
@@ -117,11 +125,11 @@ def test_shifted_start_must_not_pass() -> None:
 def test_stretched_extent_must_not_pass() -> None:
     """An end depth beyond the requested extent must not pass."""
     base = _base()
-    stretched = [
-        replace(s, depth_m=s.depth_m * 2.0) for s in base
-    ]
+    stretched = [replace(s, depth_m=s.depth_m * 2.0) for s in base]
     report = run_checks(
-        stretched, THRESHOLDS, source_samples=base,
+        stretched,
+        THRESHOLDS,
+        source_samples=base,
         expected_geometry=_expected(),
     )
     assert report.verdict == "fail"
@@ -141,7 +149,9 @@ def test_uniform_depth_contraction_must_not_pass() -> None:
     contracted = [replace(s, depth_m=s.depth_m * 0.7) for s in base]
     assert contracted[0].depth_m == 0.0
     report = run_checks(
-        contracted, THRESHOLDS, source_samples=base,
+        contracted,
+        THRESHOLDS,
+        source_samples=base,
         expected_geometry=_expected(),
     )
     assert report.verdict == "fail"
@@ -209,11 +219,12 @@ def test_tir_run_derangement_must_not_pass() -> None:
     assert shuffled != labels
     mapping = dict(zip(answered, shuffled))
     broken = [
-        replace(s, tir_group=mapping.get(i, s.tir_group))
-        for i, s in enumerate(base)
+        replace(s, tir_group=mapping.get(i, s.tir_group)) for i, s in enumerate(base)
     ]
     report = run_checks(
-        broken, THRESHOLDS, source_samples=base,
+        broken,
+        THRESHOLDS,
+        source_samples=base,
         expected_geometry=_expected(),
     )
     assert report.verdict == "fail"

@@ -5,13 +5,13 @@ import hashlib
 import pytest
 
 from profiles.hylogger.analysis.calibration import Band, Thresholds
+from profiles.hylogger.intake.reader import Sample
 from profiles.hylogger.validation.checks import (
     band_position,
     check_artifact_csv,
     run_checks,
 )
 from profiles.hylogger.validation.dataset import to_csv_bytes
-from profiles.hylogger.intake.reader import Sample
 
 
 def _thresholds() -> Thresholds:
@@ -32,31 +32,43 @@ def _thresholds() -> Thresholds:
 
 def _base() -> list[Sample]:
     return [
-        Sample(depth_m=10.0 + i * 0.0078, valid=(i != 3),
-               swir_group="A" if i % 2 == 0 else "B", tir_group="X")
+        Sample(
+            depth_m=10.0 + i * 0.0078,
+            valid=(i != 3),
+            swir_group="A" if i % 2 == 0 else "B",
+            tir_group="X",
+        )
         for i in range(8)
     ]
 
 
 def test_clean_artifact_passes() -> None:
     report = run_checks(
-        _base(), _thresholds(), source_samples=_base(),
+        _base(),
+        _thresholds(),
+        source_samples=_base(),
         expected_geometry={"n_rows": 8, "start_m": 10.0, "step_m": 0.0078},
-        artifact_name="base")
+        artifact_name="base",
+    )
     assert report.verdict == "pass"
     assert report.failed == []
     assert report.skipped == ["swir_answer_rate"]  # vacuous band
     assert len(report.artifact_sha256) == 64
     for name in (
-        "depth_finite", "depth_nonnegative", "invalid_label_rate",
-        "swir_answer_fidelity", "tir_answer_fidelity",
-        "swir_source_vocabulary", "tir_source_vocabulary",
-        "swir_label_richness", "tir_label_richness",
-        "row_count_match", "depth_start_match",
+        "depth_finite",
+        "depth_nonnegative",
+        "invalid_label_rate",
+        "swir_answer_fidelity",
+        "tir_answer_fidelity",
+        "swir_source_vocabulary",
+        "tir_source_vocabulary",
+        "swir_label_richness",
+        "tir_label_richness",
+        "row_count_match",
+        "depth_start_match",
         "depth_end_within_requested",
     ):
-        assert next(
-            r for r in report.results if r.name == name).status == "pass"
+        assert next(r for r in report.results if r.name == name).status == "pass"
 
 
 def test_skip_is_not_pass() -> None:
@@ -98,8 +110,9 @@ def test_schema_bad_cells_fail() -> None:
 
 
 def test_schema_good_csv_passes_schema() -> None:
-    report = check_artifact_csv(to_csv_bytes(_base()), _thresholds(),
-                                source_samples=_base())
+    report = check_artifact_csv(
+        to_csv_bytes(_base()), _thresholds(), source_samples=_base()
+    )
     assert report.results[0].name == "csv_schema"
     assert report.results[0].status == "pass"
     assert report.verdict == "pass"
@@ -108,8 +121,12 @@ def test_schema_good_csv_passes_schema() -> None:
 
 def test_wrong_spacing_trips_spacing_median() -> None:
     wide = [
-        Sample(depth_m=s.depth_m * 10, valid=s.valid,
-               swir_group=s.swir_group, tir_group=s.tir_group)
+        Sample(
+            depth_m=s.depth_m * 10,
+            valid=s.valid,
+            swir_group=s.swir_group,
+            tir_group=s.tir_group,
+        )
         for s in _base()
     ]
     report = run_checks(wide, _thresholds(), source_samples=_base())
@@ -119,8 +136,9 @@ def test_wrong_spacing_trips_spacing_median() -> None:
 
 def test_invented_group_trips_vocabulary() -> None:
     bad = list(_base())
-    bad[1] = Sample(depth_m=bad[1].depth_m, valid=True,
-                    swir_group="NOT_A_REAL_GROUP", tir_group="X")
+    bad[1] = Sample(
+        depth_m=bad[1].depth_m, valid=True, swir_group="NOT_A_REAL_GROUP", tir_group="X"
+    )
     report = run_checks(bad, _thresholds(), source_samples=_base())
     assert report.verdict == "fail"
     assert "swir_vocabulary" in report.failed
@@ -128,8 +146,9 @@ def test_invented_group_trips_vocabulary() -> None:
 
 def test_repeated_valid_trips_masked_out() -> None:
     bad = [
-        Sample(depth_m=10.0, valid=s.valid,
-               swir_group=s.swir_group, tir_group=s.tir_group)
+        Sample(
+            depth_m=10.0, valid=s.valid, swir_group=s.swir_group, tir_group=s.tir_group
+        )
         for s in _base()
     ]
     report = run_checks(bad, _thresholds(), source_samples=_base())
@@ -140,7 +159,10 @@ def test_repeated_valid_trips_masked_out() -> None:
 def test_fidelity_skip_without_source() -> None:
     report = run_checks(_base(), _thresholds())
     assert {r.name for r in report.results if r.status == "skip"} >= {
-        "swir_answer_rate", "swir_fidelity", "tir_fidelity"}
+        "swir_answer_rate",
+        "swir_fidelity",
+        "tir_fidelity",
+    }
     assert report.verdict == "pass"
 
 
@@ -151,27 +173,31 @@ def test_rp05_checks_skip_without_source_or_plan() -> None:
     assert skipped >= {
         "swir_answer_rate",
         "invalid_label_rate",
-        "swir_answer_fidelity", "tir_answer_fidelity",
-        "swir_source_vocabulary", "tir_source_vocabulary",
-        "swir_label_richness", "tir_label_richness",
-        "swir_fidelity", "tir_fidelity",
-        "row_count_match", "depth_start_match",
+        "swir_answer_fidelity",
+        "tir_answer_fidelity",
+        "swir_source_vocabulary",
+        "tir_source_vocabulary",
+        "swir_label_richness",
+        "tir_label_richness",
+        "swir_fidelity",
+        "tir_fidelity",
+        "row_count_match",
+        "depth_start_match",
         "depth_end_within_requested",
     }
     # Absolute depth checks need no source and still judge.
-    assert next(
-        r for r in report.results if r.name == "depth_finite").status == "pass"
-    assert next(
-        r for r in report.results if r.name == "depth_nonnegative").status == "pass"
+    assert next(r for r in report.results if r.name == "depth_finite").status == "pass"
+    assert (
+        next(r for r in report.results if r.name == "depth_nonnegative").status
+        == "pass"
+    )
     assert report.verdict == "pass"
 
 
 def test_non_finite_and_negative_depths_fail() -> None:
     bad = list(_base())
-    bad[0] = Sample(depth_m=float("inf"), valid=True,
-                    swir_group="A", tir_group="X")
-    bad[1] = Sample(depth_m=-3.25, valid=True,
-                    swir_group="B", tir_group="X")
+    bad[0] = Sample(depth_m=float("inf"), valid=True, swir_group="A", tir_group="X")
+    bad[1] = Sample(depth_m=-3.25, valid=True, swir_group="B", tir_group="X")
     report = run_checks(bad, _thresholds(), source_samples=_base())
     assert report.verdict == "fail"
     assert "depth_finite" in report.failed
@@ -181,13 +207,11 @@ def test_non_finite_and_negative_depths_fail() -> None:
 def test_vacuous_fidelity_tolerance_skips_never_passes() -> None:
     """A split-half tolerance of 1.0 is unsupported, not a fidelity pass."""
     first = [
-        Sample(depth_m=1.0 + i * 0.005, valid=True,
-               swir_group="A", tir_group="X")
+        Sample(depth_m=1.0 + i * 0.005, valid=True, swir_group="A", tir_group="X")
         for i in range(4)
     ]
     second = [
-        Sample(depth_m=2.0 + i * 0.005, valid=True,
-               swir_group="B", tir_group="X")
+        Sample(depth_m=2.0 + i * 0.005, valid=True, swir_group="B", tir_group="X")
         for i in range(4)
     ]
     source = first + second
@@ -206,24 +230,25 @@ def test_source_reference_path_matches_samples_path() -> None:
     via_ref = run_checks(_base(), _thresholds(), source_reference=reference)
     assert via_ref.verdict == direct.verdict == "pass"
     assert [(r.name, r.status) for r in via_ref.results] == [
-        (r.name, r.status) for r in direct.results]
+        (r.name, r.status) for r in direct.results
+    ]
 
 
 def test_invalid_label_rate_is_source_relative() -> None:
     """Invalid labelling fails only above the source hole's own rate."""
     source = [
-        Sample(depth_m=10.0 + i * 0.0078, valid=(i != 3),
-               swir_group=None, tir_group=None)
+        Sample(
+            depth_m=10.0 + i * 0.0078, valid=(i != 3), swir_group=None, tir_group=None
+        )
         for i in range(8)
     ]
     assert "invalid_label_rate" not in [
-        r.name for r in run_checks(
-            source, _thresholds(), source_samples=source).results
+        r.name
+        for r in run_checks(source, _thresholds(), source_samples=source).results
         if r.status == "fail"
     ]
     bad = list(source)
-    bad[3] = Sample(depth_m=bad[3].depth_m, valid=False,
-                    swir_group="A", tir_group="X")
+    bad[3] = Sample(depth_m=bad[3].depth_m, valid=False, swir_group="A", tir_group="X")
     report = run_checks(bad, _thresholds(), source_samples=source)
     assert report.verdict == "fail"
     assert "invalid_label_rate" in report.failed
@@ -231,14 +256,16 @@ def test_invalid_label_rate_is_source_relative() -> None:
 
 def test_foreign_label_and_collapse_fail() -> None:
     bad = list(_base())
-    bad[1] = Sample(depth_m=bad[1].depth_m, valid=True,
-                    swir_group="ZZZ", tir_group="X")
+    bad[1] = Sample(depth_m=bad[1].depth_m, valid=True, swir_group="ZZZ", tir_group="X")
     report = run_checks(bad, _thresholds(), source_samples=_base())
     assert "swir_source_vocabulary" in report.failed
     collapsed = [
-        Sample(depth_m=s.depth_m, valid=s.valid,
-               swir_group=("A" if s.swir_group else None),
-               tir_group=s.tir_group)
+        Sample(
+            depth_m=s.depth_m,
+            valid=s.valid,
+            swir_group=("A" if s.swir_group else None),
+            tir_group=s.tir_group,
+        )
         for s in _base()
     ]
     report = run_checks(collapsed, _thresholds(), source_samples=_base())
@@ -248,32 +275,44 @@ def test_foreign_label_and_collapse_fail() -> None:
 
 def test_geometry_binding_variants() -> None:
     expected = {"n_rows": 8, "start_m": 10.0, "step_m": 0.0078}
-    report = run_checks(_base(), _thresholds(), source_samples=_base(),
-                        expected_geometry=expected)
+    report = run_checks(
+        _base(), _thresholds(), source_samples=_base(), expected_geometry=expected
+    )
     assert report.verdict == "pass"
-    short = run_checks(_base()[:4], _thresholds(), source_samples=_base(),
-                       expected_geometry=expected)
+    short = run_checks(
+        _base()[:4], _thresholds(), source_samples=_base(), expected_geometry=expected
+    )
     assert "row_count_match" in short.failed
     moved = [
-        Sample(depth_m=s.depth_m + 1.0, valid=s.valid,
-               swir_group=s.swir_group, tir_group=s.tir_group)
+        Sample(
+            depth_m=s.depth_m + 1.0,
+            valid=s.valid,
+            swir_group=s.swir_group,
+            tir_group=s.tir_group,
+        )
         for s in _base()
     ]
-    report = run_checks(moved, _thresholds(), source_samples=_base(),
-                        expected_geometry=expected)
+    report = run_checks(
+        moved, _thresholds(), source_samples=_base(), expected_geometry=expected
+    )
     assert "depth_start_match" in report.failed
     # Malformed plan context degrades to skip, never to a pass-or-fail claim.
-    report = run_checks(_base(), _thresholds(), source_samples=_base(),
-                        expected_geometry={"n_rows": "eight"})
+    report = run_checks(
+        _base(),
+        _thresholds(),
+        source_samples=_base(),
+        expected_geometry={"n_rows": "eight"},
+    )
     assert {r.name for r in report.results if r.status == "skip"} >= {
-        "row_count_match", "depth_start_match",
-        "depth_end_within_requested"}
+        "row_count_match",
+        "depth_start_match",
+        "depth_end_within_requested",
+    }
 
 
 def test_fidelity_skip_when_source_cannot_establish() -> None:
     source = [
-        Sample(depth_m=10.0 + i * 0.0078, valid=True,
-               swir_group=None, tir_group="X")
+        Sample(depth_m=10.0 + i * 0.0078, valid=True, swir_group=None, tir_group="X")
         for i in range(8)
     ]
     report = run_checks(_base(), _thresholds(), source_samples=source)
@@ -284,13 +323,11 @@ def test_fidelity_skip_when_source_cannot_establish() -> None:
 
 def test_fidelity_fail_beyond_source_tolerance() -> None:
     source = [
-        Sample(depth_m=10.0 + i * 0.0078, valid=True,
-               swir_group="A", tir_group="X")
+        Sample(depth_m=10.0 + i * 0.0078, valid=True, swir_group="A", tir_group="X")
         for i in range(8)
     ]
     artifact = [
-        Sample(depth_m=10.0 + i * 0.0078, valid=True,
-               swir_group="B", tir_group="X")
+        Sample(depth_m=10.0 + i * 0.0078, valid=True, swir_group="B", tir_group="X")
         for i in range(8)
     ]
     report = run_checks(artifact, _thresholds(), source_samples=source)
@@ -320,9 +357,7 @@ def test_image_checks_pass_for_fitted_synthetic() -> None:
 
     reference = _image_reference()
     synthetic = synthesize(reference.to_dict(), 7)
-    report = run_image_checks(
-        reference, synthetic, artifact_name="synthetic.png"
-    )
+    report = run_image_checks(reference, synthetic, artifact_name="synthetic.png")
     assert report.verdict == "pass", [
         (r.name, r.status, r.detail) for r in report.results
     ]
@@ -333,9 +368,7 @@ def test_image_checks_pass_for_fitted_synthetic() -> None:
         "image_strip_order",
         "image_scene_alignment",
     ]
-    distance = next(
-        r for r in report.results if r.name == "image_histogram_distance"
-    )
+    distance = next(r for r in report.results if r.name == "image_histogram_distance")
     assert "literal" in distance.detail
     assert float(distance.detail.split()[0]) <= HISTOGRAM_DISTANCE_MAX
 
@@ -351,15 +384,11 @@ def test_image_checks_fail_for_foreign_synthetic() -> None:
 
     reference = _image_reference()
     other = compute_statistics(
-        make_fixture_png(
-            24, 12, [(5, 5, 5), (250, 5, 5), (5, 250, 5), (5, 5, 250)]
-        ),
+        make_fixture_png(24, 12, [(5, 5, 5), (250, 5, 5), (5, 250, 5), (5, 5, 250)]),
         "other.png",
     )
     synthetic = synthesize(other.to_dict(), 7)
-    report = run_image_checks(
-        reference, synthetic, artifact_name="synthetic.png"
-    )
+    report = run_image_checks(reference, synthetic, artifact_name="synthetic.png")
     assert report.verdict == "fail"
     assert "image_histogram_distance" in report.failed
 
@@ -380,8 +409,9 @@ def test_band_position_outside_is_signed_distance() -> None:
 
 
 def test_band_checks_carry_positions_and_keep_verdict() -> None:
-    report = run_checks(_base(), _thresholds(), source_samples=_base(),
-                        artifact_name="base")
+    report = run_checks(
+        _base(), _thresholds(), source_samples=_base(), artifact_name="base"
+    )
     assert report.verdict == "pass"
     spacing = next(r for r in report.results if r.name == "spacing_median")
     assert spacing.status == "pass"
@@ -393,15 +423,17 @@ def test_band_checks_carry_positions_and_keep_verdict() -> None:
     for result in report.results:
         if result.status == "fail":
             assert result.band_position is not None
-            assert (
-                result.band_position < 0.0 or result.band_position > 1.0
-            )
+            assert result.band_position < 0.0 or result.band_position > 1.0
 
 
 def test_failing_band_reports_out_of_band_distance() -> None:
     wide = [
-        Sample(depth_m=s.depth_m * 10, valid=s.valid,
-               swir_group=s.swir_group, tir_group=s.tir_group)
+        Sample(
+            depth_m=s.depth_m * 10,
+            valid=s.valid,
+            swir_group=s.swir_group,
+            tir_group=s.tir_group,
+        )
         for s in _base()
     ]
     report = run_checks(wide, _thresholds(), source_samples=_base())
@@ -423,11 +455,15 @@ def test_fidelity_checks_carry_tvd_positions() -> None:
 
 
 def test_report_dict_carries_positions_without_renaming() -> None:
-    report = check_artifact_csv(to_csv_bytes(_base()), _thresholds(),
-                                source_samples=_base())
+    report = check_artifact_csv(
+        to_csv_bytes(_base()), _thresholds(), source_samples=_base()
+    )
     body = report.to_dict()
     assert set(body) == {
-        "artifact_name", "artifact_sha256", "verdict", "results",
+        "artifact_name",
+        "artifact_sha256",
+        "verdict",
+        "results",
     }
     for entry in body["results"]:
         assert set(entry) == {"name", "status", "detail", "band_position"}
@@ -452,8 +488,6 @@ def test_image_checks_fail_for_wrong_dimensions() -> None:
         "small.png",
     )
     synthetic = synthesize(small.to_dict(), 7)
-    report = run_image_checks(
-        reference, synthetic, artifact_name="synthetic.png"
-    )
+    report = run_image_checks(reference, synthetic, artifact_name="synthetic.png")
     assert report.verdict == "fail"
     assert "image_dimensions" in report.failed

@@ -6,16 +6,15 @@ from pathlib import Path
 import pytest
 
 from profiles.hylogger.analysis.calibration import load_thresholds
-from profiles.hylogger.intake.reader import Sample
-from profiles.hylogger.validation.checks import run_checks
-from profiles.hylogger.validation.dataset import read
+from profiles.hylogger.analysis.statistics import Profile
 from profiles.hylogger.generation.generate import (
     _supported,
     generate,
     generate_samples,
 )
-from profiles.hylogger.intake.reader import read_scalar_csv
-from profiles.hylogger.analysis.statistics import Profile
+from profiles.hylogger.intake.reader import Sample, read_scalar_csv
+from profiles.hylogger.validation.checks import run_checks
+from profiles.hylogger.validation.dataset import read
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PDD446 = REPO_ROOT / "data" / "sources" / "PDD446-scalars.csv"
@@ -114,8 +113,11 @@ def test_generated_artifact_passes_checks() -> None:
     thresholds = load_thresholds(THRESHOLDS)
     source = read_scalar_csv(PDD446)
     report = run_checks(
-        samples, thresholds, source_samples=source,
-        artifact_name="generate-test", artifact_sha256=hashlib.sha256(payload).hexdigest(),
+        samples,
+        thresholds,
+        source_samples=source,
+        artifact_name="generate-test",
+        artifact_sha256=hashlib.sha256(payload).hexdigest(),
     )
     assert report.verdict == "pass", [r for r in report.results if r.status == "fail"]
 

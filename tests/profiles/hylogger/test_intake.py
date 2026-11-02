@@ -46,9 +46,10 @@ def test_inventory_hashes_types_and_attributes(tmp_path: Path) -> None:
     records = inventory_images(tmp_path)
     assert [r.name for r in records] == ["core-a.png", "core-b.png", "core-c.jpg"]
     by_name = {r.name: r for r in records}
-    assert by_name["core-a.png"].sha256 == hashlib.sha256(
-        payloads["core-a.png"]
-    ).hexdigest()
+    assert (
+        by_name["core-a.png"].sha256
+        == hashlib.sha256(payloads["core-a.png"]).hexdigest()
+    )
     assert by_name["core-a.png"].media_type == "image/png"
     assert by_name["core-c.jpg"].media_type == "image/jpeg"
     assert by_name["core-a.png"].licence == "CC-BY-4.0"

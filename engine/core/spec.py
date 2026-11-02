@@ -36,8 +36,9 @@ verbatim as intent only; it never clears output by itself.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from ..artifacts.hashing import sha256_canonical
 from .manifest import GENERATION_OUTPUTS
@@ -108,9 +109,7 @@ def default_spec(
         "spec_id": f"{manifest.id}-default",
         "profile": manifest.id,
         "source": {"path": str(source), "sha256": None},
-        "outputs": (
-            ["scalar", "imaging"] if images_dir is not None else ["scalar"]
-        ),
+        "outputs": (["scalar", "imaging"] if images_dir is not None else ["scalar"]),
         "strategy": default_strategy,
         "limits": {"max_rows": manifest_max, "max_attempts": max_attempts},
         "rights": {"output_terms_intent": None},
@@ -125,9 +124,7 @@ def load_spec_file(path: str | Path) -> dict[str, Any]:
     except FileNotFoundError as exc:
         raise SpecError(f"spec file not found: {spec_path}") from exc
     except json.JSONDecodeError as exc:
-        raise SpecError(
-            f"spec file {spec_path} is not valid JSON: {exc}"
-        ) from exc
+        raise SpecError(f"spec file {spec_path} is not valid JSON: {exc}") from exc
     except OSError as exc:
         raise SpecError(f"cannot read spec file {spec_path}: {exc}") from exc
     if not isinstance(payload, dict):
@@ -193,15 +190,10 @@ def normalize_spec(
         )
     else:
         if not isinstance(overlay, Mapping):
-            raise _refuse(
-                "spec must be a mapping, "
-                f"got {type(overlay).__name__}"
-            )
+            raise _refuse(f"spec must be a mapping, got {type(overlay).__name__}")
         unknown = [key for key in overlay if key not in SPEC_KEYS]
         if unknown:
-            raise _refuse(
-                f"spec carries unknown keys {sorted(unknown)}"
-            )
+            raise _refuse(f"spec carries unknown keys {sorted(unknown)}")
         merged = _merged(
             default_spec(
                 manifest,
@@ -230,8 +222,7 @@ def normalize_spec(
         raise _refuse("spec 'profile' must be a non-empty string")
     if profile != manifest.id:
         raise _refuse(
-            f"spec profile {profile!r} does not match run profile "
-            f"{manifest.id!r}"
+            f"spec profile {profile!r} does not match run profile {manifest.id!r}"
         )
     merged["profile"] = profile
 
@@ -255,8 +246,7 @@ def normalize_spec(
     for name in outputs:
         if name not in GENERATION_OUTPUTS:
             raise _refuse(
-                f"unknown output modality {name!r} "
-                f"(known: {list(GENERATION_OUTPUTS)})"
+                f"unknown output modality {name!r} (known: {list(GENERATION_OUTPUTS)})"
             )
         if name not in declared_outputs:
             raise _refuse(
@@ -297,8 +287,7 @@ def normalize_spec(
             raise _refuse("spec 'limits.max_rows' must be a positive integer")
         if manifest_max is not None and spec_max > manifest_max:
             raise _refuse(
-                f"spec rows {spec_max} exceed manifest limit max_rows "
-                f"{manifest_max}"
+                f"spec rows {spec_max} exceed manifest limit max_rows {manifest_max}"
             )
     spec_attempts = raw_limits.get("max_attempts", max_attempts)
     if not _is_int(spec_attempts) or spec_attempts < 1:
@@ -316,12 +305,9 @@ def normalize_spec(
     if not isinstance(raw_rights, Mapping):
         raise _refuse("spec 'rights' must be an object")
     intent = raw_rights.get("output_terms_intent")
-    if intent is not None and (
-        not isinstance(intent, str) or not intent.strip()
-    ):
+    if intent is not None and (not isinstance(intent, str) or not intent.strip()):
         raise _refuse(
-            "spec 'rights.output_terms_intent' must be a non-empty "
-            "string when present"
+            "spec 'rights.output_terms_intent' must be a non-empty string when present"
         )
     merged["rights"] = {"output_terms_intent": intent}
 

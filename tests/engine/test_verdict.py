@@ -73,8 +73,10 @@ def _required() -> list[str]:
 
 def test_all_pass_accepts() -> None:
     verdict, failed = decide(
-        [_result("shape_ok", "constraint", "pass"),
-         _result("content_ok", "fidelity", "pass")],
+        [
+            _result("shape_ok", "constraint", "pass"),
+            _result("content_ok", "fidelity", "pass"),
+        ],
         _checks(),
         required_ids=_required(),
         known_artifacts=[ARTIFACT],
@@ -115,13 +117,13 @@ def test_empty_required_set_cannot_pass() -> None:
     assert verdict == "fail"
 
 
-@pytest.mark.parametrize(
-    "status", ["fail", "error", "unsupported", "skipped"]
-)
+@pytest.mark.parametrize("status", ["fail", "error", "unsupported", "skipped"])
 def test_only_pass_satisfies(status: str) -> None:
     verdict, failed = decide(
-        [_result("shape_ok", "constraint", status),
-         _result("content_ok", "fidelity", "pass")],
+        [
+            _result("shape_ok", "constraint", status),
+            _result("content_ok", "fidelity", "pass"),
+        ],
         _checks(),
         required_ids=_required(),
         known_artifacts=[ARTIFACT],
@@ -133,9 +135,11 @@ def test_only_pass_satisfies(status: str) -> None:
 def test_duplicate_coverage_rejected() -> None:
     with pytest.raises(RunnerError, match="exactly once"):
         decide(
-            [_result("shape_ok", "constraint", "pass"),
-             _result("shape_ok", "constraint", "pass"),
-             _result("content_ok", "fidelity", "pass")],
+            [
+                _result("shape_ok", "constraint", "pass"),
+                _result("shape_ok", "constraint", "pass"),
+                _result("content_ok", "fidelity", "pass"),
+            ],
             _checks(),
             required_ids=_required(),
             known_artifacts=[ARTIFACT],
@@ -145,9 +149,11 @@ def test_duplicate_coverage_rejected() -> None:
 def test_unknown_check_rejected() -> None:
     with pytest.raises(RunnerError, match="unknown check"):
         decide(
-            [_result("shape_ok", "constraint", "pass"),
-             _result("content_ok", "fidelity", "pass"),
-             _result("invented", "constraint", "pass")],
+            [
+                _result("shape_ok", "constraint", "pass"),
+                _result("content_ok", "fidelity", "pass"),
+                _result("invented", "constraint", "pass"),
+            ],
             _checks(),
             required_ids=_required(),
             known_artifacts=[ARTIFACT],
@@ -157,8 +163,10 @@ def test_unknown_check_rejected() -> None:
 def test_kind_mismatch_rejected() -> None:
     with pytest.raises(RunnerError, match="does not match"):
         decide(
-            [_result("shape_ok", "fidelity", "pass"),
-             _result("content_ok", "fidelity", "pass")],
+            [
+                _result("shape_ok", "fidelity", "pass"),
+                _result("content_ok", "fidelity", "pass"),
+            ],
             _checks(),
             required_ids=_required(),
             known_artifacts=[ARTIFACT],
@@ -168,8 +176,10 @@ def test_kind_mismatch_rejected() -> None:
 def test_unrecognised_status_rejected() -> None:
     with pytest.raises(RunnerError, match="not recognised"):
         decide(
-            [_result("shape_ok", "constraint", "skipped_typo"),
-             _result("content_ok", "fidelity", "pass")],
+            [
+                _result("shape_ok", "constraint", "skipped_typo"),
+                _result("content_ok", "fidelity", "pass"),
+            ],
             _checks(),
             required_ids=_required(),
             known_artifacts=[ARTIFACT],
@@ -179,8 +189,10 @@ def test_unrecognised_status_rejected() -> None:
 def test_unknown_artifact_hash_rejected() -> None:
     with pytest.raises(RunnerError, match="unknown artifact"):
         decide(
-            [_result("shape_ok", "constraint", "pass", sha=OTHER),
-             _result("content_ok", "fidelity", "pass")],
+            [
+                _result("shape_ok", "constraint", "pass", sha=OTHER),
+                _result("content_ok", "fidelity", "pass"),
+            ],
             _checks(),
             required_ids=_required(),
             known_artifacts=[ARTIFACT],
@@ -190,8 +202,10 @@ def test_unknown_artifact_hash_rejected() -> None:
 def test_out_of_phase_hash_rejected() -> None:
     with pytest.raises(RunnerError, match="outside the current attempt"):
         decide(
-            [_result("shape_ok", "constraint", "pass", sha=OTHER),
-             _result("content_ok", "fidelity", "pass")],
+            [
+                _result("shape_ok", "constraint", "pass", sha=OTHER),
+                _result("content_ok", "fidelity", "pass"),
+            ],
             _checks(),
             required_ids=_required(),
             known_artifacts=[ARTIFACT, OTHER],
@@ -200,12 +214,15 @@ def test_out_of_phase_hash_rejected() -> None:
 
 
 def test_conditional_checks_apply_only_when_met() -> None:
-    assert applicable_required_ids(
-        _checks(), conditions={"images_present": False}
-    ) == ["shape_ok", "content_ok"]
-    assert applicable_required_ids(
-        _checks(), conditions={"images_present": True}
-    ) == ["shape_ok", "content_ok", "image_ok"]
+    assert applicable_required_ids(_checks(), conditions={"images_present": False}) == [
+        "shape_ok",
+        "content_ok",
+    ]
+    assert applicable_required_ids(_checks(), conditions={"images_present": True}) == [
+        "shape_ok",
+        "content_ok",
+        "image_ok",
+    ]
 
 
 def test_unconditional_ids_exclude_conditional() -> None:

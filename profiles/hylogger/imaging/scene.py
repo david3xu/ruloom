@@ -33,8 +33,9 @@ bands), a wrong orientation, and any gap or overlap in the
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 #: The only supported schematic orientation: row 0 is the shallow end.
 ORIENTATION_TOP_DOWN = "top_down"
@@ -64,7 +65,7 @@ class SceneEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "SceneEntry":
+    def from_dict(cls, data: Mapping[str, Any]) -> SceneEntry:
         return cls(
             sample_id=str(data["sample_id"]),
             depth_top=float(data["depth_top"]),
@@ -96,7 +97,7 @@ class Scene:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "Scene":
+    def from_dict(cls, data: Mapping[str, Any]) -> Scene:
         return cls(
             image_id=str(data["image_id"]),
             width=int(data["width"]),
@@ -136,9 +137,7 @@ def build_schematic_scene(
         else [f"sample-{index:03d}" for index in range(len(strips))]
     )
     if len(names) != len(strips):
-        raise ValueError(
-            f"need {len(strips)} sample ids, got {len(names)}"
-        )
+        raise ValueError(f"need {len(strips)} sample ids, got {len(names)}")
     entries: list[SceneEntry] = []
     for index, strip in enumerate(strips):
         entries.append(
@@ -152,9 +151,7 @@ def build_schematic_scene(
                 orientation=ORIENTATION_TOP_DOWN,
             )
         )
-    return Scene(
-        image_id=image_id, width=width, height=height, entries=tuple(entries)
-    )
+    return Scene(image_id=image_id, width=width, height=height, entries=tuple(entries))
 
 
 def validate_scene(scene: Scene | Mapping[str, Any]) -> list[str]:
@@ -179,15 +176,12 @@ def validate_scene(scene: Scene | Mapping[str, Any]) -> list[str]:
         if not entry.sample_id:
             errors.append(f"{tag} carries an empty sample id: missing sample")
         elif entry.sample_id in seen:
-            errors.append(
-                f"{tag} repeats sample id {entry.sample_id!r}: duplicate"
-            )
+            errors.append(f"{tag} repeats sample id {entry.sample_id!r}: duplicate")
         else:
             seen.add(entry.sample_id)
         if entry.row_hi <= entry.row_lo:
             errors.append(
-                f"{tag} covers rows [{entry.row_lo}, {entry.row_hi}): "
-                "missing region"
+                f"{tag} covers rows [{entry.row_lo}, {entry.row_hi}): missing region"
             )
         if entry.row_lo < 0 or entry.row_hi > record.height:
             errors.append(
@@ -211,9 +205,7 @@ def validate_scene(scene: Scene | Mapping[str, Any]) -> list[str]:
                 f"band ends at row {previous_hi}: wrong order/overlap"
             )
         previous_hi = (
-            entry.row_hi
-            if previous_hi is None
-            else max(previous_hi, entry.row_hi)
+            entry.row_hi if previous_hi is None else max(previous_hi, entry.row_hi)
         )
     ordered_lo = [entry.row_lo for entry in record.entries]
     if ordered_lo != sorted(ordered_lo):

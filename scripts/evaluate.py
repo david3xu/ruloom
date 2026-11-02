@@ -66,9 +66,10 @@ import subprocess
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -201,9 +202,9 @@ def benchmark_version(name: str) -> dict[str, Any]:
     for profile_id in ("hylogger", "tabular"):
         try:
             manifest = json.loads(
-                (
-                    REPO_ROOT / "profiles" / profile_id / "profile.json"
-                ).read_text(encoding="utf-8")
+                (REPO_ROOT / "profiles" / profile_id / "profile.json").read_text(
+                    encoding="utf-8"
+                )
             )
             manifests[profile_id] = manifest.get("version")
         except OSError:
@@ -396,7 +397,7 @@ def run_baseline(
         + f"\nNow emit a synthetic hole directly as CSV text with exactly "
         f"{n_rows} data rows under the header "
         f"{','.join(HEADER)} (valid is true/false, missing labels are empty "
-        f"cells). Reply with a JSON object with exactly one key \"csv\" "
+        f'cells). Reply with a JSON object with exactly one key "csv" '
         f"holding the full CSV text, header included."
     )
     prompt_sha256 = sha256_bytes(prompt.encode("utf-8"))
@@ -567,7 +568,7 @@ def run_pipeline(
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     invocation_id = uuid.uuid4().hex
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
     argv = [
         ruloom,
         "run",
@@ -622,9 +623,7 @@ def run_pipeline(
     record["run_dir"] = _relative_or_str(run_dir)
     record["fresh_invocation"] = True
     events = read_run_events(run_dir)
-    attempts = [
-        e for e in events if e.get("stage") == "generate_validate_repair"
-    ]
+    attempts = [e for e in events if e.get("stage") == "generate_validate_repair"]
     record["attempts_used"] = len(attempts)
     record["attempt_verdicts"] = [
         (e.get("details") or {}).get("verdict") for e in attempts
@@ -680,9 +679,7 @@ def run_pipeline(
     if data_path.is_file():
         record["artifact_sha256"] = sha256_bytes(data_path.read_bytes())
         record["artifact_rows"] = sum(1 for _ in data_path.open()) - 1
-    record["reproducible"] = check_reproducibility(
-        source, run_dir, record.get("plan")
-    )
+    record["reproducible"] = check_reproducibility(source, run_dir, record.get("plan"))
     return record
 
 
@@ -746,9 +743,14 @@ def evaluate_hole(
     else:
         record["pipeline"] = {"skipped": True}
     active_model = model if model is not None else MuseCLIModel()
-    baseline = run_baseline(active_model, profile, source_samples, thresholds,
-                            baseline_rows,
-                            save_dir=hole_out / "baseline")
+    baseline = run_baseline(
+        active_model,
+        profile,
+        source_samples,
+        thresholds,
+        baseline_rows,
+        save_dir=hole_out / "baseline",
+    )
     record["baseline"] = baseline
     kinds = load_check_kinds()
     required = required_check_ids()
@@ -947,9 +949,14 @@ def render_results_table(summary: Mapping[str, Any]) -> str:
         ("Wall time s (total)", "wall_s_total"),
     ]
     holes = summary.get("holes", [])
-    header = "| Measure | " + " | ".join(
-        f"{arm} (n={arms.get(arm, {}).get('holes', 0)})" for arm in ("pipeline", "baseline")
-    ) + " |"
+    header = (
+        "| Measure | "
+        + " | ".join(
+            f"{arm} (n={arms.get(arm, {}).get('holes', 0)})"
+            for arm in ("pipeline", "baseline")
+        )
+        + " |"
+    )
     lines = [
         f"Held-out holes: {', '.join(holes)}.",
         "",
@@ -958,8 +965,12 @@ def render_results_table(summary: Mapping[str, Any]) -> str:
     ]
     for label, key in rows:
         lines.append(
-            "| " + label + " | "
-            + " | ".join(str(arms.get(arm, {}).get(key, "?")) for arm in ("pipeline", "baseline"))
+            "| "
+            + label
+            + " | "
+            + " | ".join(
+                str(arms.get(arm, {}).get(key, "?")) for arm in ("pipeline", "baseline")
+            )
             + " |"
         )
     return "\n".join(lines) + "\n"
@@ -986,15 +997,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not out_dir.is_absolute():
             out_dir = REPO_ROOT / out_dir
     else:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         out_dir = REPO_ROOT / "runs" / "evaluation" / stamp
     if args.recompute:
         if summary_mismatch(out_dir):
-            print(f"RECOMPUTE MISMATCH in {out_dir}: stored summary "
-                  "disagrees with per-hole artifacts")
+            print(
+                f"RECOMPUTE MISMATCH in {out_dir}: stored summary "
+                "disagrees with per-hole artifacts"
+            )
             return 1
-        print(f"recompute OK: stored summary matches per-hole artifacts "
-              f"in {out_dir}")
+        print(f"recompute OK: stored summary matches per-hole artifacts in {out_dir}")
         return 0
     out_dir.mkdir(parents=True, exist_ok=True)
     records = []
@@ -1016,8 +1028,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         json.dump(summary, handle, indent=2, sort_keys=True)
     print(render_results_table(summary))
     if summary_mismatch(out_dir):
-        print("RECOMPUTE MISMATCH: stored summary disagrees with per-hole "
-              "artifacts (this is a harness bug, not a result)")
+        print(
+            "RECOMPUTE MISMATCH: stored summary disagrees with per-hole "
+            "artifacts (this is a harness bug, not a result)"
+        )
         return 1
     print("recompute OK: stored summary matches per-hole artifacts")
     return 0

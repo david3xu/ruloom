@@ -9,7 +9,6 @@ execute pytest against tiny witness files.
 
 import importlib.util
 import json
-import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -105,7 +104,9 @@ def test_aggregate_real_tree_outcomes_carry_status_tokens() -> None:
     assert ok
     for _, _, evidence in outcomes:
         assert (
-            "ENFORCED" in evidence or "PLANNED" in evidence or "OPEN_FINDING" in evidence
+            "ENFORCED" in evidence
+            or "PLANNED" in evidence
+            or "OPEN_FINDING" in evidence
         ), evidence
 
 
@@ -121,9 +122,7 @@ def test_aggregate_real_tree_never_runs_planned_checkers() -> None:
     payload = gate.load_registry(REPO_ROOT)
     assert payload is not None
     planned_targets = {
-        str(rule["checker"])
-        for rule in payload["rules"]
-        if rule["status"] == "planned"
+        str(rule["checker"]) for rule in payload["rules"] if rule["status"] == "planned"
     }
     assert not (set(seen) & planned_targets)
 
@@ -189,9 +188,7 @@ def test_enforced_checker_failure_propagates(tmp_path: Path) -> None:
         ),
     )
     runner = _stub_runner({"tests/audit/test_fail.py": (False, "1 failed")})
-    ok, outcomes = gate.check_aggregate(
-        tmp_path, fp_results=dict(FP_OK), runner=runner
-    )
+    ok, outcomes = gate.check_aggregate(tmp_path, fp_results=dict(FP_OK), runner=runner)
     assert not ok
     failed = [o for o in outcomes if o[0] == "Q-FAIL-1"]
     assert len(failed) == 1 and not failed[0][1]
@@ -203,7 +200,9 @@ def test_missing_checker_file_blocks_fail_closed(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "docs/quality/rules.json",
-        _registry_doc([_rule("Q-GONE-1", "enforced", checker="tests/audit/test_gone.py")]),
+        _registry_doc(
+            [_rule("Q-GONE-1", "enforced", checker="tests/audit/test_gone.py")]
+        ),
     )
     ok, outcomes = gate.check_aggregate(tmp_path, fp_results=dict(FP_OK))
     assert not ok
@@ -226,7 +225,11 @@ def test_in_gate_checker_covered_by_fp_pass(tmp_path: Path) -> None:
         tmp_path,
         "docs/quality/rules.json",
         _registry_doc(
-            [_rule("Q-INGATE-1", "enforced", checker="scripts/force_pass.py:check_doc1")]
+            [
+                _rule(
+                    "Q-INGATE-1", "enforced", checker="scripts/force_pass.py:check_doc1"
+                )
+            ]
         ),
     )
     ok, outcomes = gate.check_aggregate(
@@ -241,7 +244,11 @@ def test_in_gate_checker_fp_failure_propagates(tmp_path: Path) -> None:
         tmp_path,
         "docs/quality/rules.json",
         _registry_doc(
-            [_rule("Q-INGATE-1", "enforced", checker="scripts/force_pass.py:check_doc1")]
+            [
+                _rule(
+                    "Q-INGATE-1", "enforced", checker="scripts/force_pass.py:check_doc1"
+                )
+            ]
         ),
     )
     ok, outcomes = gate.check_aggregate(
@@ -256,7 +263,11 @@ def test_in_gate_unknown_member_blocks(tmp_path: Path) -> None:
         tmp_path,
         "docs/quality/rules.json",
         _registry_doc(
-            [_rule("Q-INGATE-1", "enforced", checker="scripts/force_pass.py:check_nope")]
+            [
+                _rule(
+                    "Q-INGATE-1", "enforced", checker="scripts/force_pass.py:check_nope"
+                )
+            ]
         ),
     )
     ok, _ = gate.check_aggregate(
@@ -300,7 +311,13 @@ def test_in_gate_module_local_check_executes_live(tmp_path: Path) -> None:
         tmp_path,
         "docs/quality/rules.json",
         _registry_doc(
-            [_rule("Q-INGATE-1", "enforced", checker="scripts/force_pass.py:check_code3")]
+            [
+                _rule(
+                    "Q-INGATE-1",
+                    "enforced",
+                    checker="scripts/force_pass.py:check_code3",
+                )
+            ]
         ),
     )
     ok, outcomes = gate.check_aggregate(
@@ -325,7 +342,13 @@ def test_in_gate_non_check_member_still_blocks(tmp_path: Path) -> None:
         tmp_path,
         "docs/quality/rules.json",
         _registry_doc(
-            [_rule("Q-INGATE-1", "enforced", checker="scripts/force_pass.py:REGISTRY_REL")]
+            [
+                _rule(
+                    "Q-INGATE-1",
+                    "enforced",
+                    checker="scripts/force_pass.py:REGISTRY_REL",
+                )
+            ]
         ),
     )
     ok, outcomes = gate.check_aggregate(
@@ -345,7 +368,13 @@ def test_in_gate_raising_check_blocks_fail_closed(tmp_path: Path) -> None:
             tmp_path,
             "docs/quality/rules.json",
             _registry_doc(
-                [_rule("Q-INGATE-1", "enforced", checker="scripts/force_pass.py:check_boom_canary")]
+                [
+                    _rule(
+                        "Q-INGATE-1",
+                        "enforced",
+                        checker="scripts/force_pass.py:check_boom_canary",
+                    )
+                ]
             ),
         )
         ok, outcomes = gate.check_aggregate(

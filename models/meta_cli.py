@@ -19,12 +19,12 @@ import json
 import os
 import subprocess
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from .base import Completion, ModelError, Usage
-
 
 #: Environment keys the child process may inherit (explicit allowlist).
 #: Everything else -- including every ``RULOOM_*`` setting, API tokens,
@@ -113,7 +113,7 @@ class MuseCLIModel:
         self,
         schema_file: str,
         prompt: str,
-        image_paths: "list[str | Path] | None" = None,
+        image_paths: list[str | Path] | None = None,
     ) -> list[str]:
         argv = [
             self.cli,
@@ -133,7 +133,9 @@ class MuseCLIModel:
         argv += ["--contributor-mode", "on" if self.contributor else "off", prompt]
         return argv
 
-    last_invocation: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
+    last_invocation: dict[str, Any] = field(
+        default_factory=dict, init=False, repr=False
+    )
     """Effective permissions of the most recent child invocation.
 
     Records ``argv``, the pinned ``cwd``, the inherited environment
@@ -142,7 +144,7 @@ class MuseCLIModel:
     per model call; secret values never enter it.
     """
 
-    def _run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
+    def _run(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
         """Run one ``muse exec`` argv under the restricted invocation.
 
         The child gets a pinned working directory, the allowlisted
@@ -174,9 +176,7 @@ class MuseCLIModel:
         except OSError as exc:
             raise ModelError(f"muse exec failed to start: {exc}") from exc
 
-    def complete(
-        self, prompt: str, schema: Mapping[str, Any]
-    ) -> Completion:
+    def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
         """Run ``prompt`` under ``schema`` and return the structured answer."""
         schema_dict = dict(schema)
         with tempfile.NamedTemporaryFile(
@@ -229,7 +229,7 @@ class MuseCLIModel:
         return completion
 
     def _parse(
-        self, proc: "subprocess.CompletedProcess[str]", schema_dict: dict
+        self, proc: subprocess.CompletedProcess[str], schema_dict: dict
     ) -> Completion:
         """Parse ``muse exec`` JSONL output into a structured Completion."""
         if proc.returncode != 0:
@@ -257,9 +257,7 @@ class MuseCLIModel:
             if payload_type == "run.usage" or kind == "run_usage":
                 models = payload.get("models")
                 if isinstance(models, list):
-                    usage_models.extend(
-                        m for m in models if isinstance(m, dict)
-                    )
+                    usage_models.extend(m for m in models if isinstance(m, dict))
             if (
                 "struct" in payload_type.lower()
                 or "struct" in kind.lower()
@@ -287,9 +285,7 @@ class MuseCLIModel:
             try:
                 answer = json.loads(answer)
             except json.JSONDecodeError as exc:
-                raise ModelError(
-                    f"structured answer is not valid JSON: {exc}"
-                ) from exc
+                raise ModelError(f"structured answer is not valid JSON: {exc}") from exc
         if not isinstance(answer, dict):
             raise ModelError(
                 f"structured answer is not a JSON object: {type(answer).__name__}"

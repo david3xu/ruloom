@@ -13,9 +13,9 @@ from __future__ import annotations
 import copy
 import json
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
-
+from typing import Any
 
 #: Minimum source-row support for a text literal to appear in the
 #: model-visible view. A text value seen only once is indistinguishable
@@ -98,9 +98,7 @@ def disclosed_stats(stats: Mapping[str, Any]) -> dict[str, Any]:
     mutated.
     """
     if not isinstance(stats, Mapping):
-        raise TypeError(
-            f"stats must be a mapping, got {type(stats).__name__}"
-        )
+        raise TypeError(f"stats must be a mapping, got {type(stats).__name__}")
     view = copy.deepcopy(dict(stats))
     text = view.get("text")
     if not isinstance(text, dict):
@@ -121,9 +119,7 @@ def disclosed_stats(stats: Mapping[str, Any]) -> dict[str, Any]:
         total = sum(kept.values())
         summary["values"] = kept
         summary["rates"] = (
-            {value: count / total for value, count in kept.items()}
-            if total
-            else {}
+            {value: count / total for value, count in kept.items()} if total else {}
         )
         summary["suppressed_values"] = len(values) - len(kept)
     return view
@@ -176,7 +172,7 @@ class TabularProfile:
         rows: Sequence[Mapping[str, str]],
         source_name: str,
         source_sha256: str,
-    ) -> "TabularProfile":
+    ) -> TabularProfile:
         """Build a profile from source columns and rows."""
         return cls(
             source_name=source_name,

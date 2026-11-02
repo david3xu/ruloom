@@ -85,6 +85,7 @@ def registry_q_rules(root: Path) -> list[dict] | None:
         if isinstance(rule, dict) and str(rule.get("id", "")).startswith("Q-")
     ]
 
+
 PRODUCT_DIRS = ("engine", "models", "profiles")
 PROFILES_DIR = Path("profiles")
 TESTS_DIR = Path("tests")
@@ -112,6 +113,7 @@ DOMAIN_RE = re.compile(
     r"\b(?:depth|mineral|swir|tir|tsg|markov|hole|hylogger)\b",
     re.IGNORECASE,
 )
+
 
 def _allowed_models_base(rel: str) -> bool:
     """Generation wiring may import the models.base contract only.
@@ -365,7 +367,9 @@ def _classify(
             base_only = mod == "models.base" or mod.startswith("models.base.")
             if base_only and _allowed_models_base(rel):
                 return []
-            return [f"{label}: profiles imports {mod} (only models.base in generation/plan.py|repair.py)"]
+            return [
+                f"{label}: profiles imports {mod} (only models.base in generation/plan.py|repair.py)"
+            ]
         return []
     if top0 == "models":
         if top in ("profiles", "engine"):
@@ -375,10 +379,18 @@ def _classify(
         meta = (
             mod == "models.meta_cli"
             or mod.startswith("models.meta_cli.")
-            or (mod == "models" and any((i == "meta_cli" or i.startswith("meta_cli.")) for i in (imported or [])))
+            or (
+                mod == "models"
+                and any(
+                    (i == "meta_cli" or i.startswith("meta_cli."))
+                    for i in (imported or [])
+                )
+            )
         )
         if meta and rel != COMPOSITION_ROOT:
-            return [f"{label}: engine imports models.meta_cli outside {COMPOSITION_ROOT}"]
+            return [
+                f"{label}: engine imports models.meta_cli outside {COMPOSITION_ROOT}"
+            ]
         return []
     return []
 
@@ -428,8 +440,15 @@ def check_code3(root: Path) -> tuple[bool, str]:
                 if "sha256" in node.name:
                     offenders.append(f"{rel}:{node.lineno}: def {node.name}")
     if offenders:
-        return False, "sha256 helper defined outside engine/artifacts/hashing.py: " + "; ".join(offenders)
-    return True, f"no sha256 helper outside engine/artifacts/hashing.py ({scanned} files scanned)"
+        return (
+            False,
+            "sha256 helper defined outside engine/artifacts/hashing.py: "
+            + "; ".join(offenders),
+        )
+    return (
+        True,
+        f"no sha256 helper outside engine/artifacts/hashing.py ({scanned} files scanned)",
+    )
 
 
 def check_code4(root: Path) -> tuple[bool, str]:
@@ -507,7 +526,10 @@ def check_code5(root: Path, tracked: list[str] | None = None) -> tuple[bool, str
         problems.append("no data/ rule in .gitignore")
     if problems:
         return False, "; ".join(problems)
-    return True, f"no data/ path tracked ({len(files)} files via {via}); .gitignore data/ rule present"
+    return (
+        True,
+        f"no data/ path tracked ({len(files)} files via {via}); .gitignore data/ rule present",
+    )
 
 
 def check_code6(root: Path) -> tuple[bool, str]:
@@ -535,9 +557,7 @@ def check_code6(root: Path) -> tuple[bool, str]:
                 if token.type == tokenize.COMMENT:
                     continue
                 for match in DOMAIN_RE.finditer(token.string):
-                    offenders.append(
-                        f"{rel}:{token.start[0]}: {match.group(0)!r}"
-                    )
+                    offenders.append(f"{rel}:{token.start[0]}: {match.group(0)!r}")
         except (tokenize.TokenError, SyntaxError, UnicodeDecodeError) as exc:
             offenders.append(f"{rel}: unscannable ({exc})")
     if not scanned:
@@ -551,11 +571,7 @@ def _manifest_files(root: Path) -> list[Path]:
     base = root / "profiles"
     if not base.is_dir():
         return []
-    return sorted(
-        p
-        for p in base.rglob("profile.json")
-        if "__pycache__" not in p.parts
-    )
+    return sorted(p for p in base.rglob("profile.json") if "__pycache__" not in p.parts)
 
 
 def _manifest_payloads(root: Path) -> list[tuple[str, dict]]:
@@ -591,10 +607,7 @@ def check_code9(root: Path) -> tuple[bool, str]:
             if not isinstance(binding, dict):
                 continue
             requires = binding.get("requires", {})
-            if (
-                isinstance(requires, dict)
-                and requires.get("open_weight") is True
-            ):
+            if isinstance(requires, dict) and requires.get("open_weight") is True:
                 checked += 1
                 adapter = binding.get("adapter", "meta_cli")
                 if adapter != "glimmer_local":
@@ -628,14 +641,8 @@ def check_code10(root: Path) -> tuple[bool, str]:
         models = payload.get("models", {})
         budget = models.get("budget", {}) if isinstance(models, dict) else {}
         ceiling = budget.get("max_tokens_per_run") if isinstance(budget, dict) else None
-        if (
-            not isinstance(ceiling, int)
-            or isinstance(ceiling, bool)
-            or ceiling < 1
-        ):
-            problems.append(
-                f"{rel}: missing models.budget.max_tokens_per_run"
-            )
+        if not isinstance(ceiling, int) or isinstance(ceiling, bool) or ceiling < 1:
+            problems.append(f"{rel}: missing models.budget.max_tokens_per_run")
         if payload.get("id") == "hylogger":
             hylogger_seen = True
             roles = models.get("roles", {}) if isinstance(models, dict) else {}
@@ -644,17 +651,14 @@ def check_code10(root: Path) -> tuple[bool, str]:
                 not isinstance(reporter, dict)
                 or reporter.get("enabled", True) is not False
             ):
-                problems.append(
-                    f"{rel}: missing disabled reporter role"
-                )
+                problems.append(f"{rel}: missing disabled reporter role")
     if not hylogger_seen:
         problems.append("no hylogger manifest found")
     if problems:
         return False, "; ".join(problems)
     return (
         True,
-        f"budgets declared and reporter disabled "
-        f"({len(payloads)} manifests)",
+        f"budgets declared and reporter disabled ({len(payloads)} manifests)",
     )
 
 
@@ -689,9 +693,7 @@ def check_code7(root: Path) -> tuple[bool, str]:
                 else []
             )
             if not isinstance(node, dict) or len(kinds) != 1:
-                problems.append(
-                    f"{where}: must declare exactly one of step/loop/gate"
-                )
+                problems.append(f"{where}: must declare exactly one of step/loop/gate")
                 continue
             if kinds[0] == "loop" and node.get("max_attempts") != "max_attempts":
                 problems.append(
@@ -710,9 +712,7 @@ def check_code7(root: Path) -> tuple[bool, str]:
             continue
         scanned += 1
         for node in ast.walk(tree):
-            if not isinstance(
-                node, (ast.FunctionDef, ast.AsyncFunctionDef)
-            ):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             args = node.args
             pos = list(args.args)
@@ -720,14 +720,10 @@ def check_code7(root: Path) -> tuple[bool, str]:
             offset = len(pos) - len(pos_defaults)
             for position, arg in enumerate(pos):
                 if arg.arg == "max_attempts" and position >= offset:
-                    problems.append(
-                        f"{rel}:{node.lineno}: max_attempts has a default"
-                    )
+                    problems.append(f"{rel}:{node.lineno}: max_attempts has a default")
             for arg, default in zip(args.kwonlyargs, args.kw_defaults):
                 if arg.arg == "max_attempts" and default is not None:
-                    problems.append(
-                        f"{rel}:{node.lineno}: max_attempts has a default"
-                    )
+                    problems.append(f"{rel}:{node.lineno}: max_attempts has a default")
     if problems:
         return False, "; ".join(problems)
     return (
@@ -764,7 +760,11 @@ def check_code8(root: Path) -> tuple[bool, str]:
             if path.name not in PROFILE_ROOT_ALLOWED:
                 offenders.append(_rel(path, root))
     if offenders:
-        return False, "flat feature modules (move into a feature subpackage): " + ", ".join(offenders)
+        return (
+            False,
+            "flat feature modules (move into a feature subpackage): "
+            + ", ".join(offenders),
+        )
     return True, "no flat feature modules under engine/ or profile roots"
 
 
@@ -874,9 +874,7 @@ def check_feature_map(root: Path) -> tuple[bool, str]:
         if not isinstance(record.get("id"), str) or not record["id"]:
             problems.append(f"{rel}: missing stable id")
         elif record["id"] != stem:
-            problems.append(
-                f"{rel}: id {record['id']!r} does not match file stem"
-            )
+            problems.append(f"{rel}: id {record['id']!r} does not match file stem")
         if not isinstance(record.get("owner"), str) or not record["owner"]:
             problems.append(f"{rel}: missing owner")
         if record.get("status") not in FEATURE_STATUSES:
@@ -894,9 +892,7 @@ def check_feature_map(root: Path) -> tuple[bool, str]:
         else:
             for item in required:
                 if item not in registered:
-                    problems.append(
-                        f"{rel}: required rule {item!r} is not registered"
-                    )
+                    problems.append(f"{rel}: required rule {item!r} is not registered")
         for field in ("code", "docs", "tests"):
             entries = record.get(field)
             if entries is None:
@@ -906,15 +902,11 @@ def check_feature_map(root: Path) -> tuple[bool, str]:
                 or not entries
                 or any(not isinstance(item, str) for item in entries)
             ):
-                problems.append(
-                    f"{rel}: {field!r} must be a non-empty path list"
-                )
+                problems.append(f"{rel}: {field!r} must be a non-empty path list")
                 continue
             for entry in entries:
                 if not (root / entry).exists():
-                    problems.append(
-                        f"{rel}: {field} path {entry!r} does not exist"
-                    )
+                    problems.append(f"{rel}: {field} path {entry!r} does not exist")
         for entry in record.get("code", []) or []:
             if isinstance(entry, str):
                 named.add(entry)
@@ -923,9 +915,7 @@ def check_feature_map(root: Path) -> tuple[bool, str]:
         problems.append("no product feature modules found")
     unnamed = [path for path in modules if path not in named]
     if unnamed:
-        problems.append(
-            "feature modules with no owning record: " + ", ".join(unnamed)
-        )
+        problems.append("feature modules with no owning record: " + ", ".join(unnamed))
     if problems:
         return False, "; ".join(problems)
     return (
@@ -1005,9 +995,7 @@ def _fixture_paths_resolve(root: Path, fixture: str) -> bool:
     return True
 
 
-def _check_claim_rule_refs(
-    root: Path, rules: list[dict]
-) -> list[str]:
+def _check_claim_rule_refs(root: Path, rules: list[dict]) -> list[str]:
     """Every ENFORCED rule cites resolvable evidence (checker + proof)."""
     problems: list[str] = []
     for rule in rules:
@@ -1025,28 +1013,18 @@ def _check_claim_rule_refs(
         if target == "scripts/force_pass.py" and sep:
             func = globals().get(member)
             if not callable(func):
-                problems.append(
-                    f"{rule_id}: in-gate checker {member!r} is not defined"
-                )
+                problems.append(f"{rule_id}: in-gate checker {member!r} is not defined")
         elif target.endswith(".py"):
             if not (root / target).is_file():
-                problems.append(
-                    f"{rule_id}: checker file {target!r} does not exist"
-                )
+                problems.append(f"{rule_id}: checker file {target!r} does not exist")
         else:
-            problems.append(
-                f"{rule_id}: checker shape {checker!r} is not resolvable"
-            )
+            problems.append(f"{rule_id}: checker shape {checker!r} is not resolvable")
         for field in ("required_proof", "positive_fixture", "violation_fixture"):
             value = rule.get(field)
             if not isinstance(value, str) or not value.strip():
                 problems.append(f"{rule_id}: {field} is empty")
-            elif field != "required_proof" and not _fixture_paths_resolve(
-                root, value
-            ):
-                problems.append(
-                    f"{rule_id}: {field} cites a missing file"
-                )
+            elif field != "required_proof" and not _fixture_paths_resolve(root, value):
+                problems.append(f"{rule_id}: {field} cites a missing file")
     return problems
 
 
@@ -1054,9 +1032,7 @@ def _check_claim_readme_refs(root: Path, ids: set[str]) -> list[str]:
     """Every rule citation in docs/quality/README.md resolves."""
     problems: list[str] = []
     try:
-        text = (root / "docs" / "quality" / "README.md").read_text(
-            encoding="utf-8"
-        )
+        text = (root / "docs" / "quality" / "README.md").read_text(encoding="utf-8")
     except OSError:
         return ["docs/quality/README.md is missing"]
     for token in sorted(set(RULE_TOKEN_RE.findall(text))):
@@ -1065,13 +1041,10 @@ def _check_claim_readme_refs(root: Path, ids: set[str]) -> list[str]:
         if token.endswith(("*", "-")):
             prefix = token.rstrip("*-")
             if any(
-                candidate == prefix or candidate.startswith(prefix)
-                for candidate in ids
+                candidate == prefix or candidate.startswith(prefix) for candidate in ids
             ):
                 continue
-        problems.append(
-            f"docs/quality/README.md cites unregistered rule {token!r}"
-        )
+        problems.append(f"docs/quality/README.md cites unregistered rule {token!r}")
     return problems
 
 
@@ -1126,8 +1099,7 @@ def _check_claim_doc_refs(root: Path) -> list[str]:
                     continue
                 if not (root / normalised).exists():
                     problems.append(
-                        f"{path.name} references missing path "
-                        f"`{normalised}`"
+                        f"{path.name} references missing path `{normalised}`"
                     )
     return problems
 
@@ -1154,9 +1126,7 @@ def check_claim_evidence(root: Path) -> tuple[bool, str]:
         return False, "registry has no rules list"
     problems: list[str] = []
     problems.extend(_check_claim_rule_refs(root, entries))
-    ids = {
-        str(rule.get("id")) for rule in entries if isinstance(rule, dict)
-    }
+    ids = {str(rule.get("id")) for rule in entries if isinstance(rule, dict)}
     problems.extend(_check_claim_readme_refs(root, ids))
     problems.extend(_check_claim_doc_refs(root))
     if problems:
@@ -1225,7 +1195,10 @@ def run_q_checker(root: Path, checker: str) -> tuple[bool, str]:
     """
     target, member = _split_checker(checker)
     if member or not target.endswith(".py"):
-        return False, f"unsupported checker shape {checker!r} (expected tests/<path>.py)"
+        return (
+            False,
+            f"unsupported checker shape {checker!r} (expected tests/<path>.py)",
+        )
     if not (root / target).is_file():
         return False, f"checker missing: {target}"
     try:
@@ -1247,7 +1220,13 @@ def run_q_checker(root: Path, checker: str) -> tuple[bool, str]:
             tail = line.strip()
     if proc.returncode == 0:
         return True, f"{target} passed ({tail})" if tail else f"{target} passed"
-    detail = tail if tail else proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "no output"
+    detail = (
+        tail
+        if tail
+        else proc.stderr.strip().splitlines()[-1]
+        if proc.stderr.strip()
+        else "no output"
+    )
     return False, f"{target} exit {proc.returncode}: {detail}"
 
 
@@ -1281,14 +1260,18 @@ def check_aggregate(
         ]
     entries = payload.get("rules")
     if not isinstance(entries, list):
-        return False, [("AGGREGATE", False, "registry has no rules list: gate blocks fail-closed")]
+        return False, [
+            ("AGGREGATE", False, "registry has no rules list: gate blocks fail-closed")
+        ]
     q_rules = [
         rule
         for rule in entries
         if isinstance(rule, dict) and str(rule.get("id", "")).startswith("Q-")
     ]
     if not q_rules:
-        return False, [("AGGREGATE", False, "registry names no Q rules: gate blocks fail-closed")]
+        return False, [
+            ("AGGREGATE", False, "registry names no Q rules: gate blocks fail-closed")
+        ]
     outcomes: list[tuple[str, bool, str]] = []
     for rule in q_rules:
         rule_id = str(rule.get("id"))
@@ -1300,9 +1283,7 @@ def check_aggregate(
                 (rule_id, False, f"OPEN_FINDING{ref} — open finding blocks the gate")
             )
         elif status == "planned":
-            outcomes.append(
-                (rule_id, True, f"PLANNED{ref} — stub, not executed")
-            )
+            outcomes.append((rule_id, True, f"PLANNED{ref} — stub, not executed"))
         elif status == "enforced":
             if not rule.get("checker_implemented"):
                 outcomes.append(

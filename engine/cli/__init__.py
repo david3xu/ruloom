@@ -15,8 +15,9 @@ from __future__ import annotations
 import argparse
 import importlib
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import profiles as profiles_package
 from models.base import StructuredModel
@@ -40,9 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ruloom")
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="run a profile synthesis lifecycle")
-    run.add_argument(
-        "source", help="source data file for the selected profile"
-    )
+    run.add_argument("source", help="source data file for the selected profile")
     run.add_argument(
         "--profile",
         default=None,
@@ -112,9 +111,7 @@ def load_registry(profile_id: str) -> Mapping[str, Any]:
     module = importlib.import_module(f"profiles.{profile_id}.capabilities")
     capabilities = getattr(module, "CAPABILITIES", None)
     if not isinstance(capabilities, Mapping) or not capabilities:
-        raise ManifestError(
-            f"profile {profile_id!r} exposes no CAPABILITIES registry"
-        )
+        raise ManifestError(f"profile {profile_id!r} exposes no CAPABILITIES registry")
     return capabilities
 
 
@@ -146,16 +143,12 @@ ENV_SUFFIXES = {
 def parse_role_assignment(spec: str, flag: str) -> tuple[str, str]:
     """Split one ``ROLE=VALUE`` CLI override; a missing ``=`` fails loudly."""
     if "=" not in spec:
-        raise ValueError(
-            f"{flag} expects ROLE=VALUE, got {spec!r}"
-        )
+        raise ValueError(f"{flag} expects ROLE=VALUE, got {spec!r}")
     role, _, value = spec.partition("=")
     role = role.strip().lower()
     value = value.strip()
     if not role or not value:
-        raise ValueError(
-            f"{flag} expects ROLE=VALUE, got {spec!r}"
-        )
+        raise ValueError(f"{flag} expects ROLE=VALUE, got {spec!r}")
     return role, value
 
 
@@ -193,9 +186,7 @@ def resolve_role_bindings(
     declared = manifest.models.get("roles", {})
     if not isinstance(declared, dict):
         declared = {}
-    for role in (
-        list(cli_model_map) + list(cli_effort_map) + list(cli_base_url_map)
-    ):
+    for role in list(cli_model_map) + list(cli_effort_map) + list(cli_base_url_map):
         if role not in declared:
             raise ManifestError(
                 f"role override for unknown role {role!r}: the manifest "
@@ -224,9 +215,7 @@ def resolve_role_bindings(
             base["reasoning_effort"] = cli_effort_map[role]
             role_sources["reasoning_effort"] = SOURCE_CLI
         elif f"RULOOM_ROLE_{role.upper()}_EFFORT" in environment:
-            base["reasoning_effort"] = environment[
-                f"RULOOM_ROLE_{role.upper()}_EFFORT"
-            ]
+            base["reasoning_effort"] = environment[f"RULOOM_ROLE_{role.upper()}_EFFORT"]
             role_sources["reasoning_effort"] = SOURCE_ENV
         elif isinstance(binding, Mapping) and binding.get("reasoning_effort"):
             role_sources["reasoning_effort"] = SOURCE_PROFILE
@@ -239,9 +228,7 @@ def resolve_role_bindings(
                 base["base_url"] = cli_base_url_map[role]
                 role_sources["base_url"] = SOURCE_CLI
             elif f"RULOOM_ROLE_{role.upper()}_BASE_URL" in environment:
-                base["base_url"] = environment[
-                    f"RULOOM_ROLE_{role.upper()}_BASE_URL"
-                ]
+                base["base_url"] = environment[f"RULOOM_ROLE_{role.upper()}_BASE_URL"]
                 role_sources["base_url"] = SOURCE_ENV
             elif isinstance(binding, Mapping) and binding.get("base_url"):
                 role_sources["base_url"] = SOURCE_PROFILE
@@ -336,9 +323,7 @@ def main(
             return 1
         try:
             profile_id = resolve_profile(args.profile)
-            manifest = load_manifest(
-                profiles_package.manifest_path(profile_id)
-            )
+            manifest = load_manifest(profiles_package.manifest_path(profile_id))
             registry = load_registry(profile_id)
             resolved, role_sources = resolve_role_bindings(
                 manifest,

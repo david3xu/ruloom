@@ -23,3 +23,31 @@ packages = ["engine", "models", "profiles"]
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
+
+[tool.ruff]
+# GP-03 (G7 hygiene): pinned lint/format contract. `target-version`
+# matches requires-python so pyupgrade fixes are runtime-safe; the
+# enforced commands are `ruff check .` and `ruff format --check .`
+# (same commands run in CI and by tests/test_code_hygiene.py).
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+# E/F: unambiguous errors and dead code. I: import sorting. UP:
+# pyupgrade for 3.12. W: whitespace warnings. All fully applied by
+# `ruff check --fix` (safe fixes only) plus `ruff format`, so the
+# tree converges mechanically with no hand edits and no behavior
+# change (full suite + gate prove it).
+select = ["E", "F", "I", "UP", "W"]
+ignore = [
+    # Line length is owned by `ruff format` (88 cols): E501 also flags
+    # long strings/comments the formatter cannot reflow, which would
+    # need hand edits outside this mechanical slice.
+    "E501",
+    # UP007 (Union -> X | Y, 4 sites) and UP022 (PIPE ->
+    # capture_output, 2 sites, one in models/meta_cli.py) have no safe
+    # autofix at those sites; hand-editing them is deferred to keep
+    # this slice mechanical-only.
+    "UP007",
+    "UP022",
+]

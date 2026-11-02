@@ -13,7 +13,8 @@ SHA-256.
 from __future__ import annotations
 
 import random
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from . import codec
 from .statistics import N_STRIPS, ImageStats
@@ -29,9 +30,7 @@ def make_fixture_png(
     covers a contiguous row band.
     """
     if len(strip_colours) != N_STRIPS:
-        raise ValueError(
-            f"need {N_STRIPS} strip colours, got {len(strip_colours)}"
-        )
+        raise ValueError(f"need {N_STRIPS} strip colours, got {len(strip_colours)}")
     rows: list[list[tuple[int, int, int]]] = []
     for row_index in range(height):
         strip = min((row_index * N_STRIPS) // height, N_STRIPS - 1)
@@ -48,9 +47,7 @@ def _spread_for(stats: Mapping[str, Any]) -> float:
     for table in (texture_h, texture_v):
         if isinstance(table, Mapping):
             for value in table.values():
-                if isinstance(value, (int, float)) and not isinstance(
-                    value, bool
-                ):
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
                     overall += float(value)
                     count += 1
     average = overall / count if count else 0.0
@@ -71,9 +68,7 @@ def synthesize(stats: Mapping[str, Any], seed: int) -> bytes:
     height = int(stats["height"])
     strips = list(stats["strips"])
     if len(strips) != N_STRIPS:
-        raise ValueError(
-            f"statistics carry {len(strips)} strips, need {N_STRIPS}"
-        )
+        raise ValueError(f"statistics carry {len(strips)} strips, need {N_STRIPS}")
     spread = _spread_for(stats)
     rng = random.Random(seed)
     rows: list[list[tuple[int, int, int]]] = []

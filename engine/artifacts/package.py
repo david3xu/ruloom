@@ -21,8 +21,9 @@ import json
 import os
 import tempfile
 import zipfile
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from .hashing import sha256_bytes, sha256_canonical
 
@@ -96,24 +97,19 @@ def selected_release_members(
     return selected
 
 
-def release_member_names(
-    manifest: Any, *, images_present: bool
-) -> list[str]:
+def release_member_names(manifest: Any, *, images_present: bool) -> list[str]:
     """The ordered release file names active for this run."""
-    return [spec["name"] for spec in selected_release_members(
-        manifest, images_present=images_present
-    )]
+    return [
+        spec["name"]
+        for spec in selected_release_members(manifest, images_present=images_present)
+    ]
 
 
-def frozen_member_names(
-    manifest: Any, *, images_present: bool
-) -> list[str]:
+def frozen_member_names(manifest: Any, *, images_present: bool) -> list[str]:
     """Active members whose bytes arrive via the frozen snapshot."""
     return [
         spec["name"]
-        for spec in selected_release_members(
-            manifest, images_present=images_present
-        )
+        for spec in selected_release_members(manifest, images_present=images_present)
         if spec.get("source", "frozen") == "frozen"
     ]
 
@@ -327,9 +323,7 @@ def write_release_manifest(run_dir: Path, payload: Mapping[str, Any]) -> Path:
     """Record the complete release manifest alongside the release."""
     return _atomic_write(
         Path(run_dir, RELEASE_MANIFEST_NAME),
-        (
-            json.dumps(dict(payload), indent=2, sort_keys=True) + "\n"
-        ).encode("utf-8"),
+        (json.dumps(dict(payload), indent=2, sort_keys=True) + "\n").encode("utf-8"),
     )
 
 
@@ -337,7 +331,7 @@ def write_detached_hash(run_dir: Path, zip_digest: str) -> Path:
     """Write the detached ``release.sha256`` hash of ``release.zip``."""
     return _atomic_write(
         Path(run_dir, RELEASE_HASH_NAME),
-        f"{zip_digest}  {RELEASE_ZIP_NAME}\n".encode("utf-8"),
+        f"{zip_digest}  {RELEASE_ZIP_NAME}\n".encode(),
     )
 
 

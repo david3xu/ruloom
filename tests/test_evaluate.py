@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
@@ -25,6 +26,7 @@ from evaluate import (  # noqa: E402
     summarize,
     usage_dict_tokens,
 )
+
 from models.base import Completion, ModelError, Usage  # noqa: E402
 from profiles.hylogger.analysis.calibration import load_thresholds  # noqa: E402
 from profiles.hylogger.analysis.statistics import Profile  # noqa: E402
@@ -94,8 +96,12 @@ class RefusingModel:
 
 def _good_csv(n: int = 6) -> str:
     samples = [
-        Sample(depth_m=100.0 + 0.005 * i, valid=True,
-               swir_group="QUARTZ", tir_group="CHLORITE")
+        Sample(
+            depth_m=100.0 + 0.005 * i,
+            valid=True,
+            swir_group="QUARTZ",
+            tir_group="CHLORITE",
+        )
         for i in range(n)
     ]
     return to_csv_bytes(samples).decode("utf-8")
@@ -105,11 +111,16 @@ def _good_csv(n: int = 6) -> str:
 
 
 def test_usage_dict_tokens_accepts_objects_and_stored_dicts():
-    usage = Usage(model="m", input_tokens=10, output_tokens=20,
-                  reasoning_tokens=5, calls=1)
+    usage = Usage(
+        model="m", input_tokens=10, output_tokens=20, reasoning_tokens=5, calls=1
+    )
     assert usage_dict_tokens(usage) == 35
-    assert usage_dict_tokens({"input_tokens": 10, "output_tokens": 20,
-                              "reasoning_tokens": 5, "calls": 1}) == 35
+    assert (
+        usage_dict_tokens(
+            {"input_tokens": 10, "output_tokens": 20, "reasoning_tokens": 5, "calls": 1}
+        )
+        == 35
+    )
     assert usage_dict_tokens({}) == 0
     assert usage_dict_tokens({"input_tokens": "x", "output_tokens": None}) == 0
 
@@ -175,12 +186,15 @@ def test_group_results_accepts_plain_json_mappings():
 
 def test_score_samples_mirrors_validate_step(thresholds, source_samples):
     samples = [
-        Sample(depth_m=100.0 + 0.005 * i, valid=True,
-               swir_group="QUARTZ", tir_group="CHLORITE")
+        Sample(
+            depth_m=100.0 + 0.005 * i,
+            valid=True,
+            swir_group="QUARTZ",
+            tir_group="CHLORITE",
+        )
         for i in range(8)
     ]
-    report = score_samples(samples, thresholds, source_samples,
-                           artifact_name="fixture")
+    report = score_samples(samples, thresholds, source_samples, artifact_name="fixture")
     assert report.results[0].name == "csv_schema"
     assert report.results[0].status == "pass"
     assert report.verdict in ("pass", "fail")
@@ -217,8 +231,9 @@ def test_parse_garbage_csv_reports_error():
 
 
 def test_baseline_run_scores_and_counts_tokens(thresholds, source_samples, profile):
-    record = run_baseline(FakeModel(_good_csv(6)), profile, source_samples,
-                          thresholds, 6)
+    record = run_baseline(
+        FakeModel(_good_csv(6)), profile, source_samples, thresholds, 6
+    )
     assert record["requested_rows"] == 6
     assert record["parsed_rows"] == 6
     assert record["parse_error"] is None
@@ -230,8 +245,7 @@ def test_baseline_run_scores_and_counts_tokens(thresholds, source_samples, profi
 
 
 def test_baseline_run_refusal_records_error(thresholds, source_samples, profile):
-    record = run_baseline(RefusingModel(), profile, source_samples,
-                          thresholds, 1000)
+    record = run_baseline(RefusingModel(), profile, source_samples, thresholds, 1000)
     assert record["requested_rows"] == 1000
     assert record["parsed_rows"] == 0
     assert "ModelError" in (record["parse_error"] or "")
@@ -242,8 +256,9 @@ def test_baseline_run_refusal_records_error(thresholds, source_samples, profile)
 def test_baseline_run_garbage_csv_records_parse_failure(
     thresholds, source_samples, profile
 ):
-    record = run_baseline(FakeModel("not a csv\n"), profile, source_samples,
-                          thresholds, 1000)
+    record = run_baseline(
+        FakeModel("not a csv\n"), profile, source_samples, thresholds, 1000
+    )
     assert record["requested_rows"] == 1000
     assert record["parsed_rows"] == 0
     assert record["parse_error"] is not None
@@ -303,9 +318,7 @@ def test_evaluate_hole_writes_json_with_skipped_pipeline(tmp_path, monkeypatch):
     with (sources / "MINI-scalars.csv").open("w", encoding="utf-8") as handle:
         handle.write("StartDepth,Final_Mask,Grp1_sTSAS,Grp1_sjCLST\n")
         for i in range(40):
-            handle.write(
-                f"{100.0 + 0.005 * i},1,QUARTZ,CHLORITE\n"
-            )
+            handle.write(f"{100.0 + 0.005 * i},1,QUARTZ,CHLORITE\n")
     prof_dir = staged / "profiles" / "hylogger"
     prof_dir.mkdir(parents=True)
     shutil.copy(
@@ -351,27 +364,27 @@ def _write_stale_run(hole_out: Path) -> Path:
     stale.mkdir(parents=True)
     (stale / "run.jsonl").write_text('{"stage": "done"}\n', encoding="utf-8")
     (stale / "validation-report.json").write_text(
-        json.dumps({
-            "verdict": "pass",
-            "artifact_sha256": "0" * 64,
-            "results": [{"name": "has_rows", "status": "pass"}],
-        }),
+        json.dumps(
+            {
+                "verdict": "pass",
+                "artifact_sha256": "0" * 64,
+                "results": [{"name": "has_rows", "status": "pass"}],
+            }
+        ),
         encoding="utf-8",
     )
-    (stale / "data.csv").write_text("depth_m,valid\n100.0,true\n",
-                                    encoding="utf-8")
+    (stale / "data.csv").write_text("depth_m,valid\n100.0,true\n", encoding="utf-8")
     return stale
 
 
 def _failing_run(monkeypatch, returncode=2, stderr="error: boom"):
     def _run(*args, **kwargs):
         return _Proc(returncode=returncode, stdout="", stderr=stderr)
+
     monkeypatch.setattr(evaluate_module.subprocess, "run", _run)
 
 
-def test_pipeline_failure_over_stale_artifacts_is_unscorable(
-    tmp_path, monkeypatch
-):
+def test_pipeline_failure_over_stale_artifacts_is_unscorable(tmp_path, monkeypatch):
     """R09-harness: CLI exit!=0 with no fresh run dir is NEVER scored.
 
     Regression for the audit violation: a failing CLI run over an old
@@ -423,22 +436,22 @@ def test_baseline_run_saves_raw_bytes_and_invocation(
     prompt digest, model identity, invocation id, usage, and error state."""
     save_dir = tmp_path / "baseline"
     record = run_baseline(
-        FakeModel(_good_csv(6)), profile, source_samples, thresholds, 6,
+        FakeModel(_good_csv(6)),
+        profile,
+        source_samples,
+        thresholds,
+        6,
         save_dir=save_dir,
     )
     assert record.get("unscorable") is not True
     assert (save_dir / "baseline.csv").is_file()
     assert (save_dir / "invocation.json").is_file()
-    invocation = json.loads(
-        (save_dir / "invocation.json").read_text(encoding="utf-8")
-    )
+    invocation = json.loads((save_dir / "invocation.json").read_text(encoding="utf-8"))
     assert invocation["model"] == "fake-model"
     assert invocation["invocation_id"] == record["invocation_id"]
     assert invocation["prompt_sha256"] == record["prompt_sha256"]
     assert invocation["output_sha256"] == record["output_bytes_sha256"]
-    assert (save_dir / "baseline.csv").read_bytes().decode("utf-8") == (
-        _good_csv(6)
-    )
+    assert (save_dir / "baseline.csv").read_bytes().decode("utf-8") == (_good_csv(6))
 
 
 def test_baseline_failure_is_unscorable_and_never_reuses_previous(
@@ -446,12 +459,20 @@ def test_baseline_failure_is_unscorable_and_never_reuses_previous(
 ):
     save_dir = tmp_path / "baseline"
     first = run_baseline(
-        FakeModel(_good_csv(6)), profile, source_samples, thresholds, 6,
+        FakeModel(_good_csv(6)),
+        profile,
+        source_samples,
+        thresholds,
+        6,
         save_dir=save_dir,
     )
     assert first["report"] is not None
     second = run_baseline(
-        RefusingModel(), profile, source_samples, thresholds, 6,
+        RefusingModel(),
+        profile,
+        source_samples,
+        thresholds,
+        6,
         save_dir=save_dir,
     )
     assert second.get("unscorable") is True
@@ -463,11 +484,13 @@ def test_baseline_failure_is_unscorable_and_never_reuses_previous(
 
 def test_summarize_counts_unscorable_in_denominator():
     records = [_hole_record("H1", "pass", True)]
-    records.append({
-        "hole": "H2",
-        "pipeline": {"unscorable": True, "reason": "exit 2, no fresh run"},
-        "baseline": {"unscorable": True, "reason": "refused"},
-    })
+    records.append(
+        {
+            "hole": "H2",
+            "pipeline": {"unscorable": True, "reason": "exit 2, no fresh run"},
+            "baseline": {"unscorable": True, "reason": "refused"},
+        }
+    )
     summary = summarize(records)
     pipe = summary["arms"]["pipeline"]
     assert pipe["holes"] == 1
@@ -485,15 +508,13 @@ def test_recompute_from_disk_matches_summary(tmp_path):
     summary = summarize(records)
     (out_dir / "H1.json").write_text(json.dumps(records[0]), encoding="utf-8")
     summary["out"] = "eval"
-    (out_dir / "summary.json").write_text(
-        json.dumps(summary), encoding="utf-8"
-    )
+    (out_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
     recomputed = recompute_summary(out_dir)
     assert recomputed["arms"]["pipeline"]["verdict_pass"] == 1
 
 
 def test_recompute_detects_tampered_summary(tmp_path):
-    from evaluate import recompute_summary, summary_mismatch  # noqa: E402
+    from evaluate import summary_mismatch  # noqa: E402
 
     out_dir = tmp_path / "eval"
     out_dir.mkdir()
@@ -501,9 +522,7 @@ def test_recompute_detects_tampered_summary(tmp_path):
     summary = summarize(records)
     (out_dir / "H1.json").write_text(json.dumps(records[0]), encoding="utf-8")
     summary["arms"]["pipeline"]["verdict_pass"] = 99
-    (out_dir / "summary.json").write_text(
-        json.dumps(summary), encoding="utf-8"
-    )
+    (out_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
     assert summary_mismatch(out_dir)
 
 
@@ -512,9 +531,7 @@ def test_render_results_table_from_summary_json(tmp_path):
     summary = summarize(records)
     summary_path = tmp_path / "summary.json"
     summary_path.write_text(json.dumps(summary), encoding="utf-8")
-    table = render_results_table(
-        json.loads(summary_path.read_text(encoding="utf-8"))
-    )
+    table = render_results_table(json.loads(summary_path.read_text(encoding="utf-8")))
     assert "H1" in table
     assert "Constraints pass" in table
     assert "Fidelity pass" in table

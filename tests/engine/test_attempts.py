@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from engine.core.manifest import ENGINE_API, validate_manifest
 from engine.core.runner import EXIT_FAILED, EXIT_OK, execute
@@ -109,9 +110,7 @@ def _registry(
     def decide(ctx: Any) -> None:
         plan = _next_plan(ctx)
         ctx.set_plan(plan)
-        ctx.record_artifact(
-            "out.bin", "text/csv", f"payload-{plan['seed']}".encode()
-        )
+        ctx.record_artifact("out.bin", "text/csv", f"payload-{plan['seed']}".encode())
 
     def judge(ctx: Any) -> None:
         failed = failure_queue.pop(0)
@@ -307,15 +306,11 @@ def test_attempt_records_bind_digest_source_seed_tokens(
         assert receipt["tokens"] == 3
         assert len(receipt["artifact_refs"]) == 1
     first_plan = json.loads(
-        (run_dir / "attempts" / "attempt-1" / "plan.json").read_text(
-            encoding="utf-8"
-        )
+        (run_dir / "attempts" / "attempt-1" / "plan.json").read_text(encoding="utf-8")
     )
     assert first_plan == {"seed": 5, "n_rows": 4}
     second_checks = json.loads(
-        (run_dir / "attempts" / "attempt-2" / "checks.json").read_text(
-            encoding="utf-8"
-        )
+        (run_dir / "attempts" / "attempt-2" / "checks.json").read_text(encoding="utf-8")
     )
     assert {c["check_id"]: c["status"] for c in second_checks} == {
         "check_a": "pass",

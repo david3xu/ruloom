@@ -32,8 +32,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from profiles.hylogger.analysis.calibration import load_thresholds  # noqa: E402
-from profiles.hylogger.analysis.statistics import build_stats  # noqa: E402
-from profiles.hylogger.analysis.statistics import Profile  # noqa: E402
+from profiles.hylogger.analysis.statistics import (  # noqa: E402
+    Profile,
+    build_stats,
+)
 from profiles.hylogger.generation.generate import generate_samples  # noqa: E402
 from profiles.hylogger.intake.reader import read_scalar_csv  # noqa: E402
 from profiles.hylogger.validation.checks import (  # noqa: E402
@@ -67,8 +69,9 @@ def _fmt(value: object) -> str:
 
 def main() -> int:
     data_dir = REPO_ROOT / "data" / "sources"
-    missing = [name for name in SOURCES
-               if not (data_dir / f"{name}-scalars.csv").is_file()]
+    missing = [
+        name for name in SOURCES if not (data_dir / f"{name}-scalars.csv").is_file()
+    ]
     if missing:
         print(
             f"scorecard addendum needs data/sources ({', '.join(missing)} "
@@ -77,7 +80,8 @@ def main() -> int:
         )
         return 2
     thresholds = load_thresholds(
-        REPO_ROOT / "profiles" / "hylogger" / "thresholds.json")
+        REPO_ROOT / "profiles" / "hylogger" / "thresholds.json"
+    )
     assert TIR_PERSISTENCE_P95 == 0.155469, "addendum pins the frozen p95"
 
     today = datetime.date.today().isoformat()
@@ -124,10 +128,14 @@ def main() -> int:
         "## Per-hole results",
         "",
     ]
-    verdict_table = ["| hole | seed | verdict | failed | skipped |",
-                     "|---|---|---|---|---|"]
-    before_after = ["| hole | persist src | persist synth before (rp05) | persist synth after (min..max over seeds) |",
-                    "|---|---|---|---|"]
+    verdict_table = [
+        "| hole | seed | verdict | failed | skipped |",
+        "|---|---|---|---|---|",
+    ]
+    before_after = [
+        "| hole | persist src | persist synth before (rp05) | persist synth after (min..max over seeds) |",
+        "|---|---|---|---|",
+    ]
     for name in SOURCES:
         source = read_scalar_csv(data_dir / f"{name}-scalars.csv")
         profile = Profile.from_samples(source, name, "scorecard-cp02")
@@ -145,17 +153,23 @@ def main() -> int:
         old_seed, old_lo, old_hi = OLD_SYNTHETIC[name]
         lines.append(f"### {name} (n={len(source)})")
         lines.append("")
-        lines.append(f"Source TIR persistence: {_fmt(src_persist)}; "
-                     f"RP-05 synthetic: seed-446 {_fmt(old_seed)}, "
-                     f"range {_fmt(old_lo)}..{_fmt(old_hi)}.")
+        lines.append(
+            f"Source TIR persistence: {_fmt(src_persist)}; "
+            f"RP-05 synthetic: seed-446 {_fmt(old_seed)}, "
+            f"range {_fmt(old_lo)}..{_fmt(old_hi)}."
+        )
         lines.append("")
-        lines.append("| seed | verdict | persist synth | drift (tol) | joint agree src -> synth |")
+        lines.append(
+            "| seed | verdict | persist synth | drift (tol) | joint agree src -> synth |"
+        )
         lines.append("|---|---|---|---|---|")
         new_persists: list[float] = []
         for seed in SEEDS:
             synth = generate_samples(profile, seed, len(source))
             report = run_checks(
-                synth, thresholds, source_reference=reference,
+                synth,
+                thresholds,
+                source_reference=reference,
                 expected_geometry=expected,
                 artifact_name=f"{name}:seed-{seed}",
             )
@@ -164,23 +178,27 @@ def main() -> int:
             if persist is not None:
                 new_persists.append(persist)
             persist_result = next(
-                r for r in report.results
-                if r.name == "tir_persistence_fidelity")
+                r for r in report.results if r.name == "tir_persistence_fidelity"
+            )
             agree = (
                 f"{_fmt(source_stats['joint']['agreement'])} -> "
-                f"{_fmt(synth_stats['joint']['agreement'])}")
+                f"{_fmt(synth_stats['joint']['agreement'])}"
+            )
             lines.append(
                 f"| {seed} | {report.verdict} | {_fmt(persist)} | "
-                f"{persist_result.detail} | {agree} |")
+                f"{persist_result.detail} | {agree} |"
+            )
             verdict_table.append(
                 f"| {name} | {seed} | {report.verdict} | "
                 f"{','.join(report.failed) or '-'} | "
-                f"{','.join(report.skipped) or '-'} |")
+                f"{','.join(report.skipped) or '-'} |"
+            )
         lines.append("")
         before_after.append(
             f"| {name} | {_fmt(src_persist)} | {_fmt(old_seed)}, "
             f"{_fmt(old_lo)}..{_fmt(old_hi)} | "
-            f"{_fmt(min(new_persists))}..{_fmt(max(new_persists))} |")
+            f"{_fmt(min(new_persists))}..{_fmt(max(new_persists))} |"
+        )
     lines.append("## Before/after TIR persistence")
     lines.append("")
     lines.extend(before_after)
@@ -205,7 +223,9 @@ def main() -> int:
     lines.append("- Generator bytes move deliberately: the PDD446 seed-42 golden")
     lines.append("  artifact goes from")
     lines.append("  `be9e26d7e6640c4acc8ef35b4f9487f2c3d114142d47b5b68d21daca76989ab3`")
-    lines.append("  to `55eb1c22e212cc61523548875af5e98b3c040aecdb7d9dc7ac59d7836f58d85f`")
+    lines.append(
+        "  to `55eb1c22e212cc61523548875af5e98b3c040aecdb7d9dc7ac59d7836f58d85f`"
+    )
     lines.append("  (same profile/seed/n_rows; verdict pass).")
     lines.append("")
     out = REPO_ROOT / "docs" / "quality" / "scorecard-cp02-addendum.md"

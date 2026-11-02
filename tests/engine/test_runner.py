@@ -8,8 +8,9 @@ and verdict writes restricted to declared capabilities.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
@@ -253,9 +254,7 @@ def test_best_attempt_is_kept(tmp_path: Path) -> None:
     log: dict = {}
     code, outcome = _run(
         tmp_path,
-        _passing_registry(
-            [["shape_ok", "content_ok"], ["content_ok"]], log
-        ),
+        _passing_registry([["shape_ok", "content_ok"], ["content_ok"]], log),
         client_payloads=[{"rev": 0}, {"rev": 1}],
         max_attempts=2,
     )
@@ -448,14 +447,19 @@ def test_advisory_excluded_from_verdict(tmp_path: Path) -> None:
         ],
     )
     code, outcome = _run(
-        tmp_path, {"judge": judge, "retry": retry}, manifest=manifest,
+        tmp_path,
+        {"judge": judge, "retry": retry},
+        manifest=manifest,
         max_attempts=1,
     )
     assert code == EXIT_FAILED
     assert outcome["failed"] == ["shape_ok"]
     assert outcome["advisories"] == [
-        {"capability": "judge", "name": "cheerful",
-         "payload": {"assessment": "looks fine"}}
+        {
+            "capability": "judge",
+            "name": "cheerful",
+            "payload": {"assessment": "looks fine"},
+        }
     ]
 
 

@@ -10,14 +10,15 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import pytest
 
 from engine import cli as cli_module
-from engine.core.manifest import load_manifest
 from engine.audit.runlog import RunLog
+from engine.core.manifest import load_manifest
 from models.base import Completion, Usage
 from profiles.hylogger import capabilities as hy_capabilities
 from profiles.hylogger.generation.plan import provider_schema
@@ -63,13 +64,9 @@ def _write_thresholds(tmp_path: Path) -> Path:
             "spacing_median_m": Band("spacing_median_m", 0.005, 0.01),
             "repeated_depth_fraction": Band("repeated_depth_fraction", 0.0, 0.2),
             "valid_fraction": Band("valid_fraction", 0.5, 1.0),
-            "swir_answer_rate": Band(
-                "swir_answer_rate", 0.0, 1.0, vacuous=True
-            ),
+            "swir_answer_rate": Band("swir_answer_rate", 0.0, 1.0, vacuous=True),
             "tir_answer_rate": Band("tir_answer_rate", 0.9, 1.0),
-            "repeated_valid_fraction": Band(
-                "repeated_valid_fraction", 0.0, 0.05
-            ),
+            "repeated_valid_fraction": Band("repeated_valid_fraction", 0.0, 0.05),
             "backward_steps": Band("backward_steps", 0, 0),
         },
         swir_vocabulary=frozenset({"A", "B"}),
@@ -127,14 +124,19 @@ def test_generic_path_matches_compat_path(
 
     def run(extra: list[str]) -> Path:
         out_dir = tmp_path / f"out-{len(extra)}"
-        argv = ["run", str(csv_path), "--max-attempts", "2",
-                "--out", str(out_dir)] + extra
+        argv = [
+            "run",
+            str(csv_path),
+            "--max-attempts",
+            "2",
+            "--out",
+            str(out_dir),
+        ] + extra
         monkeypatch.setattr("sys.stdin", io.StringIO("accept\nok\n"))
         code = cli_module.main(argv, model=FakeModel([{"seed": 8, "n_rows": 8}]))
         assert code == 0
         run_dirs = [
-            c for c in (out_dir / "runs").iterdir()
-            if (c / "run.json").is_file()
+            c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()
         ]
         assert len(run_dirs) == 1
         return run_dirs[0]
@@ -143,13 +145,18 @@ def test_generic_path_matches_compat_path(
     generic = run(["--profile", "hylogger"])
     # Unique persistent runs: identical payload bytes, distinct run ids.
     assert compat.name != generic.name
-    for name in ("data.csv", "plan.json", "validation-report.json",
-                 "seed.txt"):
+    for name in ("data.csv", "plan.json", "validation-report.json", "seed.txt"):
         assert (compat / name).read_bytes() == (generic / name).read_bytes()
-    for name in ("data.csv", "plan.json", "validation-report.json",
-                 "seed.txt", "evidence-report.md"):
+    for name in (
+        "data.csv",
+        "plan.json",
+        "validation-report.json",
+        "seed.txt",
+        "evidence-report.md",
+    ):
         assert (compat / name).is_file()
         assert (generic / name).is_file()
+
     # checksums.sha256 also attests run.jsonl, which carries the per-run
     # id, so only the lines for the identical members match across runs.
     def attested(artifact: Path) -> dict[str, str]:
@@ -158,22 +165,19 @@ def test_generic_path_matches_compat_path(
             (parts[1], parts[0])
             for parts in (
                 line.split("  ")
-                for line in (artifact / "checksums.sha256").read_text(
-                    encoding="utf-8"
-                ).splitlines()
+                for line in (artifact / "checksums.sha256")
+                .read_text(encoding="utf-8")
+                .splitlines()
             )
         )
 
     compat_sums, generic_sums = attested(compat), attested(generic)
-    for name in ("data.csv", "plan.json", "validation-report.json",
-                 "seed.txt"):
+    for name in ("data.csv", "plan.json", "validation-report.json", "seed.txt"):
         assert compat_sums[name] == generic_sums[name]
     # Provenance carries the per-run id, so only its content shape matches.
     for artifact in (compat, generic):
         record = json.loads((artifact / "run.json").read_text(encoding="utf-8"))
-        lines = (artifact / "provenance.md").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        lines = (artifact / "provenance.md").read_text(encoding="utf-8").splitlines()
         assert lines[0] == "# Provenance"
         assert any(line.startswith("Run: ") for line in lines)
         assert any(

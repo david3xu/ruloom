@@ -36,9 +36,7 @@ WIDTH, HEIGHT = 24, 12
 
 
 def _reference():
-    return compute_statistics(
-        make_fixture_png(WIDTH, HEIGHT, PALETTE), "reference.png"
-    )
+    return compute_statistics(make_fixture_png(WIDTH, HEIGHT, PALETTE), "reference.png")
 
 
 def _reference_png() -> bytes:
@@ -46,9 +44,7 @@ def _reference_png() -> bytes:
 
 
 def _scene() -> dict:
-    return build_schematic_scene(
-        _reference().to_dict(), "reference.png"
-    ).to_dict()
+    return build_schematic_scene(_reference().to_dict(), "reference.png").to_dict()
 
 
 def test_reference_self_check_passes() -> None:
@@ -161,13 +157,9 @@ def test_shared_scene_drives_both_views() -> None:
     assert views_agree(scene)
     table = table_view(scene)
     image = image_view(scene)
-    assert [row["sample_id"] for row in table] == [
-        row["sample_id"] for row in image
-    ]
+    assert [row["sample_id"] for row in table] == [row["sample_id"] for row in image]
     assert len(table) == len(scene["entries"]) == 4
-    for entry, table_row, image_row in zip(
-        scene["entries"], table, image
-    ):
+    for entry, table_row, image_row in zip(scene["entries"], table, image):
         assert table_row["depth_top"] == entry["depth_top"]
         assert table_row["depth_bottom"] == entry["depth_bottom"]
         assert image_row["row_lo"] == entry["row_lo"]

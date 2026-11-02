@@ -26,9 +26,10 @@ from __future__ import annotations
 
 import csv
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence, Union
+from typing import Union
 
 PathLike = Union[str, Path]
 
@@ -101,9 +102,7 @@ def read_scalar_csv(path: PathLike) -> list[Sample]:
             if name not in fields
         ]
         if missing:
-            raise ValueError(
-                f"{path}: missing required columns: {', '.join(missing)}"
-            )
+            raise ValueError(f"{path}: missing required columns: {', '.join(missing)}")
         for row in reader:
             depth = parse_depth(row.get(DEPTH_COLUMN))
             if depth is None:

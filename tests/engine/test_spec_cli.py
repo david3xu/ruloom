@@ -15,8 +15,9 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from engine import cli as cli_module
 from engine.audit.runlog import RunLog
@@ -84,9 +85,7 @@ def _run(
 
 def _run_dirs(out: Path) -> list[Path]:
     return [
-        child
-        for child in (out / "runs").iterdir()
-        if (child / "run.json").is_file()
+        child for child in (out / "runs").iterdir() if (child / "run.json").is_file()
     ]
 
 
@@ -120,9 +119,7 @@ def test_spec_file_matching_defaults_runs_identically(
             "--out",
             str(out),
         ] + list(extra)
-        code = _run(
-            monkeypatch, tmp_path, argv, FakeModel([{"seed": 7, "n_rows": 20}])
-        )
+        code = _run(monkeypatch, tmp_path, argv, FakeModel([{"seed": 7, "n_rows": 20}]))
         assert code == 0
         run_dirs = _run_dirs(out)
         assert len(run_dirs) == 1
@@ -133,9 +130,7 @@ def test_spec_file_matching_defaults_runs_identically(
     assert (default_dir / "data.csv").read_bytes() == (
         spec_dir / "data.csv"
     ).read_bytes()
-    default_record = json.loads(
-        (default_dir / "run.json").read_text(encoding="utf-8")
-    )
+    default_record = json.loads((default_dir / "run.json").read_text(encoding="utf-8"))
     spec_record = json.loads((spec_dir / "run.json").read_text(encoding="utf-8"))
     assert (
         default_record["run"]["request"]["spec_digest"]

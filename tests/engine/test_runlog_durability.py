@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from engine.audit.runlog import RunLog
 from engine.core.manifest import ENGINE_API, load_manifest, validate_manifest
@@ -23,15 +24,11 @@ from models.base import Completion, ModelError, Usage
 from profiles.tabular.capabilities import CAPABILITIES as TABULAR_CAPABILITIES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TABULAR_MANIFEST = load_manifest(
-    REPO_ROOT / "profiles" / "tabular" / "profile.json"
-)
+TABULAR_MANIFEST = load_manifest(REPO_ROOT / "profiles" / "tabular" / "profile.json")
 
 
 def _run_dirs(out: Path) -> list[Path]:
-    return sorted(
-        c for c in (out / "runs").iterdir() if (c / "run.json").is_file()
-    )
+    return sorted(c for c in (out / "runs").iterdir() if (c / "run.json").is_file())
 
 
 def _run_record(run_dir: Path) -> dict[str, Any]:
@@ -98,7 +95,8 @@ def test_model_failure_after_intake_leaves_durable_failed_record(
     assert "run_start" in stages
     assert "plan" in stages
     plan_errors = [
-        event for event in log.events
+        event
+        for event in log.events
         if event["stage"] == "plan" and event["status"] == "error"
     ]
     assert len(plan_errors) == 1
@@ -308,9 +306,7 @@ class BudgetSpendingPlanner:
     def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
         return Completion(
             data={"seed": 1, "n_rows": 1},
-            usage=Usage(
-                model="fake", input_tokens=10, output_tokens=0, calls=1
-            ),
+            usage=Usage(model="fake", input_tokens=10, output_tokens=0, calls=1),
             meta={"model": "fake"},
         )
 
@@ -379,9 +375,7 @@ def _critic_registry(spent: dict[str, int]) -> dict[str, Any]:
             + "\n",
             encoding="utf-8",
         )
-        (artifact_dir / "seed.txt").write_text(
-            f"{plan['seed']}\n", encoding="utf-8"
-        )
+        (artifact_dir / "seed.txt").write_text(f"{plan['seed']}\n", encoding="utf-8")
         (artifact_dir / "provenance.md").write_text(
             ctx.provenance_text(), encoding="utf-8"
         )
@@ -464,9 +458,7 @@ def test_optional_critic_budget_failure_is_visible_and_non_fatal(
     assert outcome["verdict"] == "pass"
     # The failure is recorded visibly and cannot affect the verdict.
     failures = [
-        entry
-        for entry in outcome["advisories"]
-        if entry["name"] == "advisory-failed"
+        entry for entry in outcome["advisories"] if entry["name"] == "advisory-failed"
     ]
     assert len(failures) == 1
     assert failures[0]["payload"]["budget_exhausted"] is True
@@ -476,9 +468,7 @@ def test_optional_critic_budget_failure_is_visible_and_non_fatal(
     log = RunLog.read_jsonl(run_dirs[0] / "events.jsonl")
     assert log.verify()
     advisory_failures = [
-        event
-        for event in log.events
-        if event["status"] == "advisory-failed"
+        event for event in log.events if event["status"] == "advisory-failed"
     ]
     assert len(advisory_failures) == 1
 
@@ -499,6 +489,6 @@ def test_event_exports_match(tmp_path: Path) -> None:
     )
     assert code == EXIT_OK
     (run_dir,) = _run_dirs(out)
-    assert (run_dir / "events.jsonl").read_text(
-        encoding="utf-8"
-    ) == (run_dir / "run.jsonl").read_text(encoding="utf-8")
+    assert (run_dir / "events.jsonl").read_text(encoding="utf-8") == (
+        run_dir / "run.jsonl"
+    ).read_text(encoding="utf-8")

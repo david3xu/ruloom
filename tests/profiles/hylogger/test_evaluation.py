@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 
 from profiles.hylogger.analysis.calibration import load_thresholds
-from profiles.hylogger.validation.checks import run_checks
 from profiles.hylogger.intake.reader import Sample, read_scalar_csv
+from profiles.hylogger.validation.checks import run_checks
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 THRESHOLDS = REPO_ROOT / "profiles" / "hylogger" / "thresholds.json"
@@ -40,8 +40,9 @@ def test_all_real_holes_pass() -> None:
     verdicts = {}
     for path in _all_hole_paths():
         samples = read_scalar_csv(path)
-        report = run_checks(samples, thresholds, source_samples=samples,
-                            artifact_name=Path(path).stem)
+        report = run_checks(
+            samples, thresholds, source_samples=samples, artifact_name=Path(path).stem
+        )
         verdicts[Path(path).stem] = report.verdict
         assert report.verdict == "pass", (path, report.failed, report.skipped)
     assert len(verdicts) == 43
@@ -62,7 +63,8 @@ def test_control_backward_step() -> None:
     thresholds = load_thresholds(THRESHOLDS)
     base = _hd012()
     i = next(
-        k for k in range(1, len(base) - 2)
+        k
+        for k in range(1, len(base) - 2)
         if base[k - 1].depth_m < base[k].depth_m < base[k + 1].depth_m
     )
     bad = list(base)

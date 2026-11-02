@@ -40,10 +40,12 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 
+from ..audit.runlog import RunLog
 from .manifest import (
     ENGINE_REPORT_MEMBER,
     ENGINE_REPORT_SOURCE,
@@ -54,12 +56,12 @@ from .manifest import (
     permission_of,
 )
 from .records import (
+    VALID_CHECK_STATUSES,
     Artifact,
     Attempt,
     Decision,
     EngineCheckResult,
     Run,
-    VALID_CHECK_STATUSES,
 )
 from .runstore import RunStore, record_refusal
 from .verdict import (
@@ -68,7 +70,6 @@ from .verdict import (
     decide,
     unconditional_required_ids,
 )
-from ..audit.runlog import RunLog
 
 #: Status values the runner assigns to loop attempts.
 ATTEMPT_PASS = "pass"
@@ -98,7 +99,12 @@ class BudgetExceeded(RunnerError):
 
 
 #: A capability implementation: profile code receiving a scoped context.
-CapabilityFn = Callable[["RunContext",], None]
+CapabilityFn = Callable[
+    [
+        "RunContext",
+    ],
+    None,
+]
 
 #: Builds a model client for a resolved role configuration.
 ModelFactory = Callable[[str, Mapping[str, Any]], Any]
@@ -146,7 +152,7 @@ class _BudgetedClient:
     run record shows exactly which restricted invocation acted.
     """
 
-    def __init__(self, client: Any, runner: "_Runner", role: str) -> None:
+    def __init__(self, client: Any, runner: _Runner, role: str) -> None:
         self._client = client
         self._runner = runner
         self._role = role
@@ -165,23 +171,17 @@ class _BudgetedClient:
         completion = self._client.complete(prompt, schema)
         self._runner.record_model_usage(completion.usage)
         self._runner.note_model_call(completion.usage)
-        self._runner.note_model_invocation(
-            self._role, self._client, completion
-        )
+        self._runner.note_model_invocation(self._role, self._client, completion)
         return completion
 
     def complete_with_image(
         self, prompt: str, schema: Mapping[str, Any], image_path: Any
     ) -> Any:
         self._check_budget()
-        completion = self._client.complete_with_image(
-            prompt, schema, image_path
-        )
+        completion = self._client.complete_with_image(prompt, schema, image_path)
         self._runner.record_model_usage(completion.usage)
         self._runner.note_model_call(completion.usage)
-        self._runner.note_model_invocation(
-            self._role, self._client, completion
-        )
+        self._runner.note_model_invocation(self._role, self._client, completion)
         return completion
 
     def __getattr__(self, name: str) -> Any:
@@ -223,7 +223,7 @@ class RunContext:
         *,
         capability_id: str,
         permissions: _Permissions,
-        engine: "_Runner",
+        engine: _Runner,
     ) -> None:
         self.capability_id = capability_id
         self.permissions = permissions
@@ -245,8 +245,7 @@ class RunContext:
     def declared_checks(self) -> tuple[dict[str, Any], ...]:
         """Immutable copies of the manifest check declarations."""
         return tuple(
-            copy.deepcopy(dict(entry))
-            for entry in self._engine.manifest.checks
+            copy.deepcopy(dict(entry)) for entry in self._engine.manifest.checks
         )
 
     @property
@@ -474,9 +473,7 @@ class RunContext:
         if not isinstance(item, Mapping):
             raise RunnerError("check items must be mappings")
         check_id = item.get("check_id")
-        declared = {
-            str(entry["id"]): entry for entry in self.declared_checks
-        }
+        declared = {str(entry["id"]): entry for entry in self.declared_checks}
         entry = declared.get(str(check_id)) if isinstance(check_id, str) else None
         if entry is None:
             raise RunnerError(
@@ -485,9 +482,7 @@ class RunContext:
             )
         for key in ("kind", "status", "threshold_source"):
             if key not in item:
-                raise RunnerError(
-                    f"check {check_id!r} is missing {key!r}"
-                )
+                raise RunnerError(f"check {check_id!r} is missing {key!r}")
         if item["kind"] != entry.get("kind"):
             raise RunnerError(
                 f"check {check_id!r} kind {item['kind']!r} does not match "
@@ -501,12 +496,9 @@ class RunContext:
             )
         position = item.get("band_position")
         if position is not None and (
-            isinstance(position, bool)
-            or not isinstance(position, (int, float))
+            isinstance(position, bool) or not isinstance(position, (int, float))
         ):
-            raise RunnerError(
-                f"check {check_id!r}: 'band_position' must be a number"
-            )
+            raise RunnerError(f"check {check_id!r}: 'band_position' must be a number")
         return EngineCheckResult(
             check_id=str(check_id),
             kind=str(item["kind"]),
@@ -538,9 +530,7 @@ class RunContext:
         """Immutable copy of one recorded advisory payload, if any."""
         return self._engine.read_advisory(self.capability_id, name)
 
-    def record_artifact(
-        self, name: str, media_type: str, payload: bytes
-    ) -> Artifact:
+    def record_artifact(self, name: str, media_type: str, payload: bytes) -> Artifact:
         """Store one byte payload; identity is its SHA-256."""
         return self._engine.store_artifact(
             name, media_type, payload, self.capability_id
@@ -572,9 +562,7 @@ class RunContext:
         try:
             return self._engine.artifact_payloads[sha256]
         except KeyError as exc:
-            raise RunnerError(
-                f"no stored payload for artifact {sha256}"
-            ) from exc
+            raise RunnerError(f"no stored payload for artifact {sha256}") from exc
 
     def latest_artifact(self) -> Artifact:
         """The record for the most recently stored artifact."""
@@ -619,16 +607,12 @@ class _Runner:
         spec_digest: str | None = None,
     ) -> None:
         if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
-            raise TypeError(
-                f"max_attempts must be an integer, got {max_attempts!r}"
-            )
+            raise TypeError(f"max_attempts must be an integer, got {max_attempts!r}")
         if max_attempts < 1:
             raise ValueError(f"max_attempts must be >= 1, got {max_attempts!r}")
         missing = [c for c in manifest.capabilities if c not in registry]
         if missing:
-            raise RunnerError(
-                f"registry is missing capabilities: {', '.join(missing)}"
-            )
+            raise RunnerError(f"registry is missing capabilities: {', '.join(missing)}")
         from .spec import normalize_spec as _normalize
 
         if spec is None:
@@ -653,9 +637,7 @@ class _Runner:
         if images_dir is not None:
             images_dir = Path(images_dir)
             if not images_dir.is_dir():
-                raise RunnerError(
-                    f"images directory not found: {images_dir}"
-                )
+                raise RunnerError(f"images directory not found: {images_dir}")
         self.images_dir = images_dir
         self.local_critic_enabled = bool(local_critic)
         self.max_attempts = max_attempts
@@ -708,13 +690,10 @@ class _Runner:
         self.role_bindings: dict[str, dict[str, Any]] = {
             role: dict(config) if isinstance(config, Mapping) else {}
             for role, config in (
-                role_bindings.items() if role_bindings is not None
-                else declared.items()
+                role_bindings.items() if role_bindings is not None else declared.items()
             )
         }
-        source_map = (
-            role_binding_sources if role_binding_sources is not None else {}
-        )
+        source_map = role_binding_sources if role_binding_sources is not None else {}
         self.role_binding_sources: dict[str, dict[str, str]] = {
             role: dict(sources) for role, sources in source_map.items()
         }
@@ -736,11 +715,7 @@ class _Runner:
                 "source": str(source),
                 "max_attempts": max_attempts,
                 "out": str(out),
-                **(
-                    {"images_dir": str(images_dir)}
-                    if images_dir is not None
-                    else {}
-                ),
+                **({"images_dir": str(images_dir)} if images_dir is not None else {}),
                 **({"local_critic": True} if local_critic else {}),
                 "spec": dict(self._spec),
                 "spec_digest": self._spec_digest,
@@ -813,9 +788,7 @@ class _Runner:
         """Remember the latest model usage for the attempt log entry."""
         self._last_usage = usage
 
-    def note_model_invocation(
-        self, role: str, client: Any, completion: Any
-    ) -> None:
+    def note_model_invocation(self, role: str, client: Any, completion: Any) -> None:
         """Record one model call's effective invocation to the run log.
 
         The hosted adapter exposes its restricted invocation (argv,
@@ -834,15 +807,11 @@ class _Runner:
             details["invocation"] = {
                 "argv": list(invocation.get("argv", [])),
                 "cwd": str(invocation.get("cwd", "")),
-                "env_keys": sorted(
-                    str(key) for key in invocation.get("env_keys", [])
-                ),
+                "env_keys": sorted(str(key) for key in invocation.get("env_keys", [])),
                 "contributor": bool(invocation.get("contributor", False)),
                 "model": str(invocation.get("model", "")),
                 "returned_model": str(
-                    invocation.get(
-                        "returned_model", invocation.get("model", "")
-                    )
+                    invocation.get("returned_model", invocation.get("model", ""))
                 ),
             }
         else:
@@ -868,8 +837,7 @@ class _Runner:
         """Store the parsed source frame for granted downstream readers."""
         if not isinstance(frame, (list, dict)):
             raise RunnerError(
-                "source frame must be a list or a mapping, "
-                f"got {type(frame).__name__}"
+                f"source frame must be a list or a mapping, got {type(frame).__name__}"
             )
         self._source_frame = copy.deepcopy(frame)
 
@@ -925,13 +893,9 @@ class _Runner:
         for key, ceiling in limits.items():
             if not isinstance(key, str) or not key.startswith("max_"):
                 continue
-            if (
-                isinstance(ceiling, bool)
-                or not isinstance(ceiling, int)
-                or ceiling < 1
-            ):
+            if isinstance(ceiling, bool) or not isinstance(ceiling, int) or ceiling < 1:
                 continue
-            stripped = key[len("max_"):]
+            stripped = key[len("max_") :]
             field = {"rows": "n_rows"}.get(stripped, stripped)
             value = plan.get(field) if isinstance(plan, Mapping) else None
             if (
@@ -1018,9 +982,7 @@ class _Runner:
         """The engine-registered artifact directory, once prepared."""
         return self._artifact_dir
 
-    def store_advisory(
-        self, capability_id: str, name: str, payload: Any
-    ) -> None:
+    def store_advisory(self, capability_id: str, name: str, payload: Any) -> None:
         """Append one advisory output to the separate advisory store."""
         self.advisories.append(
             {"capability": capability_id, "name": name, "payload": payload}
@@ -1053,8 +1015,7 @@ class _Runner:
         if explicit is not None:
             if explicit not in self.artifact_payloads:
                 raise RunnerError(
-                    f"check names unknown artifact {explicit!r}: refusing "
-                    "(no release)"
+                    f"check names unknown artifact {explicit!r}: refusing (no release)"
                 )
             if explicit not in phase:
                 raise RunnerError(
@@ -1063,9 +1024,7 @@ class _Runner:
                 )
             return explicit
         if self.current_artifact_sha is None:
-            raise RunnerError(
-                "recorded checks with no artifact bound on this attempt"
-            )
+            raise RunnerError("recorded checks with no artifact bound on this attempt")
         if self.current_artifact_sha not in phase:
             raise RunnerError(
                 f"check measures artifact {self.current_artifact_sha!r} "
@@ -1089,9 +1048,7 @@ class _Runner:
             sha = self.bind_check_artifact(
                 item.get("artifact_sha256") if isinstance(item, Mapping) else None
             )
-            bound.append(
-                scoped._check_item(item, artifact_sha256=sha, attempt=attempt)
-            )
+            bound.append(scoped._check_item(item, artifact_sha256=sha, attempt=attempt))
         _validate(
             bound,
             self.manifest.checks,
@@ -1122,15 +1079,11 @@ class _Runner:
         try:
             payload = self.artifact_payloads[sha]
         except KeyError as exc:
-            raise RunnerError(
-                f"no stored payload for selected artifact {sha}"
-            ) from exc
+            raise RunnerError(f"no stored payload for selected artifact {sha}") from exc
         cache_files: dict[str, bytes] = {"data.csv": bytes(payload)}
         image_sha = self._companion.get("image_artifact_sha")
         if isinstance(image_sha, str) and image_sha in self.artifact_payloads:
-            cache_files["synthetic.png"] = bytes(
-                self.artifact_payloads[image_sha]
-            )
+            cache_files["synthetic.png"] = bytes(self.artifact_payloads[image_sha])
         self.store.sync_payload_cache(sha, cache_files)
         return artifact_dir
 
@@ -1146,15 +1099,15 @@ class _Runner:
         """
         from ..artifacts.package import (
             build_provenance as _build,
+        )
+        from ..artifacts.package import (
             resolve_output_terms as _resolve,
         )
 
         meta = self._source_meta
         verdict, _ = self.final_decision()
         self._final_verdict = verdict
-        if self._best is not None and isinstance(
-            self._best.plan_ref, Mapping
-        ):
+        if self._best is not None and isinstance(self._best.plan_ref, Mapping):
             plan = dict(self._best.plan_ref)
         else:
             plan = dict(self._plan) if isinstance(self._plan, Mapping) else {}
@@ -1277,6 +1230,8 @@ class _Runner:
         """The release-manifest rights evidence for the recorded source."""
         from ..artifacts.package import (
             resolve_output_terms as _resolve,
+        )
+        from ..artifacts.package import (
             rights_block as _rights,
         )
 
@@ -1321,11 +1276,7 @@ class _Runner:
             check_results = list(attempt_record.get("check_results") or [])
             attempt_no: int | None = best.n
         else:
-            plan = (
-                dict(self._plan)
-                if isinstance(self._plan, Mapping)
-                else {}
-            )
+            plan = dict(self._plan) if isinstance(self._plan, Mapping) else {}
             check_results = []
             attempt_no = None
         if self._evidence_digest is not None:
@@ -1342,9 +1293,7 @@ class _Runner:
             "attempt_no": attempt_no,
             "plan": plan,
             "check_results": check_results,
-            "manifest_checks": [
-                dict(entry) for entry in self.manifest.checks
-            ],
+            "manifest_checks": [dict(entry) for entry in self.manifest.checks],
             "conditions": dict(conditions),
             "decision": (
                 copy.deepcopy(dict(self._decision))
@@ -1391,17 +1340,13 @@ class _Runner:
             )
         if (
             self._decision is None
-            or self._decision.get("frozen_manifest_sha256")
-            != self._evidence_digest
+            or self._decision.get("frozen_manifest_sha256") != self._evidence_digest
         ):
             raise RunnerError(
                 "the human decision does not bind the frozen manifest: "
                 "refusing (no release)"
             )
-        if (
-            _package.candidate_digest(self._frozen_entries)
-            != self._evidence_digest
-        ):
+        if _package.candidate_digest(self._frozen_entries) != self._evidence_digest:
             raise RunnerError(
                 "the frozen snapshot changed after the human decision: "
                 "refusing (no release)"
@@ -1410,8 +1355,7 @@ class _Runner:
             payload = self._frozen_files.get(entry["path"])
             if (
                 payload is None
-                or _package.sha256_bytes(bytes(payload))
-                != entry["sha256"]
+                or _package.sha256_bytes(bytes(payload)) != entry["sha256"]
             ):
                 raise RunnerError(
                     f"frozen member {entry['path']!r} failed "
@@ -1460,8 +1404,7 @@ class _Runner:
             except KeyError as exc:
                 if spec.get("required", True):
                     raise RunnerError(
-                        f"frozen member {name!r} is missing: "
-                        "refusing (no release)"
+                        f"frozen member {name!r} is missing: refusing (no release)"
                     ) from exc
         zip_path, zip_digest = _package.write_release_zip(run_dir, files)
         try:
@@ -1512,16 +1455,12 @@ class _Runner:
     def run_conditions(self) -> dict[str, bool]:
         """Resolve the applicability conditions for the final verdict."""
         return {
-            CONDITION_IMAGES_PRESENT: (
-                self._companion.get("reference") is not None
-            ),
+            CONDITION_IMAGES_PRESENT: (self._companion.get("reference") is not None),
         }
 
     def final_decision(self) -> tuple[str, list[str]]:
         """Compute the engine-owned final verdict from validated evidence."""
-        best_results = (
-            list(self._best.check_results) if self._best is not None else []
-        )
+        best_results = list(self._best.check_results) if self._best is not None else []
         evidence = best_results + list(self.pending_checks)
         required = applicable_required_ids(
             self.manifest.checks, conditions=self.run_conditions()
@@ -1551,9 +1490,7 @@ class _Runner:
         """The unsatisfied required checks from the final verdict."""
         return list(self._final_failed)
 
-    def persist_terminal_record(
-        self, status: str, error: str | None = None
-    ) -> None:
+    def persist_terminal_record(self, status: str, error: str | None = None) -> None:
         """Mark the durable run record terminal (never overwrites history).
 
         The per-run directory already holds every event write-through;
@@ -1566,9 +1503,7 @@ class _Runner:
             error=error,
             attempts=len(self.attempts),
             artifact_sha256=self.selected_artifact_record(),
-            source_sha256=(
-                source_sha if isinstance(source_sha, str) else ""
-            ),
+            source_sha256=(source_sha if isinstance(source_sha, str) else ""),
             decision=self._decision,
         )
 
@@ -1589,9 +1524,7 @@ class _Runner:
         if role in self._models:
             return self._models[role]
         if role not in self.role_bindings:
-            raise PermissionDenied(
-                f"model role {role!r} is not bound by the manifest"
-            )
+            raise PermissionDenied(f"model role {role!r} is not bound by the manifest")
         config = self.role_bindings[role]
         if config.get("enabled", True) is False:
             raise PermissionDenied(
@@ -1661,9 +1594,7 @@ class _Runner:
         Permission denials always propagate: they are authority errors,
         never advisory output.
         """
-        policy = self.manifest.capabilities.get(capability_id, {}).get(
-            "critic_policy"
-        )
+        policy = self.manifest.capabilities.get(capability_id, {}).get("critic_policy")
         try:
             self.registry[capability_id](self.scoped(capability_id))
         except PermissionDenied:
@@ -1671,15 +1602,11 @@ class _Runner:
         except BudgetExceeded as exc:
             if policy != "optional":
                 raise
-            self._record_advisory_failure(
-                capability_id, exc, budget_exhausted=True
-            )
+            self._record_advisory_failure(capability_id, exc, budget_exhausted=True)
         except Exception as exc:  # noqa: BLE001 -- policy-recorded
             if policy != "optional":
                 raise
-            self._record_advisory_failure(
-                capability_id, exc, budget_exhausted=False
-            )
+            self._record_advisory_failure(capability_id, exc, budget_exhausted=False)
 
     def _record_advisory_failure(
         self,
@@ -1719,8 +1646,7 @@ class _Runner:
             and plan["n_rows"] > max_rows
         ):
             raise RunnerError(
-                f"plan n_rows {plan['n_rows']} exceeds limit max_rows "
-                f"{max_rows}"
+                f"plan n_rows {plan['n_rows']} exceeds limit max_rows {max_rows}"
             )
 
     def run_loop(self, node: Mapping[str, Any]) -> str:
@@ -1737,9 +1663,7 @@ class _Runner:
         stage = str(node.get("stage", "loop"))
         bound = node.get(MAX_ATTEMPTS_BINDING)
         if bound != MAX_ATTEMPTS_BINDING:
-            raise RunnerError(
-                "loop nodes bind max_attempts to the caller supply only"
-            )
+            raise RunnerError("loop nodes bind max_attempts to the caller supply only")
         required = unconditional_required_ids(self.manifest.checks)
         best: Attempt | None = None
         previous_failed: int | None = None
@@ -1766,9 +1690,7 @@ class _Runner:
                     where=f"{stage} attempt {attempt_number}",
                 )
                 plan_snapshot = (
-                    copy.deepcopy(self._plan)
-                    if isinstance(self._plan, Mapping)
-                    else {}
+                    copy.deepcopy(self._plan) if isinstance(self._plan, Mapping) else {}
                 )
                 source_sha = self._source_meta.get("source_sha256", "")
                 attempt = Attempt(
@@ -1778,9 +1700,7 @@ class _Runner:
                     check_results=list(self.pending_checks),
                     status=verdict,
                     manifest_digest=self.manifest.digest,
-                    source_sha256=(
-                        source_sha if isinstance(source_sha, str) else ""
-                    ),
+                    source_sha256=(source_sha if isinstance(source_sha, str) else ""),
                     seed=plan_snapshot.get("seed"),
                     tokens=self.model_tokens - tokens_before,
                     spec_digest=str(self._spec_digest),
@@ -1811,9 +1731,7 @@ class _Runner:
                     },
                     usage=self._last_usage,
                     artifact_sha256=(
-                        self.attempt_artifacts[-1]
-                        if self.attempt_artifacts
-                        else None
+                        self.attempt_artifacts[-1] if self.attempt_artifacts else None
                     ),
                 )
                 if best is None or len(failed) < len(best.failed):
@@ -1826,13 +1744,8 @@ class _Runner:
                     break
                 if attempt_number == self.max_attempts:
                     break
-                if (
-                    previous_failed is not None
-                    and len(failed) >= previous_failed
-                ):
-                    self.say(
-                        f"[{stage}] no improvement across two attempts: stopping"
-                    )
+                if previous_failed is not None and len(failed) >= previous_failed:
+                    self.say(f"[{stage}] no improvement across two attempts: stopping")
                     break
                 previous_failed = len(failed)
                 self.run_capability(on_fail)
@@ -1862,8 +1775,7 @@ class _Runner:
         """
         if self._artifact_dir is not None and self._evidence_digest is None:
             raise RunnerError(
-                f"no frozen snapshot bound at gate {gate_id!r}: "
-                "refusing (no release)"
+                f"no frozen snapshot bound at gate {gate_id!r}: refusing (no release)"
             )
         self.say("Human review required: the model cannot accept its own output.")
         try:
@@ -1872,9 +1784,7 @@ class _Runner:
         except EOFError as exc:
             self.say(f"[{gate_id}] error: {exc}")
             raise RunnerError(f"no human decision for gate {gate_id!r}") from exc
-        record = Decision(
-            verdict=decision, note=note, decided_by="human"
-        ).with_time()
+        record = Decision(verdict=decision, note=note, decided_by="human").with_time()
         self._decision = {
             "verdict": record.verdict,
             "note": record.note,
@@ -1943,7 +1853,8 @@ def execute(
             raise EOFError(f"no input for prompt: {prompt!r}")
         return line.rstrip("\n")
 
-    from .spec import SpecError, normalize_spec as _normalize
+    from .spec import SpecError
+    from .spec import normalize_spec as _normalize
 
     try:
         normalized_spec, spec_digest = _normalize(
@@ -1961,11 +1872,7 @@ def execute(
                 "source": str(source),
                 "max_attempts": max_attempts,
                 "out": str(out),
-                **(
-                    {"images_dir": str(images_dir)}
-                    if images_dir is not None
-                    else {}
-                ),
+                **({"images_dir": str(images_dir)} if images_dir is not None else {}),
                 "spec": dict(spec) if isinstance(spec, Mapping) else spec,
             },
             error=str(exc),
@@ -2034,9 +1941,7 @@ def execute(
                         if config.get("adapter") == "glimmer_local"
                         else {}
                     ),
-                    "sources": dict(
-                        runner.role_binding_sources.get(role, {})
-                    ),
+                    "sources": dict(runner.role_binding_sources.get(role, {})),
                 }
                 for role, config in runner.role_bindings.items()
             },
@@ -2074,9 +1979,7 @@ def execute(
                 if decision.verdict == "accept":
                     continue
                 if decision.verdict in ("modify", "reject"):
-                    runner.say(
-                        f"[{gate_id}] {decision.verdict}: no release written"
-                    )
+                    runner.say(f"[{gate_id}] {decision.verdict}: no release written")
                     runner.persist_terminal_record("declined")
                     return EXIT_DECLINED, _outcome(runner, "declined")
                 runner.say(
@@ -2104,9 +2007,7 @@ def execute(
     return EXIT_OK, _outcome(runner, "released")
 
 
-def _outcome(
-    runner: _Runner, status: str, error: str | None = None
-) -> dict[str, Any]:
+def _outcome(runner: _Runner, status: str, error: str | None = None) -> dict[str, Any]:
     if runner.final_verdict_recorded():
         verdict: str | None = runner.final_verdict_value()
         failed = list(runner.final_failed_value())

@@ -37,9 +37,7 @@ def manifest_path(profile_id: str) -> Path:
     """Manifest document for ``profile_id``."""
     path = profile_dir(profile_id) / MANIFEST_FILENAME
     if not path.is_file():
-        raise ValueError(
-            f"profile {profile_id!r} has no {MANIFEST_FILENAME}"
-        )
+        raise ValueError(f"profile {profile_id!r} has no {MANIFEST_FILENAME}")
     return path
 
 

@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import json
 import zipfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from engine.artifacts.consumer import verify_release
 from engine.core.manifest import load_manifest
@@ -228,16 +229,12 @@ def _run(
 
 
 def _run_dir(out: Path) -> Path:
-    run_dirs = [
-        child for child in out.rglob("run.json") if child.parent.name != "out"
-    ]
+    run_dirs = [child for child in out.rglob("run.json") if child.parent.name != "out"]
     assert len(run_dirs) == 1
     return run_dirs[0].parent
 
 
-def test_released_run_ships_traceable_report(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_released_run_ships_traceable_report(tmp_path: Path, monkeypatch: Any) -> None:
     code, outcome = _run(
         tmp_path, monkeypatch, [{"seed": 7, "n_rows": 20}], ["accept", "Fine."]
     )
@@ -250,16 +247,12 @@ def test_released_run_ships_traceable_report(
     assert record["run"]["request"]["spec_digest"] in text
     assert outcome["artifact_sha256"] in text
     assert "Fine." in text
-    frozen = json.loads(
-        (artifact / "frozen-manifest.json").read_text(encoding="utf-8")
-    )
+    frozen = json.loads((artifact / "frozen-manifest.json").read_text(encoding="utf-8"))
     assert frozen["evidence_digest"] in text
     with zipfile.ZipFile(artifact / "release.zip") as archive:
         assert "evidence-report.md" in archive.namelist()
         assert archive.read("evidence-report.md").decode("utf-8") == text
-    manifest = json.loads(
-        (artifact / "manifest.json").read_text(encoding="utf-8")
-    )
+    manifest = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
     assert "evidence-report.md" in [entry["path"] for entry in manifest["members"]]
     outcome_check = verify_release(artifact / "release.zip", manifest=manifest)
     assert outcome_check["artifact_sha256"] == outcome["artifact_sha256"]

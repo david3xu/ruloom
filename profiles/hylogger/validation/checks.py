@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from ..analysis.calibration import (
     Thresholds,
@@ -19,11 +20,10 @@ from ..analysis.calibration import (
     hole_scalars,
     marginal_tvd,
     scalar_summary,
-    split_halves,
 )
 from ..analysis.statistics import build_stats
-from .dataset import read_csv_bytes, to_csv_bytes
 from ..intake.reader import Sample
+from .dataset import read_csv_bytes, to_csv_bytes
 
 PASS, FAIL, SKIP = "pass", "fail", "skip"
 
@@ -110,9 +110,7 @@ def source_fidelity_reference(
             "marginals": channel_marginals(source, key),
             "tolerance": tolerance,
             "answer_rate": hole.summary[f"{channel}_answer_rate"],
-            "answer_rate_tolerance": hole.split_half_delta[
-                f"{channel}_answer_rate"
-            ],
+            "answer_rate_tolerance": hole.split_half_delta[f"{channel}_answer_rate"],
             "labels": sorted(_source_labels(source, channel)),
             "persistence": persist_all,
             "persistence_tolerance": persist_tolerance,
@@ -214,9 +212,7 @@ def _source_channel(
     return ref if isinstance(ref, Mapping) else None
 
 
-def _expected_number(
-    expected: Mapping[str, Any] | None, key: str
-) -> float | None:
+def _expected_number(expected: Mapping[str, Any] | None, key: str) -> float | None:
     """A finite requested-geometry number, or ``None`` when not plannable."""
     if not isinstance(expected, Mapping):
         return None
@@ -271,81 +267,124 @@ def run_checks(
     if all(d >= 0 for d in diffs):
         add(CheckResult("depth_non_decreasing", PASS, "depths never decrease"))
     else:
-        add(
-            CheckResult(
-                "depth_non_decreasing", FAIL, "depth decreases between rows"
-            )
-        )
+        add(CheckResult("depth_non_decreasing", FAIL, "depth decreases between rows"))
 
     n_non_finite = sum(1 for s in samples if not math.isfinite(s.depth_m))
     if n_non_finite == 0:
         add(CheckResult("depth_finite", PASS, "all depths finite"))
     else:
-        add(CheckResult(
-            "depth_finite", FAIL, f"{n_non_finite} non-finite depths"))
+        add(CheckResult("depth_finite", FAIL, f"{n_non_finite} non-finite depths"))
 
-    n_negative = sum(
-        1 for s in samples if math.isfinite(s.depth_m) and s.depth_m < 0
-    )
+    n_negative = sum(1 for s in samples if math.isfinite(s.depth_m) and s.depth_m < 0)
     if n_negative == 0:
-        add(CheckResult(
-            "depth_nonnegative", PASS,
-            "all depths use the documented nonnegative convention"))
+        add(
+            CheckResult(
+                "depth_nonnegative",
+                PASS,
+                "all depths use the documented nonnegative convention",
+            )
+        )
     else:
-        add(CheckResult(
-            "depth_nonnegative", FAIL,
-            f"{n_negative} negative depths (documented convention: "
-            "StartDepth metres are never negative)"))
+        add(
+            CheckResult(
+                "depth_nonnegative",
+                FAIL,
+                f"{n_negative} negative depths (documented convention: "
+                "StartDepth metres are never negative)",
+            )
+        )
 
-    add(_band_check("spacing_median", observed["spacing_median_m"],
-                    bands["spacing_median_m"].lo, bands["spacing_median_m"].hi))
-    add(_band_check("repeated_depth_fraction", observed["repeated_depth_fraction"],
-                    bands["repeated_depth_fraction"].lo,
-                    bands["repeated_depth_fraction"].hi))
-    add(_band_check("valid_fraction", observed["valid_fraction"],
-                    bands["valid_fraction"].lo, bands["valid_fraction"].hi))
+    add(
+        _band_check(
+            "spacing_median",
+            observed["spacing_median_m"],
+            bands["spacing_median_m"].lo,
+            bands["spacing_median_m"].hi,
+        )
+    )
+    add(
+        _band_check(
+            "repeated_depth_fraction",
+            observed["repeated_depth_fraction"],
+            bands["repeated_depth_fraction"].lo,
+            bands["repeated_depth_fraction"].hi,
+        )
+    )
+    add(
+        _band_check(
+            "valid_fraction",
+            observed["valid_fraction"],
+            bands["valid_fraction"].lo,
+            bands["valid_fraction"].hi,
+        )
+    )
 
     n_repeated = sum(1 for d in diffs if d == 0)
     if n_repeated == 0:
         add(CheckResult("repeated_depths_masked_out", PASS, "no repeated depths"))
     else:
-        add(_band_check("repeated_depths_masked_out",
-                        observed["repeated_valid_fraction"],
-                        bands["repeated_valid_fraction"].lo,
-                        bands["repeated_valid_fraction"].hi))
+        add(
+            _band_check(
+                "repeated_depths_masked_out",
+                observed["repeated_valid_fraction"],
+                bands["repeated_valid_fraction"].lo,
+                bands["repeated_valid_fraction"].hi,
+            )
+        )
 
     artifact_invalid_rate = _invalid_label_rate(samples)
     if artifact_invalid_rate is None:
         add(CheckResult("invalid_label_rate", PASS, "no invalid rows"))
     elif not isinstance(source_reference, Mapping):
-        add(CheckResult("invalid_label_rate", SKIP,
-                        "no source samples provided"))
+        add(CheckResult("invalid_label_rate", SKIP, "no source samples provided"))
     else:
         source_rate = source_reference.get("invalid_label_rate")
-        if not isinstance(source_rate, (int, float)) or isinstance(
-            source_rate, bool
-        ):
-            add(CheckResult("invalid_label_rate", SKIP,
-                            "source cannot establish invalid-label rate"))
+        if not isinstance(source_rate, (int, float)) or isinstance(source_rate, bool):
+            add(
+                CheckResult(
+                    "invalid_label_rate",
+                    SKIP,
+                    "source cannot establish invalid-label rate",
+                )
+            )
         elif artifact_invalid_rate <= float(source_rate):
-            add(CheckResult(
-                "invalid_label_rate", PASS,
-                f"invalid-label rate {artifact_invalid_rate:.6f} <= source "
-                f"{float(source_rate):.6f}"))
+            add(
+                CheckResult(
+                    "invalid_label_rate",
+                    PASS,
+                    f"invalid-label rate {artifact_invalid_rate:.6f} <= source "
+                    f"{float(source_rate):.6f}",
+                )
+            )
         else:
-            add(CheckResult(
-                "invalid_label_rate", FAIL,
-                f"invalid-label rate {artifact_invalid_rate:.6f} > source "
-                f"{float(source_rate):.6f}"))
+            add(
+                CheckResult(
+                    "invalid_label_rate",
+                    FAIL,
+                    f"invalid-label rate {artifact_invalid_rate:.6f} > source "
+                    f"{float(source_rate):.6f}",
+                )
+            )
 
     for channel in ("swir", "tir"):
         band = bands[f"{channel}_answer_rate"]
         if band.vacuous:
-            add(CheckResult(f"{channel}_answer_rate", SKIP,
-                            f"band vacuous [{band.lo}, {band.hi}]"))
+            add(
+                CheckResult(
+                    f"{channel}_answer_rate",
+                    SKIP,
+                    f"band vacuous [{band.lo}, {band.hi}]",
+                )
+            )
         else:
-            add(_band_check(f"{channel}_answer_rate", observed[f"{channel}_answer_rate"],
-                            band.lo, band.hi))
+            add(
+                _band_check(
+                    f"{channel}_answer_rate",
+                    observed[f"{channel}_answer_rate"],
+                    band.lo,
+                    band.hi,
+                )
+            )
 
     for channel in ("swir", "tir"):
         name = f"{channel}_answer_fidelity"
@@ -361,8 +400,9 @@ def run_checks(
             or not isinstance(delta, (int, float))
             or isinstance(delta, bool)
         ):
-            add(CheckResult(
-                name, SKIP, "source cannot establish answer-rate tolerance"))
+            add(
+                CheckResult(name, SKIP, "source cannot establish answer-rate tolerance")
+            )
             continue
         # Tolerance is three measured terms: the source hole's own
         # split-half delta (its spatial heterogeneity), the cross-hole
@@ -386,20 +426,28 @@ def run_checks(
         drift = abs(float(observed_rate) - float(source_rate))
         position = band_position(drift, 0.0, tolerance)
         if drift <= tolerance:
-            add(CheckResult(
-                name, PASS,
-                f"answer-rate drift {drift:.6f} <= {tolerance:.6f}",
-                position,
-            ))
+            add(
+                CheckResult(
+                    name,
+                    PASS,
+                    f"answer-rate drift {drift:.6f} <= {tolerance:.6f}",
+                    position,
+                )
+            )
         else:
-            add(CheckResult(
-                name, FAIL,
-                f"answer-rate drift {drift:.6f} > {tolerance:.6f}",
-                position,
-            ))
+            add(
+                CheckResult(
+                    name,
+                    FAIL,
+                    f"answer-rate drift {drift:.6f} > {tolerance:.6f}",
+                    position,
+                )
+            )
 
     labels = {
-        channel: {getattr(s, channel) for s in samples if getattr(s, channel) is not None}
+        channel: {
+            getattr(s, channel) for s in samples if getattr(s, channel) is not None
+        }
         for channel in ("swir_group", "tir_group")
     }
     for channel, vocab in (
@@ -409,11 +457,19 @@ def run_checks(
         unknown = sorted(labels[f"{channel}_group"] - set(vocab))
         if unknown:
             shown = ", ".join(unknown[:5])
-            add(CheckResult(f"{channel}_vocabulary", FAIL,
-                            f"unknown {channel} groups: {shown}"))
+            add(
+                CheckResult(
+                    f"{channel}_vocabulary", FAIL, f"unknown {channel} groups: {shown}"
+                )
+            )
         else:
-            add(CheckResult(f"{channel}_vocabulary", PASS,
-                            f"{len(labels[f'{channel}_group'])} {channel} groups in vocabulary"))
+            add(
+                CheckResult(
+                    f"{channel}_vocabulary",
+                    PASS,
+                    f"{len(labels[f'{channel}_group'])} {channel} groups in vocabulary",
+                )
+            )
 
     for channel in ("swir", "tir"):
         name = f"{channel}_source_vocabulary"
@@ -426,22 +482,29 @@ def run_checks(
             if not isinstance(raw_labels, list) or any(
                 not isinstance(label, str) for label in raw_labels
             ):
-                add(CheckResult(
-                    name, SKIP, "source cannot establish label support"))
+                add(CheckResult(name, SKIP, "source cannot establish label support"))
             else:
                 source_labels = set(raw_labels)
                 foreign = sorted(artifact_labels - source_labels)
                 if not foreign:
-                    add(CheckResult(
-                        name, PASS,
-                        f"{len(artifact_labels)} {channel} groups answered "
-                        "by the source"))
+                    add(
+                        CheckResult(
+                            name,
+                            PASS,
+                            f"{len(artifact_labels)} {channel} groups answered "
+                            "by the source",
+                        )
+                    )
                 else:
                     shown = ", ".join(foreign[:5])
-                    add(CheckResult(
-                        name, FAIL,
-                        f"foreign {channel} groups the source never "
-                        f"answers: {shown}"))
+                    add(
+                        CheckResult(
+                            name,
+                            FAIL,
+                            f"foreign {channel} groups the source never "
+                            f"answers: {shown}",
+                        )
+                    )
         name = f"{channel}_label_richness"
         ref = _source_channel(source_reference, channel)
         if ref is None:
@@ -451,18 +514,23 @@ def run_checks(
             if not isinstance(raw_labels, list) or any(
                 not isinstance(label, str) for label in raw_labels
             ):
-                add(CheckResult(
-                    name, SKIP, "source cannot establish label support"))
+                add(CheckResult(name, SKIP, "source cannot establish label support"))
             elif len(artifact_labels) == 1 and len(set(raw_labels)) >= 2:
                 only = sorted(artifact_labels)[0]
-                add(CheckResult(
-                    name, FAIL,
-                    f"vocabulary collapse: only {only!r} answers while the "
-                    f"source answers {len(set(raw_labels))} {channel} groups"))
+                add(
+                    CheckResult(
+                        name,
+                        FAIL,
+                        f"vocabulary collapse: only {only!r} answers while the "
+                        f"source answers {len(set(raw_labels))} {channel} groups",
+                    )
+                )
             else:
-                add(CheckResult(
-                    name, PASS,
-                    f"{len(artifact_labels)} {channel} groups answer"))
+                add(
+                    CheckResult(
+                        name, PASS, f"{len(artifact_labels)} {channel} groups answer"
+                    )
+                )
 
     for channel in ("swir", "tir"):
         name = f"{channel}_fidelity"
@@ -477,14 +545,17 @@ def run_checks(
         source_marginals = channel_ref.get("marginals")
         tolerance = channel_ref.get("tolerance")
         if tolerance is None:
-            add(CheckResult(name, SKIP,
-                            "source cannot establish split-half tolerance"))
+            add(CheckResult(name, SKIP, "source cannot establish split-half tolerance"))
             continue
         if tolerance >= TVD_VACUOUS_TOLERANCE:
-            add(CheckResult(
-                name, SKIP,
-                f"source split-half tolerance {tolerance:.6f} is vacuous: "
-                "composition unfalsifiable for this source"))
+            add(
+                CheckResult(
+                    name,
+                    SKIP,
+                    f"source split-half tolerance {tolerance:.6f} is vacuous: "
+                    "composition unfalsifiable for this source",
+                )
+            )
             continue
         distance = marginal_tvd(
             channel_marginals(samples, f"{channel}_group"),
@@ -496,20 +567,27 @@ def run_checks(
             else:
                 add(CheckResult(name, FAIL, "artifact never answers, source does"))
         elif distance <= tolerance:
-            add(CheckResult(
-                name, PASS, f"TVD {distance:.6f} <= {tolerance:.6f}",
-                band_position(distance, 0.0, tolerance),
-            ))
+            add(
+                CheckResult(
+                    name,
+                    PASS,
+                    f"TVD {distance:.6f} <= {tolerance:.6f}",
+                    band_position(distance, 0.0, tolerance),
+                )
+            )
         else:
-            add(CheckResult(
-                name, FAIL, f"TVD {distance:.6f} > {tolerance:.6f}",
-                band_position(distance, 0.0, tolerance),
-            ))
+            add(
+                CheckResult(
+                    name,
+                    FAIL,
+                    f"TVD {distance:.6f} > {tolerance:.6f}",
+                    band_position(distance, 0.0, tolerance),
+                )
+            )
 
     tir_ref = _source_channel(source_reference, "tir")
     if tir_ref is None:
-        add(CheckResult("tir_persistence_fidelity", SKIP,
-                        "no source samples provided"))
+        add(CheckResult("tir_persistence_fidelity", SKIP, "no source samples provided"))
     else:
         source_persist = tir_ref.get("persistence")
         persist_delta = tir_ref.get("persistence_tolerance")
@@ -522,13 +600,21 @@ def run_checks(
             or not isinstance(persist_delta, (int, float))
             or isinstance(persist_delta, bool)
         ):
-            add(CheckResult(
-                "tir_persistence_fidelity", SKIP,
-                "source cannot establish persistence tolerance"))
+            add(
+                CheckResult(
+                    "tir_persistence_fidelity",
+                    SKIP,
+                    "source cannot establish persistence tolerance",
+                )
+            )
         elif synth_persist is None or not n_pairs:
-            add(CheckResult(
-                "tir_persistence_fidelity", SKIP,
-                "artifact answers too few TIR pairs to compare"))
+            add(
+                CheckResult(
+                    "tir_persistence_fidelity",
+                    SKIP,
+                    "artifact answers too few TIR pairs to compare",
+                )
+            )
         else:
             # Tolerance mirrors the answer-fidelity pattern: the source
             # hole's own split-half delta (its spatial heterogeneity),
@@ -545,72 +631,85 @@ def run_checks(
             drift = abs(float(synth_persist) - float(source_persist))
             position = band_position(drift, 0.0, tolerance)
             if drift <= tolerance:
-                add(CheckResult(
-                    "tir_persistence_fidelity", PASS,
-                    f"TIR persistence drift {drift:.6f} <= {tolerance:.6f}",
-                    position,
-                ))
+                add(
+                    CheckResult(
+                        "tir_persistence_fidelity",
+                        PASS,
+                        f"TIR persistence drift {drift:.6f} <= {tolerance:.6f}",
+                        position,
+                    )
+                )
             else:
-                add(CheckResult(
-                    "tir_persistence_fidelity", FAIL,
-                    f"TIR persistence drift {drift:.6f} > {tolerance:.6f}",
-                    position,
-                ))
+                add(
+                    CheckResult(
+                        "tir_persistence_fidelity",
+                        FAIL,
+                        f"TIR persistence drift {drift:.6f} > {tolerance:.6f}",
+                        position,
+                    )
+                )
 
     n_expected = _expected_number(expected_geometry, "n_rows")
     n_int = (
         int(n_expected)
-        if n_expected is not None and n_expected.is_integer()
-        and n_expected >= 1
+        if n_expected is not None and n_expected.is_integer() and n_expected >= 1
         else None
     )
     if n_int is None:
         add(CheckResult("row_count_match", SKIP, "no requested row count"))
     elif len(samples) == n_int:
-        add(CheckResult(
-            "row_count_match", PASS, f"{len(samples)} rows as requested"))
+        add(CheckResult("row_count_match", PASS, f"{len(samples)} rows as requested"))
     else:
-        add(CheckResult(
-            "row_count_match", FAIL,
-            f"{len(samples)} rows, requested {n_int}"))
+        add(
+            CheckResult(
+                "row_count_match", FAIL, f"{len(samples)} rows, requested {n_int}"
+            )
+        )
 
     start_expected = _expected_number(expected_geometry, "start_m")
     if start_expected is None:
         add(CheckResult("depth_start_match", SKIP, "no requested start"))
     elif samples[0].depth_m == start_expected:
-        add(CheckResult(
-            "depth_start_match", PASS,
-            f"start {samples[0].depth_m} as requested"))
+        add(
+            CheckResult(
+                "depth_start_match", PASS, f"start {samples[0].depth_m} as requested"
+            )
+        )
     else:
-        add(CheckResult(
-            "depth_start_match", FAIL,
-            f"start {samples[0].depth_m}, requested {start_expected}"))
+        add(
+            CheckResult(
+                "depth_start_match",
+                FAIL,
+                f"start {samples[0].depth_m}, requested {start_expected}",
+            )
+        )
 
     step_expected = _expected_number(expected_geometry, "step_m")
     if n_int is None or start_expected is None or step_expected is None:
-        add(CheckResult(
-            "depth_end_within_requested", SKIP, "no requested geometry"))
+        add(CheckResult("depth_end_within_requested", SKIP, "no requested geometry"))
     else:
-        bound = (
-            start_expected
-            + step_expected * (n_int - 1)
-            + END_FLOAT_EPS_M
-        )
+        bound = start_expected + step_expected * (n_int - 1) + END_FLOAT_EPS_M
         end = samples[-1].depth_m
         if end <= bound:
-            add(CheckResult(
-                "depth_end_within_requested", PASS,
-                f"end {end} within requested extent {bound}"))
+            add(
+                CheckResult(
+                    "depth_end_within_requested",
+                    PASS,
+                    f"end {end} within requested extent {bound}",
+                )
+            )
         else:
-            add(CheckResult(
-                "depth_end_within_requested", FAIL,
-                f"end {end} beyond requested extent {bound}"))
+            add(
+                CheckResult(
+                    "depth_end_within_requested",
+                    FAIL,
+                    f"end {end} beyond requested extent {bound}",
+                )
+            )
 
     if n_int is None or start_expected is None or step_expected is None:
-        add(CheckResult(
-            "spacing_step_match", SKIP, "no requested geometry"))
-        add(CheckResult(
-            "depth_span_match", SKIP, "no requested geometry"))
+        add(CheckResult("spacing_step_match", SKIP, "no requested geometry"))
+        add(CheckResult("depth_span_match", SKIP, "no requested geometry"))
     else:
         # Two-sided plan fidelity (A04): the median forward spacing must
         # reproduce the requested plan step, and the end depth must equal
@@ -622,9 +721,9 @@ def run_checks(
         # fails the span alongside the one-sided extent bound above.
         median_spacing = observed["spacing_median_m"]
         if median_spacing is None:
-            add(CheckResult(
-                "spacing_step_match", SKIP,
-                "no forward spacing to compare"))
+            add(
+                CheckResult("spacing_step_match", SKIP, "no forward spacing to compare")
+            )
         else:
             step_tolerance = (
                 abs(thresholds.split_half_p95.get("spacing_median_m", 0.0))
@@ -633,41 +732,51 @@ def run_checks(
             step_drift = abs(float(median_spacing) - step_expected)
             position = band_position(step_drift, 0.0, step_tolerance)
             if step_drift <= step_tolerance:
-                add(CheckResult(
-                    "spacing_step_match", PASS,
-                    f"median spacing {median_spacing} matches requested "
-                    f"step {step_expected} (drift {step_drift:.6f} <= "
-                    f"{step_tolerance:.6f})",
-                    position,
-                ))
+                add(
+                    CheckResult(
+                        "spacing_step_match",
+                        PASS,
+                        f"median spacing {median_spacing} matches requested "
+                        f"step {step_expected} (drift {step_drift:.6f} <= "
+                        f"{step_tolerance:.6f})",
+                        position,
+                    )
+                )
             else:
-                add(CheckResult(
-                    "spacing_step_match", FAIL,
-                    f"median spacing {median_spacing} outside requested "
-                    f"step {step_expected} (drift {step_drift:.6f} > "
-                    f"{step_tolerance:.6f})",
-                    position,
-                ))
+                add(
+                    CheckResult(
+                        "spacing_step_match",
+                        FAIL,
+                        f"median spacing {median_spacing} outside requested "
+                        f"step {step_expected} (drift {step_drift:.6f} > "
+                        f"{step_tolerance:.6f})",
+                        position,
+                    )
+                )
         n_repeated = sum(1 for d in diffs if d == 0)
-        expected_end = (
-            start_expected + step_expected * (n_int - 1 - n_repeated)
-        )
+        expected_end = start_expected + step_expected * (n_int - 1 - n_repeated)
         span_drift = abs(samples[-1].depth_m - expected_end)
         if span_drift <= END_FLOAT_EPS_M:
-            add(CheckResult(
-                "depth_span_match", PASS,
-                f"end {samples[-1].depth_m} matches requested span "
-                f"{expected_end} with {n_repeated} masked repeats",
-                band_position(span_drift, 0.0, END_FLOAT_EPS_M),
-            ))
+            add(
+                CheckResult(
+                    "depth_span_match",
+                    PASS,
+                    f"end {samples[-1].depth_m} matches requested span "
+                    f"{expected_end} with {n_repeated} masked repeats",
+                    band_position(span_drift, 0.0, END_FLOAT_EPS_M),
+                )
+            )
         else:
-            add(CheckResult(
-                "depth_span_match", FAIL,
-                f"end {samples[-1].depth_m} outside requested span "
-                f"{expected_end} with {n_repeated} masked repeats "
-                f"(drift {span_drift:.6f})",
-                band_position(span_drift, 0.0, END_FLOAT_EPS_M),
-            ))
+            add(
+                CheckResult(
+                    "depth_span_match",
+                    FAIL,
+                    f"end {samples[-1].depth_m} outside requested span "
+                    f"{expected_end} with {n_repeated} masked repeats "
+                    f"(drift {span_drift:.6f})",
+                    band_position(span_drift, 0.0, END_FLOAT_EPS_M),
+                )
+            )
     return report
 
 

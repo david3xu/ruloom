@@ -12,11 +12,12 @@ before any generation runs.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import jsonschema
 
-from models.base import Completion, ModelError, StructuredModel
+from models.base import Completion, StructuredModel
 
 from ..analysis.statistics import Profile
 
@@ -107,9 +108,7 @@ def validate_plan(
             raise PlanError(
                 f"plan 'strategy' must be a non-empty string, got {strategy!r}"
             )
-        if allowed_strategies is not None and strategy not in list(
-            allowed_strategies
-        ):
+        if allowed_strategies is not None and strategy not in list(allowed_strategies):
             raise PlanError(
                 f"plan strategy {strategy!r} is not one of the supported "
                 f"strategies {list(allowed_strategies)!r}: "
@@ -123,9 +122,7 @@ def validate_plan(
     return plan
 
 
-def build_prompt(
-    profile: Profile, allowed_strategies: Any = None
-) -> str:
+def build_prompt(profile: Profile, allowed_strategies: Any = None) -> str:
     """Build the planning prompt for a profile.
 
     The only source-derived content in the prompt is the profile's
