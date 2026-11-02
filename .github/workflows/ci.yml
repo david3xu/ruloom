@@ -26,6 +26,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m pip install pytest
+          # HP-04: the wheel smoke test builds through the real backend
+          # with no isolation and no index access, so the backend must
+          # be installed in the test env (same package as [build-system]
+          # requires; floating there too).
+          python -m pip install hatchling
           # GP-03 (G7 hygiene): pin the exact ruff the repo config targets
           # (pyproject [tool.ruff]; version recorded in docs/decisions.md).
           # A floating ruff would let new upstream rules redraw the gate.

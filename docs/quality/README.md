@@ -431,10 +431,12 @@ gains it without touching the repo). The one mechanical
 and layout; the full suite caught the single real interaction (the
 `test_stdlib_transport_only` pin now names `collections` instead of the
 removed unused `socket`, stdlib-only intent unchanged).
-`tests/test_wheel_cli.py` builds a real wheel with the stdlib only,
-installs it into an isolated dir, and runs `ruloom --help` plus one
-fake-model accept run from outside the repo with all three package
-locations asserted under the install dir. The untracked `uv.lock`
+`tests/test_wheel_cli.py` builds a real wheel through the
+`hatchling.build` backend (no isolation, no index access), installs it
+into an isolated dir with the console script generated from the
+wheel's own entry points, and runs `ruloom --help` plus one fake-model
+accept run from outside the repo with all three package locations
+asserted under the install dir. The untracked `uv.lock`
 stays untouched by standing owner order (`docs/decisions.md`).
 `Q-CODE-HYGIENE` is enforced. The full suite, the gate, and the
 clean-archive check pass, and the golden PDD446 bytes reproduce

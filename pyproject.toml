@@ -22,7 +22,10 @@ build-backend = "hatchling.build"
 packages = ["engine", "models", "profiles"]
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+# hatchling is the PEP 517 backend (see [build-system]) and a test
+# requirement: tests/test_wheel_cli.py builds the wheel through
+# hatchling.build with no isolation and no index access.
+dev = ["pytest>=8.0", "hatchling"]
 
 [tool.ruff]
 # GP-03 (G7 hygiene): pinned lint/format contract. `target-version`

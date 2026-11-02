@@ -1,21 +1,31 @@
-"""Installed-wheel CLI test (GP-03 G7 hygiene).
+"""Installed-wheel CLI test (HP-04 wheel backend build).
 
 Proves the ``ruloom`` CLI works from an installed layout outside the
 repo: the test builds a real wheel from the working tree with the
-stdlib only (no network, no build backend), extracts it into an
-isolated directory (what ``pip install --target`` lays down), and runs
-both ``ruloom --help`` through a generated console-script shim and one
-minimal fake-model ``run`` through the installed ``engine.cli`` -- each
-with the working directory outside the repo and the repo root nowhere
-on ``sys.path``. The driver asserts the imported ``engine`` package
-lives under the install dir, so a stale editable install or repo-root
-leak fails the test instead of silently passing.
+project's own PEP 517 backend (``hatchling.build:build_wheel`` -- the
+same hook ``pip wheel --no-build-isolation`` calls, so the artifact,
+``dist-info`` metadata, entry points, and ``RECORD`` are backend-made,
+never hand-rolled), installs it by extracting the wheel into an
+isolated directory (the same bytes ``pip install --target`` lays
+down), generates the ``ruloom`` console script from the wheel's own
+``dist-info/entry_points.txt`` (so the exercised entry point is the
+declared ``[project.scripts]`` wiring, not a hardcoded string), and
+runs both ``ruloom --help`` through that script and one minimal
+fake-model ``run`` through the installed ``engine.cli`` -- each with
+the working directory outside the repo and the repo root nowhere on
+``sys.path``. The driver asserts every imported package lives under
+the install dir, so a stale editable install or repo-root leak fails
+the test instead of silently passing.
+
+Offline-safe: the build runs with no build isolation and no index
+access, and the install/run touch no network. The one requirement is
+the ``hatchling`` backend importable in the test environment (CI
+installs it beside pytest; the ``dev`` dependency group declares it).
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
+import configparser
 import os
 import stat
 import subprocess
@@ -25,6 +35,15 @@ import zipfile
 from pathlib import Path
 
 import pytest
+
+try:
+    from hatchling.build import build_wheel
+except ImportError as exc:  # fail closed with the fix, not a bare ModuleNotFound
+    raise ImportError(
+        "tests/test_wheel_cli.py needs the hatchling build backend "
+        "in the test environment: pip install hatchling "
+        "(CI installs it beside pytest; the dev group declares it)"
+    ) from exc
 
 ROOT = Path(__file__).resolve().parents[1]
 TIMEOUT_S = 300
@@ -41,66 +60,77 @@ COVERAGE: list[tuple[str, str, str]] = [
 ]
 
 
-def _project_meta() -> tuple[str, str, list[str]]:
+def _project_meta() -> tuple[str, str]:
     with open(ROOT / "pyproject.toml", "rb") as handle:
         data = tomllib.load(handle)
     project = data["project"]
-    packages = data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
-    return str(project["name"]), str(project["version"]), list(packages)
+    return str(project["name"]), str(project["version"])
 
 
-def _build_wheel(wheel_path: Path) -> None:
-    """Write a valid pure-Python wheel from the working tree (stdlib only).
+def _build_wheel(dist_dir: Path) -> Path:
+    """Build a real wheel with the hatchling backend; return its path.
 
-    Layout, ``dist-info`` metadata, entry points, and ``RECORD`` hashes
-    follow the wheel format so any installer accepts the artifact; only
-    the declared wheel packages ship (never ``data/`` or ``runs/``).
+    Runs in-process with no isolation and no index access, from the repo
+    root (the backend reads ``pyproject.toml`` from the cwd). The
+    returned artifact is asserted to be the single backend-named wheel
+    for this project/version, with a ``RECORD``, no stray top-level
+    trees (never ``data/``, ``runs/``, or ``tests/``), and the declared
+    ``ruloom`` console script in its entry points.
     """
-    name, version, packages = _project_meta()
-    dist_info = f"{name}-{version}.dist-info"
-    records: list[tuple[str, str, int]] = []
-
-    def add(archive: zipfile.ZipFile, arc: str, payload: bytes) -> None:
-        archive.writestr(arc, payload)
-        digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest())
-        records.append((arc, digest.rstrip(b"=").decode("ascii"), len(payload)))
-
-    with zipfile.ZipFile(wheel_path, "w", zipfile.ZIP_DEFLATED) as archive:
-        for package in packages:
-            for path in sorted((ROOT / package).rglob("*")):
-                if not path.is_file() or "__pycache__" in path.parts:
-                    continue
-                arc = path.relative_to(ROOT).as_posix()
-                add(archive, arc, path.read_bytes())
-        add(
-            archive,
-            f"{dist_info}/METADATA",
-            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n".encode(),
-        )
-        add(
-            archive,
-            f"{dist_info}/WHEEL",
-            b"Wheel-Version: 1.0\nGenerator: ruloom-wheel-test\n"
-            b"Root-Is-Purelib: true\nTag: py3-none-any\n",
-        )
-        add(
-            archive,
-            f"{dist_info}/entry_points.txt",
-            b"[console_scripts]\nruloom = engine.cli:main\n",
-        )
-        record_lines = "".join(
-            f"{arc},{digest},{size}\n" for arc, digest, size in records
-        )
-        record_lines += f"{dist_info}/RECORD,,\n"
-        archive.writestr(f"{dist_info}/RECORD", record_lines)
+    previous_cwd = os.getcwd()
+    os.chdir(ROOT)
+    try:
+        wheel_name = build_wheel(str(dist_dir))
+    finally:
+        os.chdir(previous_cwd)
+    wheels = sorted(dist_dir.glob("*.whl"))
+    assert len(wheels) == 1, f"expected one wheel, got {wheels}"
+    wheel_path = wheels[0]
+    assert wheel_path.name == wheel_name, f"{wheel_path.name} != {wheel_name}"
+    name, version = _project_meta()
+    assert wheel_name.startswith(f"{name}-{version}-"), wheel_name
+    with zipfile.ZipFile(wheel_path) as archive:
+        names = archive.namelist()
+        assert any(n.endswith(".dist-info/RECORD") for n in names), names
+        stray = [
+            n
+            for n in names
+            if n.startswith("data/")
+            or n.startswith("runs/")
+            or n.startswith("tests/")
+            or "/runs/" in n
+        ]
+        assert not stray, f"wheel ships out-of-package trees: {stray}"
+    return wheel_path
 
 
-def _write_shim(bin_dir: Path) -> Path:
+def _console_target(wheel_path: Path) -> tuple[str, str]:
+    """Resolve the ``ruloom`` console script to (module, attr).
+
+    Read from the backend-built ``dist-info/entry_points.txt`` so the
+    smoke test exercises the declared ``[project.scripts]`` wiring.
+    """
+    with zipfile.ZipFile(wheel_path) as archive:
+        entry_points = next(
+            n for n in archive.namelist() if n.endswith("entry_points.txt")
+        )
+        text = archive.read(entry_points).decode("utf-8")
+    parser = configparser.ConfigParser()
+    parser.read_string(text)
+    target = parser.get("console_scripts", "ruloom")
+    module, _, attr = target.replace(":", ".").rpartition(".")
+    assert module and attr, f"unparseable entry point: {target!r}"
+    assert (module, attr) == ("engine.cli", "main"), target
+    return module, attr
+
+
+def _write_shim(bin_dir: Path, module: str, attr: str) -> Path:
     """Generate the installed ``ruloom`` console script (as pip would)."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     shim = bin_dir / "ruloom"
     shim.write_text(
-        f"#!{sys.executable}\nfrom engine.cli import main\nraise SystemExit(main())\n",
+        f"#!{sys.executable}\nfrom {module} import {attr}\n"
+        f"raise SystemExit({attr}())\n",
         encoding="utf-8",
     )
     shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -111,17 +141,15 @@ def _write_shim(bin_dir: Path) -> Path:
 def installed_wheel(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
     """Build the wheel once and extract it into an isolated target dir."""
     work = tmp_path_factory.mktemp("wheel")
-    wheel_path = work / "ruloom-test-py3-none-any.whl"
-    _build_wheel(wheel_path)
+    wheel_path = _build_wheel(work / "dist")
     target = work / "install"
     with zipfile.ZipFile(wheel_path) as archive:
-        names = archive.namelist()
-        assert any(n.endswith(".dist-info/RECORD") for n in names)
         archive.extractall(target)
     assert (target / "engine" / "cli" / "__init__.py").is_file()
     assert (target / "models" / "base.py").is_file()
     assert (target / "profiles").is_dir()
-    shim = _write_shim(target / "bin")
+    module, attr = _console_target(wheel_path)
+    shim = _write_shim(target / "bin", module, attr)
     return {"root": target, "shim": shim}
 
 
