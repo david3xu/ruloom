@@ -792,32 +792,81 @@ class _Runner:
         """Record one model call's effective invocation to the run log.
 
         The hosted adapter exposes its restricted invocation (argv,
-        pinned cwd, inherited env key names, contributor flag, and the
-        returned model identity); any other client records its type
-        plus the usage-reported model. Only key names are stored --
-        secret values never enter the record -- and the event rides the
-        write-through sink, so the invocation is durable per call.
+        pinned cwd, inherited env key names, contributor flag, the
+        requested model, and the observed model the transport reported);
+        any other client records its type plus the requested and observed
+        identities read from the completion and the client. Requested vs
+        observed stay separate: ``model`` names what was asked,
+        ``returned_model`` names what the transport reported (``unknown``
+        when it reported none), and ``models`` carries the normalised
+        per-model entries when the completion provides them (a
+        ``multiple:...`` observed name aggregates several reported
+        identities). A mismatch never refuses; both sides are recorded.
+        Only key names are stored -- secret values never enter the
+        record -- and the event rides the write-through sink, so the
+        invocation is durable per call.
         """
         details: dict[str, Any] = {
             "role": role,
             "client": type(client).__name__,
         }
+        meta = getattr(completion, "meta", None)
+        meta_models: Any = meta.get("models") if isinstance(meta, Mapping) else None
+        models_copy = (
+            [dict(entry) for entry in meta_models if isinstance(entry, Mapping)]
+            if isinstance(meta_models, list)
+            else None
+        )
         invocation = getattr(client, "last_invocation", None)
         if isinstance(invocation, Mapping):
-            details["invocation"] = {
+            requested = invocation.get("model", "")
+            if not isinstance(requested, str) or not requested.strip():
+                requested = ""
+            returned = invocation.get("returned_model", invocation.get("model", ""))
+            if not isinstance(returned, str) or not returned.strip():
+                returned = "unknown"
+            record: dict[str, Any] = {
                 "argv": list(invocation.get("argv", [])),
                 "cwd": str(invocation.get("cwd", "")),
                 "env_keys": sorted(str(key) for key in invocation.get("env_keys", [])),
                 "contributor": bool(invocation.get("contributor", False)),
-                "model": str(invocation.get("model", "")),
-                "returned_model": str(
-                    invocation.get("returned_model", invocation.get("model", ""))
-                ),
+                "model": requested,
+                "returned_model": returned,
             }
+            if models_copy is not None:
+                record["models"] = models_copy
+            details["invocation"] = record
         else:
             usage = getattr(completion, "usage", None)
-            details["model"] = str(getattr(usage, "model", ""))
+            usage_model = getattr(usage, "model", "")
+            meta_model = meta.get("model", "") if isinstance(meta, Mapping) else ""
+            meta_requested = (
+                meta.get("requested_model", "") if isinstance(meta, Mapping) else ""
+            )
+            client_model = getattr(client, "model", "")
+            observed = self._observed_name(usage_model, meta_model)
+            requested = self._observed_name(
+                meta_requested,
+                client_model,
+                meta_model,
+                usage_model,
+                default="",
+            )
+            if not requested:
+                requested = observed
+            details["model"] = requested
+            details["returned_model"] = observed
+            if models_copy is not None:
+                details["models"] = models_copy
         self.log.append("model_invocation", "ok", details)
+
+    @staticmethod
+    def _observed_name(*candidates: Any, default: str = "unknown") -> str:
+        """First usable identity among ``candidates``, else ``default``."""
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+        return default
 
     def source_meta_record(self) -> dict[str, Any]:
         """The recorded source identity record (possibly empty)."""

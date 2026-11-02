@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .base import Completion, ModelError, Usage
+from .base import UNKNOWN_MODEL, Completion, ModelError, Usage
 
 #: Environment keys the child process may inherit (explicit allowlist).
 #: Everything else -- including every ``RULOOM_*`` setting, API tokens,
@@ -231,7 +231,16 @@ class MuseCLIModel:
     def _parse(
         self, proc: subprocess.CompletedProcess[str], schema_dict: dict
     ) -> Completion:
-        """Parse ``muse exec`` JSONL output into a structured Completion."""
+        """Parse ``muse exec`` JSONL output into a structured Completion.
+
+        Model identity policy: ``Usage.model`` and ``meta["model"]`` carry
+        the *observed* identity the transport reported -- ``UNKNOWN_MODEL``
+        when it reported none, a ``multiple:...`` aggregate when it
+        reported several -- while ``meta["requested_model"]`` keeps the
+        requested name and ``meta["models"]`` keeps the normalised
+        per-model entries in transport order. A mismatch between requested
+        and observed never refuses; both are recorded.
+        """
         if proc.returncode != 0:
             tail = (proc.stderr or "").strip()[-2000:]
             raise ModelError(f"muse exec exited {proc.returncode}: {tail}")
@@ -291,6 +300,28 @@ class MuseCLIModel:
                 f"structured answer is not a JSON object: {type(answer).__name__}"
             )
 
+        per_model: list[dict[str, Any]] = []
+        for entry in usage_models:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("model")
+            observed_name = (
+                name if isinstance(name, str) and name.strip() else UNKNOWN_MODEL
+            )
+            counts: dict[str, Any] = {"model": observed_name}
+            for key in (
+                "input_tokens",
+                "cached_tokens",
+                "output_tokens",
+                "reasoning_tokens",
+                "calls",
+            ):
+                value = entry.get(key, 0)
+                if isinstance(value, bool) or not isinstance(value, int):
+                    counts[key] = 0
+                else:
+                    counts[key] = value
+            per_model.append(counts)
         totals = {
             "input_tokens": 0,
             "cached_tokens": 0,
@@ -298,15 +329,22 @@ class MuseCLIModel:
             "reasoning_tokens": 0,
             "calls": 0,
         }
-        for entry in usage_models:
+        for entry in per_model:
             for key in totals:
-                value = entry.get(key, 0)
-                if isinstance(value, bool) or not isinstance(value, int):
-                    continue
-                totals[key] += value
-        usage = Usage(model=self.model, **totals)
+                totals[key] += entry[key]
+        if not per_model:
+            observed = UNKNOWN_MODEL
+        else:
+            distinct = list(dict.fromkeys(entry["model"] for entry in per_model))
+            if len(distinct) == 1:
+                observed = distinct[0]
+            else:
+                observed = "multiple:" + "+".join(sorted(distinct))
+        usage = Usage(model=observed, **totals)
         meta = {
-            "model": self.model,
+            "model": observed,
+            "requested_model": self.model,
+            "models": per_model,
             "effort": self.effort,
             "contributor": self.contributor,
             "output_schema": schema_dict,
