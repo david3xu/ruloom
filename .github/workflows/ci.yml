@@ -9,6 +9,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history of the single checked-out ref: the scoped-writes
+          # topology test reads phased commits from HEAD history and needs
+          # no branch refs, but it does need the history itself.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
