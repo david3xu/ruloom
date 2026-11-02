@@ -193,6 +193,41 @@ def effective_max_rows(request: Mapping[str, Any]) -> int | None:
     return top if top is not None else nested
 
 
+def effective_max_attempts(request: Mapping[str, Any]) -> int | None:
+    """The attempt bound a request declares, top-level or spec-carried.
+
+    A request may carry its attempt bound directly
+    (``max_attempts``) or inside a GenerationSpec overlay
+    (``spec.limits.max_attempts``). Conflicting declarations are
+    refused: two bounds that disagree can never both be enforced, so
+    neither is silently picked. Mirrors :func:`effective_max_rows`.
+    """
+    top = request.get("max_attempts")
+    nested: Any = None
+    spec = request.get("spec")
+    if spec is not None:
+        if not isinstance(spec, Mapping):
+            raise DispatchError(
+                f"request 'spec' must be a mapping, got {spec!r}: refusing"
+            )
+        limits = spec.get("limits")
+        if limits is not None:
+            if not isinstance(limits, Mapping):
+                raise DispatchError(
+                    f"request spec 'limits' must be a mapping, got {limits!r}: refusing"
+                )
+            if "max_attempts" in limits:
+                nested = _check_bound(
+                    limits.get("max_attempts"), field="spec 'limits.max_attempts'"
+                )
+    if top is not None and nested is not None and top != nested:
+        raise DispatchError(
+            f"request declares conflicting max_attempts bounds ({top!r} "
+            f"and {nested!r}): refusing"
+        )
+    return top if top is not None else nested
+
+
 def _normalize_request(request: Mapping[str, Any]) -> dict[str, Any]:
     """Validate the declared request and project its bound identity.
 
@@ -223,6 +258,7 @@ def _normalize_request(request: Mapping[str, Any]) -> dict[str, Any]:
     _check_bound(request.get("max_attempts"), field="'max_attempts'")
     _check_bound(request.get("max_rows"), field="'max_rows'")
     effective_max_rows(request)
+    effective_max_attempts(request)
     return {
         "profile": profile,
         "source_sha256": _check_pin(

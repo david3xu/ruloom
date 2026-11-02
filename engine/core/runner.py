@@ -625,6 +625,23 @@ class _Runner:
             )
         else:
             spec = dict(spec)
+            raw_limits = spec.get("limits")
+            if isinstance(raw_limits, Mapping):
+                spec_attempts = raw_limits.get("max_attempts", max_attempts)
+                if (
+                    isinstance(spec_attempts, bool)
+                    or not isinstance(spec_attempts, int)
+                    or spec_attempts < 1
+                ):
+                    raise RunnerError(
+                        "run spec 'limits.max_attempts' must be a positive "
+                        f"integer, got {spec_attempts!r}: refusing (no run)"
+                    )
+                if spec_attempts != max_attempts:
+                    raise RunnerError(
+                        f"run spec max_attempts {spec_attempts} contradicts "
+                        f"the caller bound {max_attempts}: refusing (no run)"
+                    )
             if spec_digest is None:
                 from ..artifacts.hashing import sha256_canonical
 

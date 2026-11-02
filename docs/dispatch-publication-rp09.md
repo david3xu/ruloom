@@ -95,12 +95,12 @@ persisted acceptance record before any byte is copied:
 - Request-to-run binding (DP-01, audit C01): the dispatch request's
   bound identity (profile, pinned source-content digest, pinned
   normalised spec digest, persisted at submit; unknown fields,
-  malformed pins/bounds, and conflicting row bounds refuse at submit)
-  must equal the identity the run's acceptance record binds and the
-  identity the run's own record delivers. Profile-name equality alone
-  never suffices: a request for source B naming source A's run
-  refuses, as does a run whose bytes changed after submit or whose
-  executed bound exceeds a declared `max_rows`.
+  malformed pins/bounds, and conflicting row/attempt bounds refuse at
+  submit) must equal the identity the run's acceptance record binds
+  and the identity the run's own record delivers. Profile-name
+  equality alone never suffices: a request for source B naming source
+  A's run refuses, as does a run whose bytes changed after submit or
+  whose executed row/attempt bound exceeds the declared bound.
 - Single-snapshot publication (DP-01, audit C02): the run ZIP is read
   once into an immutable snapshot staged through a private temp file;
   consumer verification, acceptance resolution, and the copy all run
@@ -180,8 +180,8 @@ Control cases (committed tests, no sleeps — clocks are injected):
   `attempts` persisted separately, `retries_exhausted_by_expiry`
   exhaustion, four-cycle bound, and fencing preserved, plus
   request-binding repair (DP-01 C01): unknown request fields refused,
-  malformed pins/bounds and conflicting `max_rows` refused, canonical
-  request identity persisted (pinned and unpinned shapes), plus keyed
+  malformed pins/bounds and conflicting row/attempt bounds refused,
+  canonical request identity persisted (pinned and unpinned shapes), plus keyed
   retry binding (DP-02 C03): same key with identical request returns
   the stored record unchanged, same key with a different request
   refuses, key equivalence compares the enforced request binding
