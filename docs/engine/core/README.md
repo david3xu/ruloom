@@ -79,21 +79,25 @@ a refusal means.
 `dispatch.py` coordinates *which* work runs and *who owns it*, in a
 local durable store beside the per-run history (`<base>/dispatch/`,
 one JSON record per item). Submits are idempotent (the same key
-returns the first item only when the canonical request identity also
-matches the key-to-request binding persisted at first submission; the
-same key with a different request is refused; cross-authority key
-reuse is refused), an unkeyed submit matching another owner's item is
-refused so a keyless resubmission can never return a foreign job, and
-an explicit item id is create-only: resubmitting it returns the
-existing record unchanged only under the same authority and request,
-while a changed request or a foreign authority is refused -- history
-is never rewritten and the fencing epoch never resets. Submit validates the
+returns the first item only when the canonical request identity and
+the enforced-fields binding digest also match the key-to-request
+binding persisted at first submission; the same key with a different
+request, a changed row/attempt bound, or a changed spec overlay is
+refused; cross-authority key reuse is refused), an unkeyed submit
+matching another owner's item is refused so a keyless resubmission
+can never return a foreign job, and an explicit item id is
+create-only: resubmitting it returns the existing record unchanged
+only under the same authority and request, while a changed request
+or a foreign authority is refused -- history is never rewritten and
+the fencing epoch never resets. Submit validates the
 declared request (supported fields only: profile, source,
 source-content and spec digest pins, spec overlay, row/attempt
 bounds; unknown fields, malformed pins/bounds, and conflicting row
 bounds refuse) and persists the bound request identity (profile,
 pinned source-content digest, pinned normalised spec digest) that
-publication later matches against the run. Item ids take a narrow
+publication later matches against the run, plus the canonical digest
+of the enforced request fields (identity with caller row/attempt
+bounds and the spec overlay) that same-key retries must repeat. Item ids take a narrow
 canonical shape at every entry point (letters, digits, dash,
 underscore; at most 64 characters), so no id can address a record
 outside the store's own items directory. Claims lease an item to one

@@ -13,12 +13,13 @@ publishes on anyone's behalf.
 One JSON record per submitted item under `<base>/dispatch/`:
 
 - `submit` is idempotent: the same `idempotency_key` returns the first
-  record instead of duplicating work, but only when the key and the
-  canonical request identity both match the binding persisted at first
-  submission. A key first seen under another authority is refused, so
-  keys cannot be squatted across authorities, and the same key with a
-  different request is refused instead of returning another request's
-  item. An unkeyed submit whose canonical identity matches another
+  record instead of duplicating work, but only when the key, the
+  canonical request identity, and the enforced-fields binding digest
+  all match the binding persisted at first submission. A key first
+  seen under another authority is refused, so keys cannot be squatted
+  across authorities, and the same key with a different request, a
+  changed row/attempt bound, or a changed spec overlay is refused
+  instead of returning another request's item. An unkeyed submit whose canonical identity matches another
   owner's item is refused as well, so a keyless resubmission can never
   return or shadow a foreign job. An explicit `item_id` is create-only
   and collision-safe: the first submit creates the item, and a later
@@ -153,7 +154,7 @@ report → publish → download, executed under a fresh `/tmp` root:
 
 Control cases (committed tests, no sleeps — clocks are injected):
 
-- `tests/engine/test_dispatch.py` (44 tests): idempotent submit,
+- `tests/engine/test_dispatch.py` (47 tests): idempotent submit,
   key-across-authorities denial, single-winner claim under 8 threads,
   live-conflict vs expired-redispatch (with retry budget to spend),
   terminal claim refusal, heartbeat extension and stale/wrong-worker/
@@ -174,8 +175,12 @@ Control cases (committed tests, no sleeps — clocks are injected):
   request identity persisted (pinned and unpinned shapes), plus keyed
   retry binding (DP-02 C03): same key with identical request returns
   the stored record unchanged, same key with a different request
-  refuses, key equivalence compares the canonical request identity
-  only, and an unkeyed duplicate of a foreign owner's item refuses.
+  refuses, key equivalence compares the enforced request binding
+  (unenforced source-label renames still collapse), and an unkeyed
+  duplicate of a foreign owner's item refuses, plus row-limit binding
+  on retry (HP-01 A01): same key with a changed `max_rows`, a changed
+  attempt bound, or a changed/added spec overlay refuses with history
+  and fencing kept.
 - `tests/engine/test_publication.py` (27 tests): publish/download
   round trip with hash equality to the reviewed `release.sha256`,
   idempotent re-publish, interrupted-copy resume to identical bytes,

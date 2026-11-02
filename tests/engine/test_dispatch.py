@@ -843,14 +843,17 @@ def test_keyed_retry_changed_request_refuses(tmp_path: Path) -> None:
     assert len(items) == 1
 
 
-def test_keyed_retry_matches_on_canonical_identity_only(
+def test_keyed_retry_matches_on_unenforced_fields_only(
     tmp_path: Path,
 ) -> None:
-    """DP-02 C03(d): key equivalence uses the DP-01 request identity.
+    """DP-02 C03(d) as repaired by HP-01 A01: key equivalence uses the
+    enforced request binding, not the DP-01 request identity alone.
 
-    Fields outside the bound identity (the source label, caller
-    bounds) do not distinguish a retry: the same pins under the same
-    key return the first item instead of refusing or duplicating.
+    Only fields nothing enforces (the source label) leave a retry
+    identical: the same pins under the same key return the first item
+    instead of refusing or duplicating. Caller bounds and the spec
+    overlay are enforced, so changing them refuses (see the HP-01
+    tests below).
     """
     store = _store(tmp_path)
     pinned = _request(source_sha256="a" * 64, spec_digest="b" * 64)
@@ -864,7 +867,6 @@ def test_keyed_retry_matches_on_canonical_identity_only(
         authority="team-a",
         request=_request(
             source="renamed-source.csv",
-            max_attempts=9,
             source_sha256="a" * 64,
             spec_digest="b" * 64,
         ),
@@ -873,6 +875,95 @@ def test_keyed_retry_matches_on_canonical_identity_only(
     )
     assert second["item_id"] == first["item_id"]
     assert second["request"] == pinned
+    items = list((tmp_path / "out" / "dispatch" / "items").glob("*.json"))
+    assert len(items) == 1
+
+
+def test_keyed_retry_changed_max_rows_refuses(tmp_path: Path) -> None:
+    """HP-01 A01: same key with a changed row bound is refused loudly.
+
+    A retry widening ``max_rows`` must never collapse onto the first
+    item: the stored record keeps its request, history, and fencing
+    epoch, and no second item is created.
+    """
+    store = _store(tmp_path)
+    first = store.submit(
+        authority="team-a",
+        request=_request(max_rows=5),
+        idempotency_key="k",
+        now=T0,
+    )
+    with pytest.raises(DispatchError):
+        store.submit(
+            authority="team-a",
+            request=_request(max_rows=6),
+            idempotency_key="k",
+            now=T0,
+        )
+    intact = store.get(first["item_id"])
+    assert intact["request"] == _request(max_rows=5)
+    assert [entry["event"] for entry in intact["history"]] == ["submitted"]
+    assert intact["fencing"] == 0
+    items = list((tmp_path / "out" / "dispatch" / "items").glob("*.json"))
+    assert len(items) == 1
+
+
+def test_keyed_retry_changed_attempt_bound_refuses(tmp_path: Path) -> None:
+    """HP-01 A01: same key with a changed attempt bound refuses loudly."""
+    store = _store(tmp_path)
+    first = store.submit(
+        authority="team-a",
+        request=_request(),
+        idempotency_key="k",
+        now=T0,
+    )
+    with pytest.raises(DispatchError):
+        store.submit(
+            authority="team-a",
+            request=_request(max_attempts=9),
+            idempotency_key="k",
+            now=T0,
+        )
+    intact = store.get(first["item_id"])
+    assert intact["request"] == _request()
+    assert [entry["event"] for entry in intact["history"]] == ["submitted"]
+    assert intact["fencing"] == 0
+    items = list((tmp_path / "out" / "dispatch" / "items").glob("*.json"))
+    assert len(items) == 1
+
+
+def test_keyed_retry_changed_spec_overlay_refuses(tmp_path: Path) -> None:
+    """HP-01 A01: same key with a changed spec overlay refuses loudly.
+
+    The overlay carries requested bounds (``spec.limits.max_rows``)
+    that execution enforces, so a retry adding or widening it must
+    never return the first item unchanged.
+    """
+    store = _store(tmp_path)
+    first = store.submit(
+        authority="team-a",
+        request=_request(spec={"limits": {"max_rows": 7}}),
+        idempotency_key="k",
+        now=T0,
+    )
+    with pytest.raises(DispatchError):
+        store.submit(
+            authority="team-a",
+            request=_request(spec={"limits": {"max_rows": 8}}),
+            idempotency_key="k",
+            now=T0,
+        )
+    with pytest.raises(DispatchError):
+        store.submit(
+            authority="team-a",
+            request=_request(),
+            idempotency_key="k",
+            now=T0,
+        )
+    intact = store.get(first["item_id"])
+    assert intact["request"] == _request(spec={"limits": {"max_rows": 7}})
+    assert [entry["event"] for entry in intact["history"]] == ["submitted"]
+    assert intact["fencing"] == 0
     items = list((tmp_path / "out" / "dispatch" / "items").glob("*.json"))
     assert len(items) == 1
 
