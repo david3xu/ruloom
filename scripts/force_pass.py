@@ -1,8 +1,13 @@
 """Ruloom executable force-pass gate.
 
-Runs the numbered FP-DOC / FP-CODE rules against the repository tree and
-prints one PASS/FAIL line per rule with evidence. Exits 0 only when every
-rule passes; any FAIL blocks merge and sends rework.
+Runs the numbered FP-DOC / FP-CODE rules against the repository tree,
+then executes the aggregate Q stage: every registry rule with status
+``enforced`` has its checker executed (pytest files run as subprocesses;
+in-gate ``scripts/force_pass.py`` checkers resolve to this run's FP
+outcome), every ``open_finding`` blocks, and ``planned`` stubs are
+reported but not executed. Prints one PASS/FAIL line per rule with
+evidence. Exits 0 only when every rule passes; any FAIL blocks merge
+and sends rework.
 
 Usage (from the repo root)::
 
@@ -791,6 +796,140 @@ def run_all(
     return results
 
 
+#: Per-checker pytest bound (seconds). The full enforced set runs in a
+#: couple of seconds in this repo; the generous bound only stops a hung
+#: checker from hanging the gate.
+Q_CHECKER_TIMEOUT_S = 600
+
+
+def _split_checker(checker: str) -> tuple[str, str | None]:
+    """Split a registry checker into (target path, member or None)."""
+    target, sep, member = str(checker).partition(":")
+    return target, (member if sep else None)
+
+
+def run_q_checker(root: Path, checker: str) -> tuple[bool, str]:
+    """Execute one enforced file checker via pytest (fail-closed).
+
+    Runs ``python -m pytest -q <target>`` with the repo root as the
+    working directory. Returns ``(True, evidence)`` only when pytest
+    exits 0; any other exit, a missing checker file, an unsupported
+    checker shape, or an executor failure returns ``(False, evidence)``
+    so the gate blocks instead of silently passing.
+    """
+    target, member = _split_checker(checker)
+    if member or not target.endswith(".py"):
+        return False, f"unsupported checker shape {checker!r} (expected tests/<path>.py)"
+    if not (root / target).is_file():
+        return False, f"checker missing: {target}"
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", target],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(root),
+            timeout=Q_CHECKER_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"checker timed out after {Q_CHECKER_TIMEOUT_S}s: {target}"
+    except OSError as exc:
+        return False, f"checker executor failed for {target}: {exc}"
+    tail = ""
+    for line in proc.stdout.splitlines():
+        if line.strip():
+            tail = line.strip()
+    if proc.returncode == 0:
+        return True, f"{target} passed ({tail})" if tail else f"{target} passed"
+    detail = tail if tail else proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "no output"
+    return False, f"{target} exit {proc.returncode}: {detail}"
+
+
+def check_aggregate(
+    root: Path,
+    fp_results: dict[str, tuple[str, bool]] | None = None,
+    runner: object = None,
+) -> tuple[bool, list[tuple[str, bool, str]]]:
+    """Execute the aggregate Q stage derived from the registry.
+
+    The registry is the source of truth: every ``Q-`` rule entry drives
+    one outcome. ``enforced`` rules execute their checker (file checkers
+    via ``runner``, default :func:`run_q_checker`; in-gate
+    ``scripts/force_pass.py:<check>`` checkers resolve to this run's FP
+    outcome by check-function name, never by hardcoded rule id).
+    ``open_finding`` and unknown statuses block; ``planned`` stubs are
+    reported but not executed. ``fp_results`` maps check-function name
+    to ``(fp_rule_id, ok)``; when omitted it falls back to running the
+    FP stage. ``runner`` is an injection hook for canary tests with the
+    signature ``(root, checker) -> (ok, evidence)``.
+    """
+    execute = runner if callable(runner) else run_q_checker
+    if fp_results is None:
+        fp_results = {}
+        for (rule_id, func), (_, ok, _) in zip(CHECKS, run_all(root)):
+            fp_results[func.__name__] = (rule_id, ok)
+    payload = load_registry(root)
+    if payload is None:
+        return False, [
+            ("AGGREGATE", False, "missing or invalid registry: gate blocks fail-closed")
+        ]
+    entries = payload.get("rules")
+    if not isinstance(entries, list):
+        return False, [("AGGREGATE", False, "registry has no rules list: gate blocks fail-closed")]
+    q_rules = [
+        rule
+        for rule in entries
+        if isinstance(rule, dict) and str(rule.get("id", "")).startswith("Q-")
+    ]
+    if not q_rules:
+        return False, [("AGGREGATE", False, "registry names no Q rules: gate blocks fail-closed")]
+    outcomes: list[tuple[str, bool, str]] = []
+    for rule in q_rules:
+        rule_id = str(rule.get("id"))
+        status = str(rule.get("status", "unknown"))
+        audit_ref = rule.get("audit_ref")
+        ref = f" (audit {audit_ref})" if audit_ref else ""
+        if status == "open_finding":
+            outcomes.append(
+                (rule_id, False, f"OPEN_FINDING{ref} — open finding blocks the gate")
+            )
+        elif status == "planned":
+            outcomes.append(
+                (rule_id, True, f"PLANNED{ref} — stub, not executed")
+            )
+        elif status == "enforced":
+            if not rule.get("checker_implemented"):
+                outcomes.append(
+                    (rule_id, False, f"ENFORCED{ref} — no implemented checker")
+                )
+                continue
+            checker = str(rule.get("checker", ""))
+            target, member = _split_checker(checker)
+            if target == "scripts/force_pass.py" and member:
+                hit = fp_results.get(member)
+                if hit is None:
+                    outcomes.append(
+                        (rule_id, False, f"ENFORCED{ref} — in-gate checker {member} not in this run")
+                    )
+                else:
+                    fp_id, fp_ok = hit
+                    outcomes.append(
+                        (
+                            rule_id,
+                            fp_ok,
+                            f"ENFORCED{ref} — covered by {fp_id}: {'PASS' if fp_ok else 'FAIL'}",
+                        )
+                    )
+                continue
+            ok, evidence = execute(root, checker)  # type: ignore[operator]
+            outcomes.append((rule_id, ok, f"ENFORCED{ref} — executed {evidence}"))
+        else:
+            outcomes.append(
+                (rule_id, False, f"unknown status {status!r}{ref} blocks the gate")
+            )
+    return all(ok for _, ok, _ in outcomes), outcomes
+
+
 def main(argv: list[str] | None = None) -> int:
     root = REPO_ROOT
     results = run_all(root)
@@ -817,14 +956,17 @@ def main(argv: list[str] | None = None) -> int:
         f"REGISTRY {REGISTRY_REL} v{version}: "
         f"{enforced} enforced incl. FP rules; Q stubs: {summary or 'none'}"
     )
-    for rule in q_rules:
-        status = str(rule.get("status", "unknown")).upper()
-        audit_ref = rule.get("audit_ref")
-        ref = f" (audit {audit_ref})" if audit_ref else ""
-        checker = rule.get("checker", "?")
-        print(f"{rule.get('id')}: {status}{ref} — checker {checker}")
-        if status not in ("ENFORCED", "OPEN_FINDING", "PLANNED"):
+    fp_by_func = {
+        func.__name__: (rule_id, ok)
+        for (rule_id, func), (_, ok, _) in zip(CHECKS, results)
+    }
+    agg_ok, outcomes = check_aggregate(root, fp_results=fp_by_func)
+    for rule_id, ok, evidence in outcomes:
+        print(f"{rule_id}: {'PASS' if ok else 'FAIL'} — {evidence}")
+        if not ok:
             failed += 1
+    if not agg_ok:
+        print("AGGREGATE: FAIL — one or more Q outcomes block the gate")
     return 1 if failed else 0
 
 

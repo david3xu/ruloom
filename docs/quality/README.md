@@ -27,6 +27,22 @@ must be git-ignored, never required to exist).
   them. Open never means accepted or waived.
 - `planned` — a rule stub for work that does not exist yet.
 
+## Aggregate execution
+
+`scripts/force_pass.py` is the executable aggregate gate: after the
+twelve FP checks it derives one outcome per `Q-` registry entry and
+executes it. `enforced` entries run their checker -- pytest files run
+as `python -m pytest -q <checker>` subprocesses, while an in-gate
+`scripts/force_pass.py:<check>` checker resolves to that check's FP
+outcome from the same run -- and any nonzero exit, missing checker
+file, or unimplemented checker fails the gate. `open_finding` entries
+block unconditionally; `planned` entries are reported but never
+executed. A missing or invalid registry fails closed. Canary tests in
+`tests/test_aggregate_gate.py` pin the behaviour: planted open
+findings, unimplemented or missing checkers, unknown statuses, and
+checker failures each block, and the default runner is proven to
+really execute pytest against witness files.
+
 ## The strict-xfail convention
 
 Counterexample tests assert the corrected behaviour and are marked
@@ -314,3 +330,15 @@ generator bytes move deliberately: PDD446 seed-42 golden artifact
 verdict pass, reproduced identically by a live CLI run and by direct
 computation). `Q-DATA-R02` is re-scoped to this contract; earlier
 per-RP paragraphs above are historical.
+
+CP-04 made the gate executable end to end (re-audit A07). Before,
+`scripts/force_pass.py` printed each `Q-` registry entry as a status
+line without running its checker, so `force_pass.py` exit 0 never
+proved the Q checkers passed. Now the aggregate stage executes every
+`enforced` checker (seventeen pytest files plus the FP-DOC-1-covered
+`Q-DOC-R12`), blocks on any `open_finding`, and reports `planned`
+stubs without executing them; the entry-point contract (one Q line
+per rule, each carrying its status token) is unchanged. No rule
+changes status and no bytes move: the registry, the suite, and the
+golden artifact are untouched. Evidence: `tests/test_aggregate_gate.py`
+(15 canary tests) and the gate's own per-checker execution lines.
