@@ -11,8 +11,9 @@ case needs a live model.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import pytest
 
@@ -124,9 +125,9 @@ def _succeeded_item(
         idempotency_key=key,
         now=T0,
     )
-    lease = store.claim(
-        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease = store.claim(item["item_id"], worker="w1", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     zip_sha = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
     return store, store.report_success(
         item["item_id"],
@@ -151,9 +152,7 @@ def test_publish_then_download_round_trip(tmp_path: Path) -> None:
     _, item = _succeeded_item(base, run_dir, outcome)
     publisher = _publisher(base)
 
-    identity = publisher.publish(
-        item["item_id"], run_dir, authority="team-a", now=T0
-    )
+    identity = publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0)
     published_zip = Path(identity["dest"])
     assert published_zip.is_file()
     assert identity["artifact_sha256"] == outcome["artifact_sha256"]
@@ -221,9 +220,7 @@ def test_interrupted_mark_adopts_matching_bytes(tmp_path: Path) -> None:
     run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
     _, item = _succeeded_item(base, run_dir, outcome)
     publisher = _publisher(base)
-    identity = publisher.publish(
-        item["item_id"], run_dir, authority="team-a", now=T0
-    )
+    identity = publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0)
     # Simulate a crash after the copy but before the complete mark.
     record_path = base / "publications" / f"{item['item_id']}.json"
     record = json.loads(record_path.read_text(encoding="utf-8"))
@@ -340,9 +337,7 @@ def test_end_to_end_submit_claim_run_report_publish_download(
     base = tmp_path / "out"
     store = DispatchStore(base)
     source_path = _write_source(tmp_path)
-    _, spec_digest = normalize_spec(
-        None, MANIFEST, source=source_path, max_attempts=1
-    )
+    _, spec_digest = normalize_spec(None, MANIFEST, source=source_path, max_attempts=1)
     item = store.submit(
         authority="e2e",
         request={
@@ -376,12 +371,8 @@ def test_end_to_end_submit_claim_run_report_publish_download(
     assert item["status"] == "succeeded"
 
     publisher = Publisher(base, base / "published")
-    identity = publisher.publish(
-        item["item_id"], run_dir, authority="e2e", now=T0
-    )
-    fetched = download(
-        Path(identity["dest"]), tmp_path / "consumer" / "release.zip"
-    )
+    identity = publisher.publish(item["item_id"], run_dir, authority="e2e", now=T0)
+    fetched = download(Path(identity["dest"]), tmp_path / "consumer" / "release.zip")
     reviewed = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
     assert fetched["zip_sha256"] == reviewed == identity["zip_sha256"]
     assert fetched["artifact_sha256"] == outcome["artifact_sha256"]
@@ -442,9 +433,9 @@ def _succeeded_alteration(
         request={"profile": "tabular", "source": "sample-tabular.csv"},
         now=T0,
     )
-    lease = store.claim(
-        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease = store.claim(item["item_id"], worker="w1", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     return store.report_success(
         item["item_id"],
         worker="w1",
@@ -464,9 +455,10 @@ def test_publish_refuses_altered_report_with_stale_manifest(
     base = tmp_path / "out"
     run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
     altered, altered_sha = _altered_run_dir(base, run_dir, outcome)
-    assert altered_sha != (
-        run_dir / "release.sha256"
-    ).read_text(encoding="utf-8").split()[0]
+    assert (
+        altered_sha
+        != (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
+    )
     item = _succeeded_alteration(base, altered, outcome, altered_sha)
     with pytest.raises(PublicationError):
         _publisher(base).publish(item["item_id"], altered, authority="owner-a")
@@ -485,9 +477,9 @@ def test_publish_binds_reported_digests_to_persisted_acceptance(
         request={"profile": "tabular", "source": "sample-tabular.csv"},
         now=T0,
     )
-    lease = store.claim(
-        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease = store.claim(item["item_id"], worker="w1", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     zip_sha = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
     item = store.report_success(
         item["item_id"],
@@ -555,9 +547,9 @@ def test_publish_binds_request_profile_to_run_profile(tmp_path: Path) -> None:
         },
         now=T0,
     )
-    lease = store.claim(
-        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
-    )["lease"]
+    lease = store.claim(item["item_id"], worker="w1", lease_seconds=600.0, now=T0)[
+        "lease"
+    ]
     zip_sha = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
     item = store.report_success(
         item["item_id"],
@@ -682,9 +674,7 @@ def _report(
     worker: str = "w1",
 ) -> dict[str, Any]:
     """Report a run through a live lease with genuine digests."""
-    lease = store.claim(
-        item_id, worker=worker, lease_seconds=600.0, now=T0
-    )["lease"]
+    lease = store.claim(item_id, worker=worker, lease_seconds=600.0, now=T0)["lease"]
     zip_sha = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
     return store.report_success(
         item_id,
@@ -779,9 +769,7 @@ def test_publish_refuses_changed_source_bytes(tmp_path: Path) -> None:
     """
     base = tmp_path / "out"
     source_path = _write_source(tmp_path)
-    _, spec_digest = normalize_spec(
-        None, MANIFEST, source=source_path, max_attempts=1
-    )
+    _, spec_digest = normalize_spec(None, MANIFEST, source=source_path, max_attempts=1)
     pinned = sha256_bytes(source_path.read_bytes())
     store = DispatchStore(base)
     item = store.submit(
@@ -794,9 +782,7 @@ def test_publish_refuses_changed_source_bytes(tmp_path: Path) -> None:
         },
         now=T0,
     )
-    source_path.write_text(
-        "value,label\n5,Q\n6,Q\n7,Q\n8,Q\n", encoding="utf-8"
-    )
+    source_path.write_text("value,label\n5,Q\n6,Q\n7,Q\n8,Q\n", encoding="utf-8")
     assert sha256_bytes(source_path.read_bytes()) != pinned
 
     run_dir, outcome = _accepted_run(base, source_path)
@@ -829,9 +815,7 @@ def _swap_after_acceptance(
         finally:
             zip_file.write_bytes(original)
 
-    monkeypatch.setattr(
-        publication_module, "_verify_snapshot_stable", hooked
-    )
+    monkeypatch.setattr(publication_module, "_verify_snapshot_stable", hooked)
 
 
 def test_publish_refuses_zip_swap_after_acceptance(
@@ -847,7 +831,6 @@ def test_publish_refuses_zip_swap_after_acceptance(
     base = tmp_path / "out"
     run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
     _, item = _succeeded_item(base, run_dir, outcome)
-    accepted = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
 
     _swap_after_acceptance(monkeypatch, run_dir, b"forged-bytes")
     with pytest.raises(PublicationError, match="changed after acceptance"):

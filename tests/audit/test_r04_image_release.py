@@ -15,8 +15,9 @@ from __future__ import annotations
 import hashlib
 import json
 import zipfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import pytest
 
@@ -89,9 +90,7 @@ class FakeVisionClient:
         assert dict(schema) == CRITIC_SCHEMA
         return Completion(
             data={"note": self.note},
-            usage=Usage(
-                model="fake-vision", input_tokens=7, output_tokens=3, calls=1
-            ),
+            usage=Usage(model="fake-vision", input_tokens=7, output_tokens=3, calls=1),
             meta={"model": "fake-vision"},
         )
 
@@ -136,13 +135,9 @@ def _write_thresholds(path: Path) -> Path:
             "spacing_median_m": Band("spacing_median_m", 0.005, 0.01),
             "repeated_depth_fraction": Band("repeated_depth_fraction", 0.0, 0.2),
             "valid_fraction": Band("valid_fraction", 0.5, 1.0),
-            "swir_answer_rate": Band(
-                "swir_answer_rate", 0.0, 1.0, vacuous=True
-            ),
+            "swir_answer_rate": Band("swir_answer_rate", 0.0, 1.0, vacuous=True),
             "tir_answer_rate": Band("tir_answer_rate", 0.9, 1.0),
-            "repeated_valid_fraction": Band(
-                "repeated_valid_fraction", 0.0, 0.05
-            ),
+            "repeated_valid_fraction": Band("repeated_valid_fraction", 0.0, 0.05),
             "backward_steps": Band("backward_steps", 0, 0),
         },
         swir_vocabulary=frozenset({"A", "B"}),
@@ -215,21 +210,16 @@ def test_image_run_releases_image_members(
     assert image_report["verdict"] == "pass"
     import hashlib as _hashlib
 
-    assert image_report["artifact_sha256"] == _hashlib.sha256(
-        shipped_image
-    ).hexdigest()
-    manifest = json.loads(
-        (artifact / "manifest.json").read_text(encoding="utf-8")
-    )
+    assert image_report["artifact_sha256"] == _hashlib.sha256(shipped_image).hexdigest()
+    manifest = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["artifact_sha256"] == result["artifact_sha256"]
     with zipfile.ZipFile(artifact / "release.zip") as archive:
         for entry in manifest["members"]:
-            assert entry["sha256"] == hashlib.sha256(
-                archive.read(entry["path"])
-            ).hexdigest()
-    decision = json.loads(
-        (artifact / "decision.json").read_text(encoding="utf-8")
-    )
+            assert (
+                entry["sha256"]
+                == hashlib.sha256(archive.read(entry["path"])).hexdigest()
+            )
+    decision = json.loads((artifact / "decision.json").read_text(encoding="utf-8"))
     assert decision["frozen_manifest_sha256"] == manifest["evidence_digest"]
     outcome = verify_release(artifact / "release.zip", manifest=manifest)
     assert outcome["artifact_sha256"] == result["artifact_sha256"]
@@ -245,12 +235,8 @@ def test_scalar_run_omits_image_members(
         assert sorted(archive.namelist()) == sorted(
             SCALAR_MEMBERS + ["checksums.sha256"]
         )
-    manifest = json.loads(
-        (artifact / "manifest.json").read_text(encoding="utf-8")
-    )
-    assert all(
-        entry["path"] not in IMAGE_MEMBERS for entry in manifest["members"]
-    )
+    manifest = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
+    assert all(entry["path"] not in IMAGE_MEMBERS for entry in manifest["members"])
     assert not (artifact / "synthetic.png").exists()
     outcome = verify_release(artifact / "release.zip", manifest=manifest)
     assert outcome["artifact_sha256"] == result["artifact_sha256"]
@@ -266,9 +252,7 @@ def test_failing_image_checks_block_release(
     assert code == EXIT_FAILED
     assert result["status"] == "failed"
     run_dirs = [
-        c
-        for c in (tmp_path / "out" / "runs").iterdir()
-        if (c / "run.json").is_file()
+        c for c in (tmp_path / "out" / "runs").iterdir() if (c / "run.json").is_file()
     ]
     assert len(run_dirs) == 1
     assert not (run_dirs[0] / "release.zip").exists()

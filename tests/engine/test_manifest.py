@@ -11,6 +11,7 @@ from engine.core.manifest import (
     validate_manifest,
 )
 
+
 def _base_manifest() -> dict:
     return {
         "id": "fake",

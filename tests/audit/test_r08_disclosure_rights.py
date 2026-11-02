@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import pytest
 
@@ -35,10 +36,10 @@ from engine.artifacts.package import (
 from engine.core.manifest import load_manifest
 from engine.core.runner import EXIT_FAILED, EXIT_OK, execute
 from models.base import Completion, Usage
+from profiles.hylogger import capabilities as hy_capabilities
 from profiles.hylogger.analysis.statistics import Profile
 from profiles.hylogger.generation.plan import build_prompt as hy_build_prompt
 from profiles.hylogger.intake.reader import Sample
-from profiles.hylogger import capabilities as hy_capabilities
 from profiles.tabular import capabilities as tab_capabilities
 from profiles.tabular.analysis.statistics import TabularProfile
 from profiles.tabular.generation.generate import generate as tab_generate
@@ -46,14 +47,10 @@ from profiles.tabular.generation.generate import generate_rows
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TABULAR_MANIFEST = load_manifest(REPO_ROOT / "profiles" / "tabular" / "profile.json")
-HYLOGGER_MANIFEST = load_manifest(
-    REPO_ROOT / "profiles" / "hylogger" / "profile.json"
-)
+HYLOGGER_MANIFEST = load_manifest(REPO_ROOT / "profiles" / "hylogger" / "profile.json")
 
 LITERAL_COLUMNS = ["name", "phone", "diagnosis"]
-LITERAL_ROWS = [
-    {"name": "Ava Reyes", "phone": "555-0100", "diagnosis": "DX-4417"}
-]
+LITERAL_ROWS = [{"name": "Ava Reyes", "phone": "555-0100", "diagnosis": "DX-4417"}]
 
 
 class FakePlanner:
@@ -103,10 +100,14 @@ def _write_tabular_source(
     manifest: Mapping[str, Any] | None = None,
 ) -> Path:
     resolved = list(columns) if columns is not None else ["id", "value", "label"]
-    body = rows if rows is not None else [
-        {"id": str(i), "value": f"{10.0 + (i % 5)}", "label": "a" if i % 2 else "b"}
-        for i in range(20)
-    ]
+    body = (
+        rows
+        if rows is not None
+        else [
+            {"id": str(i), "value": f"{10.0 + (i % 5)}", "label": "a" if i % 2 else "b"}
+            for i in range(20)
+        ]
+    )
     csv_path = path / f"{stem}-tabular.csv"
     lines = [",".join(resolved)]
     lines += [",".join(row[col] for col in resolved) for row in body]
@@ -409,28 +410,14 @@ def test_build_provenance_needs_explicit_output_terms() -> None:
         run_id="run-1",
     )
     assert (
-        resolve_output_terms(
-            hash_verified=False, output_terms_grant="CC0-1.0"
-        )
-        is None
+        resolve_output_terms(hash_verified=False, output_terms_grant="CC0-1.0") is None
     )
-    assert (
-        resolve_output_terms(hash_verified=True, output_terms_grant=None)
-        is None
-    )
-    assert (
-        resolve_output_terms(hash_verified=True, output_terms_grant="")
-        is None
-    )
-    assert (
-        resolve_output_terms(hash_verified=True, output_terms_grant="  ")
-        is None
-    )
+    assert resolve_output_terms(hash_verified=True, output_terms_grant=None) is None
+    assert resolve_output_terms(hash_verified=True, output_terms_grant="") is None
+    assert resolve_output_terms(hash_verified=True, output_terms_grant="  ") is None
     # A verified explicit grant resolves to the granted term itself.
     assert (
-        resolve_output_terms(
-            hash_verified=True, output_terms_grant="CC0-1.0"
-        )
+        resolve_output_terms(hash_verified=True, output_terms_grant="CC0-1.0")
         == "CC0-1.0"
     )
     # Licence presence is never a grant: no CC0 is ever synthesised.

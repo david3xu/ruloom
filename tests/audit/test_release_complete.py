@@ -13,8 +13,9 @@ from __future__ import annotations
 import hashlib
 import json
 import zipfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import pytest
 
@@ -91,9 +92,7 @@ class FakeVisionClient:
         assert dict(schema) == CRITIC_SCHEMA
         return Completion(
             data={"note": self.note},
-            usage=Usage(
-                model="fake-vision", input_tokens=7, output_tokens=3, calls=1
-            ),
+            usage=Usage(model="fake-vision", input_tokens=7, output_tokens=3, calls=1),
             meta={"model": "fake-vision"},
         )
 
@@ -154,9 +153,7 @@ def _write_thresholds(path: Path) -> Path:
             "spacing_median_m": Band("spacing_median_m", 0.005, 0.01),
             "repeated_depth_fraction": Band("repeated_depth_fraction", 0.0, 0.2),
             "valid_fraction": Band("valid_fraction", 0.5, 1.0),
-            "swir_answer_rate": Band(
-                "swir_answer_rate", 0.0, 1.0, vacuous=True
-            ),
+            "swir_answer_rate": Band("swir_answer_rate", 0.0, 1.0, vacuous=True),
             "tir_answer_rate": Band("tir_answer_rate", 0.9, 1.0),
             "repeated_valid_fraction": Band("repeated_valid_fraction", 0.0, 0.05),
             "backward_steps": Band("backward_steps", 0, 0),
@@ -205,22 +202,16 @@ def _check_complete_bundle(
     """Every declared member ships with frozen bytes; the bundle verifies."""
     release_zip = artifact / "release.zip"
     with zipfile.ZipFile(release_zip) as archive:
-        assert sorted(archive.namelist()) == sorted(
-            expected + ["checksums.sha256"]
-        )
+        assert sorted(archive.namelist()) == sorted(expected + ["checksums.sha256"])
         by_path = {entry["path"]: entry for entry in manifest_doc["members"]}
         assert set(by_path) == set(expected)
         for name in expected:
             shipped = archive.read(name)
-            assert (
-                hashlib.sha256(shipped).hexdigest() == by_path[name]["sha256"]
-            ), name
+            assert hashlib.sha256(shipped).hexdigest() == by_path[name]["sha256"], name
     outcome = verify_release(release_zip, manifest=manifest_doc)
     assert outcome["artifact_sha256"] == manifest_doc["artifact_sha256"]
     decision = json.loads((artifact / "decision.json").read_text(encoding="utf-8"))
-    assert (
-        decision["frozen_manifest_sha256"] == manifest_doc["evidence_digest"]
-    )
+    assert decision["frozen_manifest_sha256"] == manifest_doc["evidence_digest"]
 
 
 def test_tabular_release_is_complete(tmp_path: Path) -> None:
@@ -231,18 +222,14 @@ def test_tabular_release_is_complete(tmp_path: Path) -> None:
         TAB_CAPABILITIES,
         source=source,
         max_attempts=1,
-        model_factory=lambda role, config: TabularModel(
-            [{"seed": 1, "n_rows": 100}]
-        ),
+        model_factory=lambda role, config: TabularModel([{"seed": 1, "n_rows": 100}]),
         out=out,
         say=lambda message: None,
         ask=lambda prompt: "accept",
     )
     assert code == EXIT_OK
     artifact = Path(str(result["artifact_dir"]))
-    manifest_doc = json.loads(
-        (artifact / "manifest.json").read_text(encoding="utf-8")
-    )
+    manifest_doc = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
     assert manifest_doc["artifact_sha256"] == result["artifact_sha256"]
     _check_complete_bundle(
         artifact, manifest_doc, _declared_names(TAB_MANIFEST, images=False)
@@ -280,9 +267,7 @@ def test_hylogger_image_release_is_complete(
     code, result = _run_hy(tmp_path, monkeypatch, images=True)
     assert code == EXIT_OK
     artifact = Path(str(result["artifact_dir"]))
-    manifest_doc = json.loads(
-        (artifact / "manifest.json").read_text(encoding="utf-8")
-    )
+    manifest_doc = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
     assert manifest_doc["artifact_sha256"] == result["artifact_sha256"]
     expected = _declared_names(HY_MANIFEST, images=True)
     assert "synthetic.png" in expected
@@ -295,9 +280,7 @@ def test_hylogger_scalar_run_omits_conditional_members(
     code, result = _run_hy(tmp_path, monkeypatch, images=False)
     assert code == EXIT_OK
     artifact = Path(str(result["artifact_dir"]))
-    manifest_doc = json.loads(
-        (artifact / "manifest.json").read_text(encoding="utf-8")
-    )
+    manifest_doc = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
     expected = _declared_names(HY_MANIFEST, images=False)
     assert "synthetic.png" not in expected
     _check_complete_bundle(artifact, manifest_doc, expected)
@@ -324,18 +307,14 @@ def test_mutation_during_review_still_releases_frozen_complete_bundle(
         TAB_CAPABILITIES,
         source=source,
         max_attempts=1,
-        model_factory=lambda role, config: TabularModel(
-            [{"seed": 1, "n_rows": 100}]
-        ),
+        model_factory=lambda role, config: TabularModel([{"seed": 1, "n_rows": 100}]),
         out=out,
         say=lambda message: None,
         ask=ask,
     )
     assert code == EXIT_OK
     artifact = Path(str(result["artifact_dir"]))
-    manifest_doc = json.loads(
-        (artifact / "manifest.json").read_text(encoding="utf-8")
-    )
+    manifest_doc = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
     with zipfile.ZipFile(artifact / "release.zip") as archive:
         assert b"UNVALIDATED" not in archive.read("data.csv")
     _check_complete_bundle(
@@ -347,9 +326,10 @@ def _copy_bundle_without_member(
     release_zip: Path, tmp_path: Path, *, drop: str
 ) -> Path:
     slim = tmp_path / "slim.zip"
-    with zipfile.ZipFile(release_zip) as src, zipfile.ZipFile(
-        slim, "w", compression=zipfile.ZIP_DEFLATED
-    ) as dst:
+    with (
+        zipfile.ZipFile(release_zip) as src,
+        zipfile.ZipFile(slim, "w", compression=zipfile.ZIP_DEFLATED) as dst,
+    ):
         for name in src.namelist():
             if name != drop:
                 dst.writestr(name, src.read(name))
@@ -360,9 +340,10 @@ def _copy_bundle_with_tampered_member(
     release_zip: Path, tmp_path: Path, *, member: str
 ) -> Path:
     tampered = tmp_path / "tampered.zip"
-    with zipfile.ZipFile(release_zip) as src, zipfile.ZipFile(
-        tampered, "w", compression=zipfile.ZIP_DEFLATED
-    ) as dst:
+    with (
+        zipfile.ZipFile(release_zip) as src,
+        zipfile.ZipFile(tampered, "w", compression=zipfile.ZIP_DEFLATED) as dst,
+    ):
         for name in src.namelist():
             payload = src.read(name)
             if name == member:
@@ -381,18 +362,14 @@ def test_bundle_missing_a_declared_member_is_refused(
         TAB_CAPABILITIES,
         source=source,
         max_attempts=1,
-        model_factory=lambda role, config: TabularModel(
-            [{"seed": 1, "n_rows": 100}]
-        ),
+        model_factory=lambda role, config: TabularModel([{"seed": 1, "n_rows": 100}]),
         out=out,
         say=lambda message: None,
         ask=lambda prompt: "accept",
     )
     assert code == EXIT_OK
     artifact = Path(str(result["artifact_dir"]))
-    manifest_doc = json.loads(
-        (artifact / "manifest.json").read_text(encoding="utf-8")
-    )
+    manifest_doc = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
     slim = _copy_bundle_without_member(
         artifact / "release.zip", tmp_path, drop="validation-report.json"
     )
@@ -408,18 +385,14 @@ def test_bundle_with_substituted_bytes_is_refused(tmp_path: Path) -> None:
         TAB_CAPABILITIES,
         source=source,
         max_attempts=1,
-        model_factory=lambda role, config: TabularModel(
-            [{"seed": 1, "n_rows": 100}]
-        ),
+        model_factory=lambda role, config: TabularModel([{"seed": 1, "n_rows": 100}]),
         out=out,
         say=lambda message: None,
         ask=lambda prompt: "accept",
     )
     assert code == EXIT_OK
     artifact = Path(str(result["artifact_dir"]))
-    manifest_doc = json.loads(
-        (artifact / "manifest.json").read_text(encoding="utf-8")
-    )
+    manifest_doc = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
     tampered = _copy_bundle_with_tampered_member(
         artifact / "release.zip", tmp_path, member="data.csv"
     )

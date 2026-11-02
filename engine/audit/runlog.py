@@ -11,9 +11,10 @@ from __future__ import annotations
 import dataclasses
 import json
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from ..artifacts.hashing import sha256_canonical
 
@@ -37,7 +38,7 @@ def _coerce_jsonable(value: Any) -> Any:
 
 def utc_now_iso() -> str:
     """Current UTC time as an ISO-8601 string."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class RunLog:
@@ -119,17 +120,15 @@ class RunLog:
         return out
 
     @classmethod
-    def from_jsonl(cls, payload: str) -> "RunLog":
+    def from_jsonl(cls, payload: str) -> RunLog:
         """Rebuild a log from JSON-lines text (chain still verifiable)."""
-        events = [
-            json.loads(line) for line in payload.splitlines() if line.strip()
-        ]
+        events = [json.loads(line) for line in payload.splitlines() if line.strip()]
         run_id = events[0]["run_id"] if events else None
         log = cls(run_id=run_id)
         log.events = events
         return log
 
     @classmethod
-    def read_jsonl(cls, path: PathLike) -> "RunLog":
+    def read_jsonl(cls, path: PathLike) -> RunLog:
         """Read a log written by :meth:`write_jsonl`."""
         return cls.from_jsonl(Path(path).read_text(encoding="utf-8"))

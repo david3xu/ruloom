@@ -22,8 +22,9 @@ run-scoped and live only under ``runs/<run-id>/``.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from ..audit.runlog import RunLog
 from .records import Attempt, Run, utc_now_iso
@@ -78,9 +79,7 @@ class RunStore:
         _append_json_line(self.events_path, event)
         _append_json_line(self.legacy_log_path, event)
 
-    def write_attempt(
-        self, attempt: Attempt, artifacts: list[dict[str, Any]]
-    ) -> Path:
+    def write_attempt(self, attempt: Attempt, artifacts: list[dict[str, Any]]) -> Path:
         """Persist one immutable attempt record under ``attempts/``."""
         attempt_dir = self.run_dir / "attempts" / f"attempt-{attempt.n}"
         attempt_dir.mkdir(parents=True, exist_ok=True)
@@ -126,9 +125,7 @@ class RunStore:
         """Persist the human gate decision verbatim."""
         return _write_json(self.run_dir / "decision.json", dict(decision))
 
-    def sync_payload_cache(
-        self, payload_sha: str, files: Mapping[str, bytes]
-    ) -> Path:
+    def sync_payload_cache(self, payload_sha: str, files: Mapping[str, bytes]) -> Path:
         """Mirror payload bytes into the content-addressed cache.
 
         ``runs/<payload-sha>/`` carries payload bytes only (never plans,
@@ -161,9 +158,7 @@ class RunStore:
                 "attempts": attempts,
                 "artifact_sha256": artifact_sha256,
                 "source_sha256": source_sha256,
-                "decision": (
-                    dict(decision) if decision is not None else None
-                ),
+                "decision": (dict(decision) if decision is not None else None),
                 "finished_at": utc_now_iso(),
             },
         )

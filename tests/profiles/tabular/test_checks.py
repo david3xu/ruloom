@@ -80,32 +80,52 @@ def test_mean_value_carries_position_and_keeps_verdict() -> None:
         return [{**row, "value": f"{value}"} for row in ROWS]
 
     exact = checks_module.run_checks(
-        COLUMNS, rows_at(0.0), Thresholds(), plan_n_rows=20,
-        profile_columns=COLUMNS, profile_mean=mean, mean_column="value",
+        COLUMNS,
+        rows_at(0.0),
+        Thresholds(),
+        plan_n_rows=20,
+        profile_columns=COLUMNS,
+        profile_mean=mean,
+        mean_column="value",
     )
     fidelity = next(r for r in exact.results if r.name == "mean_value")
     assert fidelity.status == "pass"
     assert fidelity.band_position == 0.0
 
     half = checks_module.run_checks(
-        COLUMNS, rows_at(tolerance / 2), Thresholds(), plan_n_rows=20,
-        profile_columns=COLUMNS, profile_mean=mean, mean_column="value",
+        COLUMNS,
+        rows_at(tolerance / 2),
+        Thresholds(),
+        plan_n_rows=20,
+        profile_columns=COLUMNS,
+        profile_mean=mean,
+        mean_column="value",
     )
     half_fidelity = next(r for r in half.results if r.name == "mean_value")
     assert half_fidelity.status == "pass"
     assert half_fidelity.band_position == pytest.approx(0.5)
 
     over = checks_module.run_checks(
-        COLUMNS, rows_at(tolerance * 1.5), Thresholds(), plan_n_rows=20,
-        profile_columns=COLUMNS, profile_mean=mean, mean_column="value",
+        COLUMNS,
+        rows_at(tolerance * 1.5),
+        Thresholds(),
+        plan_n_rows=20,
+        profile_columns=COLUMNS,
+        profile_mean=mean,
+        mean_column="value",
     )
     over_fidelity = next(r for r in over.results if r.name == "mean_value")
     assert over_fidelity.status == "fail"
     assert over_fidelity.band_position == pytest.approx(1.5)
 
     skipped = checks_module.run_checks(
-        COLUMNS, ROWS, Thresholds(), plan_n_rows=20,
-        profile_columns=COLUMNS, profile_mean=None, mean_column="value",
+        COLUMNS,
+        ROWS,
+        Thresholds(),
+        plan_n_rows=20,
+        profile_columns=COLUMNS,
+        profile_mean=None,
+        mean_column="value",
     )
     missing = next(r for r in skipped.results if r.name == "mean_value")
     assert missing.status == "skip"
@@ -117,14 +137,20 @@ def test_report_dict_carries_positions_without_renaming() -> None:
     payload = generate_fn(profile, {"seed": 7, "n_rows": 20})
     columns, rows = dataset_module.read(payload)
     report = checks_module.run_checks(
-        columns, rows, Thresholds(), plan_n_rows=20,
+        columns,
+        rows,
+        Thresholds(),
+        plan_n_rows=20,
         profile_columns=profile.stats["columns"],
         profile_mean=profile.stats["numeric"]["value"]["mean"],
         mean_column="value",
     )
     body = report.to_dict()
     assert set(body) == {
-        "artifact_name", "artifact_sha256", "verdict", "results",
+        "artifact_name",
+        "artifact_sha256",
+        "verdict",
+        "results",
     }
     for entry in body["results"]:
         assert set(entry) == {"name", "status", "detail", "band_position"}

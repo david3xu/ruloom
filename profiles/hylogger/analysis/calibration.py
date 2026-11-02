@@ -17,9 +17,9 @@ from __future__ import annotations
 import hashlib
 import json
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
 
 from ..intake.reader import Sample, read_scalar_csv
 from .statistics import FRAC_ND, SMALL_ND, label_persistence, percentile
@@ -142,9 +142,7 @@ class HoleScalars:
     split_half_tvd: dict[str, float | None] = field(default_factory=dict)
 
 
-def hole_scalars(
-    samples: Sequence[Sample], source_name: str = ""
-) -> HoleScalars:
+def hole_scalars(samples: Sequence[Sample], source_name: str = "") -> HoleScalars:
     """Summarise one hole and its internal split-half variation."""
     samples = list(samples)
     first, second = split_halves(samples)
@@ -216,7 +214,7 @@ class Thresholds:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict) -> "Thresholds":
+    def from_dict(cls, payload: dict) -> Thresholds:
         return cls(
             bands={
                 name: Band(
@@ -261,7 +259,12 @@ def derive_thresholds(calibration_dir: str | Path) -> Thresholds:
         hole = hole_scalars(samples, source_name=path.stem)
         holes.append(hole)
         hole_provenance.append(
-            {"name": path.stem, "path": path.name, "sha256": sha256, "n": hole.summary["n"]}
+            {
+                "name": path.stem,
+                "path": path.name,
+                "sha256": sha256,
+                "n": hole.summary["n"],
+            }
         )
         for s in samples:
             if not s.valid:

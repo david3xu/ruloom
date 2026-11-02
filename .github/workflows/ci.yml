@@ -26,6 +26,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m pip install pytest
+          # GP-03 (G7 hygiene): pin the exact ruff the repo config targets
+          # (pyproject [tool.ruff]; version recorded in docs/decisions.md).
+          # A floating ruff would let new upstream rules redraw the gate.
+          python -m pip install ruff==0.17.3
+      - name: Check lint and format (GP-03 code hygiene)
+        run: |
+          ruff check .
+          ruff format --check .
       - name: Run test suite
         run: python -m pytest -q
       - name: Run force-pass gate

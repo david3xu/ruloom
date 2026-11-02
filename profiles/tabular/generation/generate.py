@@ -10,10 +10,11 @@ generator either. No model output ever becomes a data value.
 from __future__ import annotations
 
 import random
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
-from ..validation.dataset import to_csv_bytes
 from ..analysis.statistics import TabularProfile, disclosed_stats
+from ..validation.dataset import to_csv_bytes
 
 
 def _plan_seed_n_rows(plan: Mapping[str, Any]) -> tuple[int, int]:

@@ -8,16 +8,17 @@ holes in the style of ``tests/test_checks.py``.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import pytest
 
 from models.base import Completion, Usage
-from profiles.hylogger.generation import repair as repair_module
 from profiles.hylogger.analysis.calibration import Band, Thresholds
+from profiles.hylogger.analysis.statistics import Profile
+from profiles.hylogger.generation import repair as repair_module
 from profiles.hylogger.generation.plan import provider_schema
 from profiles.hylogger.intake.reader import Sample
-from profiles.hylogger.analysis.statistics import Profile
 
 
 def _thresholds() -> Thresholds:
@@ -28,9 +29,7 @@ def _thresholds() -> Thresholds:
             "valid_fraction": Band("valid_fraction", 0.5, 1.0),
             "swir_answer_rate": Band("swir_answer_rate", 0.0, 1.0, vacuous=True),
             "tir_answer_rate": Band("tir_answer_rate", 0.9, 1.0),
-            "repeated_valid_fraction": Band(
-                "repeated_valid_fraction", 0.0, 0.05
-            ),
+            "repeated_valid_fraction": Band("repeated_valid_fraction", 0.0, 0.05),
             "backward_steps": Band("backward_steps", 0, 0),
         },
         swir_vocabulary=frozenset({"A", "B"}),
@@ -201,7 +200,8 @@ def test_repair_prompt_carries_only_supported_options() -> None:
     source = _source()
     profile = _profile(source)
     failed = [
-        result for result in _run_checks_for_prompt(source, profile)
+        result
+        for result in _run_checks_for_prompt(source, profile)
         if result.status == "fail"
     ]
     assert failed != []
@@ -219,9 +219,9 @@ def test_repair_prompt_carries_only_supported_options() -> None:
 
 
 def _run_checks_for_prompt(source, profile):
+    from profiles.hylogger.generation.generate import generate as _generate
     from profiles.hylogger.validation.checks import run_checks as _checks
     from profiles.hylogger.validation.dataset import read as _read
-    from profiles.hylogger.generation.generate import generate as _generate
 
     payload = _generate(profile, {"seed": 0, "n_rows": 8})
     report = _checks(

@@ -8,8 +8,8 @@ verdict is ``pass`` only when no check fails.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
 
 from ..analysis.calibration import Thresholds
 from .dataset import read_csv_bytes, to_csv_bytes

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import pytest
 
@@ -127,9 +128,9 @@ def test_propose_sends_strict_schema_with_bound_strategies() -> None:
 
 def test_build_prompt_requires_strategy_when_bound() -> None:
     profile = TabularProfile.from_rows(COLUMNS, ROWS, "orders-tabular", "abc123")
-    header = plan_module.build_prompt(profile, [STRATEGY]).split(
-        "Profile statistics"
-    )[0]
+    header = plan_module.build_prompt(profile, [STRATEGY]).split("Profile statistics")[
+        0
+    ]
     assert "exactly three keys" in header
     assert STRATEGY in header
 

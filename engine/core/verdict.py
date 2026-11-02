@@ -23,7 +23,8 @@ evidence may only arrive after the loop.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from .records import VALID_CHECK_STATUSES, EngineCheckResult
 
@@ -186,9 +187,7 @@ def decide(
     failed = [
         check_id
         for check_id in sorted(required)
-        if not (
-            check_id in by_id and by_id[check_id][0].status == "pass"
-        )
+        if not (check_id in by_id and by_id[check_id][0].status == "pass")
     ]
     if failed:
         return "fail", failed

@@ -12,8 +12,9 @@ plan, log, decision, or release reference.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from engine.audit.runlog import RunLog
 from engine.core.manifest import load_manifest

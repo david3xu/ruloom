@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Callable
-from urllib.error import URLError
+from typing import Any
 
 import pytest
 
@@ -87,16 +87,14 @@ class _Stub:
                 self.wfile.write(raw)
 
         self._server = HTTPServer(("127.0.0.1", 0), Route)
-        self._thread = threading.Thread(
-            target=self._server.serve_forever, daemon=True
-        )
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
     @property
     def url(self) -> str:
         host, port = self._server.server_address
         return f"http://{host}:{port}"
 
-    def __enter__(self) -> "_Stub":
+    def __enter__(self) -> _Stub:
         self._thread.start()
         return self
 
@@ -109,9 +107,7 @@ class _Stub:
 def test_success_records_server_model_id_and_usage() -> None:
     note = {"critique": "plausible bands", "concerns": ["thin tails"]}
     with _Stub(lambda payload: (200, _reply(note))) as stub:
-        client = GlimmerLocalModel(
-            model="configured-name", base_url=stub.url
-        )
+        client = GlimmerLocalModel(model="configured-name", base_url=stub.url)
         completion = client.complete("Prompt.", SCHEMA)
     assert stub.paths == ["/v1/chat/completions"]
     assert stub.seen[0]["model"] == "configured-name"
@@ -212,9 +208,7 @@ def test_stdlib_transport_only() -> None:
 
     import models.glimmer as module
 
-    tree = ast.parse(
-        open(module.__file__, encoding="utf-8").read()
-    )
+    tree = ast.parse(open(module.__file__, encoding="utf-8").read())
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -224,8 +218,17 @@ def test_stdlib_transport_only() -> None:
                 continue
             imported.add((node.module or "").split(".")[0])
     imported.discard("")
+    # GP-03 hygiene: the UP035 autofix moved `Mapping` to its canonical
+    # `collections.abc` home and dropped the unused `socket` import, so
+    # the pinned surface trades "socket" for "collections" (still
+    # stdlib-only plus models.base; the "no subprocess" pin below the
+    # assertion is unchanged).
     stdlib = {
-        "json", "socket", "urllib", "dataclasses", "typing",
+        "collections",
+        "json",
+        "urllib",
+        "dataclasses",
+        "typing",
         "__future__",
     }
     assert imported <= (stdlib | {"models"}), imported

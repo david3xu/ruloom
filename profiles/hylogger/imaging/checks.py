@@ -28,7 +28,8 @@ binds the report to the synthetic artifact hash when the
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from ..validation.checks import CheckReport, CheckResult
 from .scene import Scene, build_schematic_scene, validate_scene
@@ -73,9 +74,7 @@ def _pixel_count(stats: ImageStats) -> int:
     return stats.width * stats.height
 
 
-def _strip_order_distance(
-    reference: ImageStats, candidate: ImageStats
-) -> float:
+def _strip_order_distance(reference: ImageStats, candidate: ImageStats) -> float:
     """Maximum absolute per-channel strip-mean difference, in order."""
     worst = 0.0
     for ref_strip, cand_strip in zip(reference.strips, candidate.strips):
@@ -134,10 +133,7 @@ def run_image_checks(
             )
         )
 
-    if (
-        candidate.width == reference.width
-        and candidate.height == reference.height
-    ):
+    if candidate.width == reference.width and candidate.height == reference.height:
         add(
             CheckResult(
                 "image_dimensions",
@@ -219,18 +215,12 @@ def run_image_checks(
     else:
         scene_record = Scene.from_dict(scene)
     scene_errors = validate_scene(scene_record)
-    if (
-        scene_record.width != reference.width
-        or scene_record.height != reference.height
-    ):
+    if scene_record.width != reference.width or scene_record.height != reference.height:
         scene_errors.append(
             f"scene geometry {scene_record.width}x{scene_record.height} "
             f"!= reference {reference.width}x{reference.height}"
         )
-    if (
-        candidate.width != scene_record.width
-        or candidate.height != scene_record.height
-    ):
+    if candidate.width != scene_record.width or candidate.height != scene_record.height:
         scene_errors.append(
             f"candidate {candidate.width}x{candidate.height} "
             f"!= scene {scene_record.width}x{scene_record.height}"

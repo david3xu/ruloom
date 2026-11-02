@@ -12,8 +12,9 @@ from __future__ import annotations
 import hashlib
 import json
 import zipfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import pytest
 
@@ -58,9 +59,7 @@ def _write_source(path: Path) -> Path:
 
 
 def _run_dirs(out: Path) -> list[Path]:
-    return sorted(
-        c for c in (out / "runs").iterdir() if (c / "run.json").is_file()
-    )
+    return sorted(c for c in (out / "runs").iterdir() if (c / "run.json").is_file())
 
 
 def _run_record(run_dir: Path) -> dict[str, Any]:
@@ -76,9 +75,7 @@ def test_packaging_failure_leaves_no_release_but_keeps_decision(
     def boom(artifact_dir: Path, files: Mapping[str, bytes]) -> Any:
         raise RuntimeError("injected packaging failure")
 
-    monkeypatch.setattr(
-        "engine.artifacts.package.write_release_zip", boom
-    )
+    monkeypatch.setattr("engine.artifacts.package.write_release_zip", boom)
     code, result = execute(
         MANIFEST,
         CAPABILITIES,
@@ -93,9 +90,7 @@ def test_packaging_failure_leaves_no_release_but_keeps_decision(
     assert result["status"] == "error"
     (run_dir,) = _run_dirs(out)
     # The human decision was recorded before packaging ran.
-    decision = json.loads(
-        (run_dir / "decision.json").read_text(encoding="utf-8")
-    )
+    decision = json.loads((run_dir / "decision.json").read_text(encoding="utf-8"))
     assert decision["verdict"] == "accept"
     assert decision["frozen_manifest_sha256"]
     # No partial release survived the injected failure.

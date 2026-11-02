@@ -14,8 +14,9 @@ from __future__ import annotations
 import hashlib
 import json
 import zipfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from engine.artifacts.consumer import verify_release
 from engine.core.manifest import load_manifest
@@ -132,12 +133,8 @@ def test_deleted_working_file_after_freeze_still_releases(tmp_path: Path) -> Non
         shipped = hashlib.sha256(archive.read("data.csv")).hexdigest()
         report = json.loads(archive.read("validation-report.json"))
     assert shipped == report["artifact_sha256"]
-    member = next(
-        entry for entry in manifest["members"] if entry["path"] == "data.csv"
-    )
+    member = next(entry for entry in manifest["members"] if entry["path"] == "data.csv")
     assert member["sha256"] == shipped
-    assert member["size"] == len(
-        (artifact / "frozen" / "data.csv").read_bytes()
-    )
+    assert member["size"] == len((artifact / "frozen" / "data.csv").read_bytes())
     outcome = verify_release(artifact / "release.zip", manifest=manifest)
     assert outcome["artifact_sha256"] == shipped

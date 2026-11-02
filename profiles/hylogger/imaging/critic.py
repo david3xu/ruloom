@@ -20,8 +20,9 @@ Boundaries, enforced by construction:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 
 class CriticError(Exception):
@@ -79,13 +80,9 @@ def critique_synthetic(
         raise CriticError(f"synthetic image not found: {path}")
     prompt = build_critic_prompt(summary)
     try:
-        completion = model_client.complete_with_image(
-            prompt, CRITIC_SCHEMA, path
-        )
+        completion = model_client.complete_with_image(prompt, CRITIC_SCHEMA, path)
     except AttributeError as exc:
-        raise CriticError(
-            "vision client has no complete_with_image method"
-        ) from exc
+        raise CriticError("vision client has no complete_with_image method") from exc
     except Exception as exc:  # noqa: BLE001 -- wrapped, then recorded
         raise CriticError(
             f"vision critique failed: {type(exc).__name__}: {exc}"

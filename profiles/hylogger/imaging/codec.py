@@ -49,15 +49,11 @@ def encode_png(
     if width < 1 or height < 1:
         raise ValueError(f"dimensions must be positive, got {width}x{height}")
     if len(rows) != height:
-        raise ValueError(
-            f"expected {height} rows, got {len(rows)}"
-        )
+        raise ValueError(f"expected {height} rows, got {len(rows)}")
     raw = bytearray()
     for index, row in enumerate(rows):
         if len(row) != width:
-            raise ValueError(
-                f"row {index}: expected {width} pixels, got {len(row)}"
-            )
+            raise ValueError(f"row {index}: expected {width} pixels, got {len(row)}")
         raw.append(0)
         for pixel in row:
             red, green, blue = pixel
@@ -87,9 +83,7 @@ def _paeth(a: int, b: int, c: int) -> int:
     return c
 
 
-def _unfilter(
-    filter_type: int, scanline: bytes, previous: bytes, stride: int
-) -> bytes:
+def _unfilter(filter_type: int, scanline: bytes, previous: bytes, stride: int) -> bytes:
     """Reverse one PNG scanline filter; all five types are supported."""
     current = bytearray(scanline)
     if filter_type == 0:
@@ -152,9 +146,7 @@ def decode_png(data: bytes) -> tuple[int, int, list[list[tuple[int, int, int]]]]
                 ">IIBBBBB", payload
             )
             if bit_depth != 8:
-                raise ValueError(
-                    f"unsupported PNG bit depth {bit_depth} (8-bit only)"
-                )
+                raise ValueError(f"unsupported PNG bit depth {bit_depth} (8-bit only)")
             if colour_type not in (0, 2, 6):
                 raise ValueError(
                     f"unsupported PNG colour type {colour_type} "
@@ -202,12 +194,8 @@ def decode_png(data: bytes) -> tuple[int, int, list[list[tuple[int, int, int]]]]
                 grey = scanline[base]
                 row.append((grey, grey, grey))
             elif channels == 3:
-                row.append(
-                    (scanline[base], scanline[base + 1], scanline[base + 2])
-                )
+                row.append((scanline[base], scanline[base + 1], scanline[base + 2]))
             else:
-                row.append(
-                    (scanline[base], scanline[base + 1], scanline[base + 2])
-                )
+                row.append((scanline[base], scanline[base + 1], scanline[base + 2]))
         rows.append(row)
     return width, height, rows

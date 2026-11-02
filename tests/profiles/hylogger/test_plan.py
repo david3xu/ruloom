@@ -15,6 +15,7 @@ import pytest
 
 from models.base import Completion, ModelError, Usage
 from models.meta_cli import MuseCLIModel
+from profiles.hylogger.analysis.statistics import Profile
 from profiles.hylogger.generation.plan import (
     PLAN_SCHEMA,
     PlanError,
@@ -23,7 +24,6 @@ from profiles.hylogger.generation.plan import (
     provider_schema,
 )
 from profiles.hylogger.intake.reader import Sample
-from profiles.hylogger.analysis.statistics import Profile
 
 
 def _toy_profile(source_name: str = "TOY") -> Profile:
@@ -114,9 +114,7 @@ def test_propose_sends_strict_schema_with_bound_strategies() -> None:
 
 
 def test_build_prompt_requires_strategy_when_bound() -> None:
-    header = build_prompt(_toy_profile(), [STRATEGY]).split(
-        "Profile statistics"
-    )[0]
+    header = build_prompt(_toy_profile(), [STRATEGY]).split("Profile statistics")[0]
     assert "exactly three keys" in header
     assert STRATEGY in header
 
@@ -146,9 +144,7 @@ def test_build_prompt_withholds_singleton_labels() -> None:
 
 
 class _Proc:
-    def __init__(
-        self, returncode: int = 0, stdout: str = "", stderr: str = ""
-    ) -> None:
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
@@ -297,9 +293,7 @@ def test_adapter_nonzero_exit_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_adapter_refusal_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    _run_stub(
-        monkeypatch, _Proc(stdout=_terminal_event("refused", terminal="refused"))
-    )
+    _run_stub(monkeypatch, _Proc(stdout=_terminal_event("refused", terminal="refused")))
     with pytest.raises(ModelError):
         MuseCLIModel().complete("make a plan", PLAN_SCHEMA)
 

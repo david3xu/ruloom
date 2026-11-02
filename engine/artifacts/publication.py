@@ -71,8 +71,9 @@ import re
 import tempfile
 import time
 import zipfile
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from ..core.dispatch import (
     AuthorityDenied,
@@ -144,9 +145,7 @@ def _stage_and_commit(dest_dir: Path, dest_name: str, payload: bytes) -> Path:
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / dest_name
-    handle, tmp_name = tempfile.mkstemp(
-        dir=str(dest_dir), prefix=dest_name + ".tmp."
-    )
+    handle, tmp_name = tempfile.mkstemp(dir=str(dest_dir), prefix=dest_name + ".tmp.")
     try:
         with os.fdopen(handle, "wb") as tmp:
             tmp.write(payload)
@@ -225,9 +224,7 @@ def _read_json_file(path: Path, *, what: str) -> dict[str, Any]:
             f"run carries no readable {what} ({path.name}): refusing"
         ) from exc
     if not isinstance(payload, Mapping):
-        raise PublicationError(
-            f"run {what} ({path.name}) is not an object: refusing"
-        )
+        raise PublicationError(f"run {what} ({path.name}) is not an object: refusing")
     return dict(payload)
 
 
@@ -243,8 +240,7 @@ def _check_required_coverage(report: Any, required: Any) -> None:
         raise PublicationError("shipped report is not an object: refusing")
     if report.get("verdict") != "pass":
         raise PublicationError(
-            f"shipped report verdict is {report.get('verdict')!r}, "
-            "not 'pass': refusing"
+            f"shipped report verdict is {report.get('verdict')!r}, not 'pass': refusing"
         )
     results = report.get("results")
     if not isinstance(results, list):
@@ -256,8 +252,7 @@ def _check_required_coverage(report: Any, required: Any) -> None:
     for check_id in required:
         if not isinstance(check_id, str) or not check_id:
             raise PublicationError(
-                "persisted acceptance declares an invalid required "
-                "check: refusing"
+                "persisted acceptance declares an invalid required check: refusing"
             )
         passing = [
             entry
@@ -361,8 +356,7 @@ def _resolve_acceptance(
         sidecar = (run_path / RELEASE_HASH_NAME).read_text(encoding="utf-8")
     except OSError as exc:
         raise PublicationError(
-            f"run {run_path.name!r} carries no detached "
-            f"{RELEASE_HASH_NAME}: refusing"
+            f"run {run_path.name!r} carries no detached {RELEASE_HASH_NAME}: refusing"
         ) from exc
     if sidecar.split() != [zip_sha, RELEASE_ZIP_NAME]:
         raise PublicationError(
@@ -378,12 +372,9 @@ def _resolve_acceptance(
     binding = decision.get("frozen_manifest_sha256")
     if not isinstance(binding, str) or not binding:
         raise PublicationError(
-            f"run {run_path.name!r} decision binds no frozen "
-            "manifest: refusing"
+            f"run {run_path.name!r} decision binds no frozen manifest: refusing"
         )
-    frozen = _read_json_file(
-        run_path / FROZEN_MANIFEST_NAME, what="frozen manifest"
-    )
+    frozen = _read_json_file(run_path / FROZEN_MANIFEST_NAME, what="frozen manifest")
     if frozen.get("evidence_digest") != binding:
         raise PublicationError(
             f"run {run_path.name!r} frozen evidence does not match "
@@ -401,8 +392,7 @@ def _resolve_acceptance(
         )
     ):
         raise PublicationError(
-            f"run {run_path.name!r} frozen manifest lists no "
-            "members: refusing"
+            f"run {run_path.name!r} frozen manifest lists no members: refusing"
         )
     if candidate_digest(list(frozen_members)) != binding:
         raise PublicationError(
@@ -428,8 +418,7 @@ def _resolve_acceptance(
     manifest_members = manifest.get("members")
     if not isinstance(manifest_members, list):
         raise PublicationError(
-            f"run {run_path.name!r} release manifest lists no "
-            "members: refusing"
+            f"run {run_path.name!r} release manifest lists no members: refusing"
         )
     manifest_by_path = {
         entry.get("path"): entry
@@ -452,12 +441,9 @@ def _resolve_acceptance(
     acceptance = manifest.get("acceptance")
     if not isinstance(acceptance, Mapping):
         raise PublicationError(
-            f"run {run_path.name!r} carries no persisted acceptance "
-            "record: refusing"
+            f"run {run_path.name!r} carries no persisted acceptance record: refusing"
         )
-    if acceptance.get("verdict") != "pass" or list(
-        acceptance.get("failed") or []
-    ):
+    if acceptance.get("verdict") != "pass" or list(acceptance.get("failed") or []):
         raise PublicationError(
             f"run {run_path.name!r} persisted acceptance is not a "
             "passing gate: refusing"
@@ -474,15 +460,13 @@ def _resolve_acceptance(
         shipped_report = json.loads(report_raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PublicationError(
-            f"run {run_path.name!r} shipped report is not valid "
-            f"JSON: refusing ({exc})"
+            f"run {run_path.name!r} shipped report is not valid JSON: refusing ({exc})"
         ) from exc
     _check_required_coverage(shipped_report, acceptance.get("required_checks"))
     attempts = {entry.get("attempt") for entry in frozen_members}
     if len(attempts) != 1:
         raise PublicationError(
-            f"run {run_path.name!r} accepted members span several "
-            "attempts: refusing"
+            f"run {run_path.name!r} accepted members span several attempts: refusing"
         )
     attempt_no = next(iter(attempts))
     receipt = _read_json_file(
@@ -491,8 +475,7 @@ def _resolve_acceptance(
     )
     if receipt.get("verdict") != "pass":
         raise PublicationError(
-            f"run {run_path.name!r} selected attempt did not pass "
-            "its gate: refusing"
+            f"run {run_path.name!r} selected attempt did not pass its gate: refusing"
         )
     refs = receipt.get("artifact_refs")
     if not isinstance(refs, list) or artifact not in refs:
@@ -525,8 +508,7 @@ def _resolve_acceptance(
     spec_digest = run_request.get("spec_digest")
     if not isinstance(spec_digest, str) or not spec_digest:
         raise PublicationError(
-            f"run {run_path.name!r} run record carries no spec digest: "
-            "refusing"
+            f"run {run_path.name!r} run record carries no spec digest: refusing"
         )
     max_rows: int | None = None
     run_spec = run_request.get("spec")
@@ -534,11 +516,7 @@ def _resolve_acceptance(
         limits = run_spec.get("limits")
         if isinstance(limits, Mapping) and "max_rows" in limits:
             bound = limits.get("max_rows")
-            if (
-                isinstance(bound, bool)
-                or not isinstance(bound, int)
-                or bound < 1
-            ):
+            if isinstance(bound, bool) or not isinstance(bound, int) or bound < 1:
                 raise PublicationError(
                     f"run {run_path.name!r} run record carries an "
                     "unusable row bound: refusing"
@@ -589,8 +567,7 @@ def _check_request_binding(
     bound = acceptance.get("request_identity")
     if not isinstance(bound, Mapping):
         raise PublicationError(
-            f"run acceptance binds no request identity: refusing "
-            "(only bound runs ship)"
+            "run acceptance binds no request identity: refusing (only bound runs ship)"
         )
     for field in ("profile", "source_sha256"):
         wanted = persisted.get(field)
@@ -615,8 +592,7 @@ def _check_request_binding(
                 "acceptance)"
             )
     wanted_rows = effective_max_rows(
-        item.get("request") if isinstance(item.get("request"), Mapping)
-        else {}
+        item.get("request") if isinstance(item.get("request"), Mapping) else {}
     )
     if wanted_rows is not None:
         delivered_rows = acceptance.get("max_rows")
@@ -671,8 +647,7 @@ class Publisher:
         path = self.dir / f"{clean}.json"
         if path.resolve().parent != self.dir.resolve():
             raise PublicationError(
-                f"publication item id {item_id!r} resolves outside "
-                "its store: refusing"
+                f"publication item id {item_id!r} resolves outside its store: refusing"
             )
         return path
 
@@ -799,11 +774,7 @@ class Publisher:
             )
         request = item.get("request")
         wanted = request.get("profile") if isinstance(request, Mapping) else None
-        if (
-            isinstance(wanted, str)
-            and wanted
-            and wanted != acceptance["run_profile"]
-        ):
+        if isinstance(wanted, str) and wanted and wanted != acceptance["run_profile"]:
             raise PublicationError(
                 f"item {clean_id!r} requests profile {wanted!r}, but "
                 f"the accepted run is profile "
@@ -873,7 +844,7 @@ class Publisher:
                 "bytes after copy: refusing"
             )
         sidecar = self.dest_dir / f"{dest_name}.sha256"
-        _atomic_write_bytes(sidecar, f"{snapshot_digest}  {dest_name}\n".encode("utf-8"))
+        _atomic_write_bytes(sidecar, f"{snapshot_digest}  {dest_name}\n".encode())
         record = {
             "item_id": clean_id,
             "authority": authority,

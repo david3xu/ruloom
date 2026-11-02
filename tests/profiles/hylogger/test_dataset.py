@@ -2,13 +2,13 @@
 
 import pytest
 
+from profiles.hylogger.intake.reader import Sample
 from profiles.hylogger.validation.dataset import (
     HEADER,
     read,
     read_csv_bytes,
     to_csv_bytes,
 )
-from profiles.hylogger.intake.reader import Sample
 
 
 def _samples() -> list[Sample]:

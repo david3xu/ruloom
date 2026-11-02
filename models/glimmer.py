@@ -21,11 +21,11 @@ vision critic seat stays with the Spark multimodal adapter from Loop 8.
 from __future__ import annotations
 
 import json
-import socket
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 from .base import Completion, ModelError, Usage
 
@@ -62,13 +62,10 @@ def _check_conformance(data: Any, schema: Mapping[str, Any]) -> None:
     """
     if not isinstance(data, dict):
         raise ModelError(
-            "local model answer is not a JSON object: "
-            f"{type(data).__name__}"
+            f"local model answer is not a JSON object: {type(data).__name__}"
         )
     required = schema.get("required", []) if isinstance(schema, Mapping) else []
-    properties = (
-        schema.get("properties", {}) if isinstance(schema, Mapping) else {}
-    )
+    properties = schema.get("properties", {}) if isinstance(schema, Mapping) else {}
     if not isinstance(required, list) or not isinstance(properties, Mapping):
         return
     kinds = {
@@ -79,9 +76,7 @@ def _check_conformance(data: Any, schema: Mapping[str, Any]) -> None:
     }
     for key in required:
         if not isinstance(key, str) or key not in data:
-            raise ModelError(
-                f"local model answer is missing required key {key!r}"
-            )
+            raise ModelError(f"local model answer is missing required key {key!r}")
         spec = properties.get(key, {})
         want = spec.get("type") if isinstance(spec, Mapping) else None
         if want in kinds and not isinstance(data[key], kinds[want]):
@@ -94,8 +89,7 @@ def _check_conformance(data: Any, schema: Mapping[str, Any]) -> None:
         ):
             raise ModelError(f"local model answer key {key!r} is not integer")
         if want == "number" and (
-            not isinstance(data[key], (int, float))
-            or isinstance(data[key], bool)
+            not isinstance(data[key], (int, float)) or isinstance(data[key], bool)
         ):
             raise ModelError(f"local model answer key {key!r} is not number")
 
@@ -142,9 +136,7 @@ class GlimmerLocalModel:
             },
         )
         try:
-            with urllib.request.urlopen(
-                request, timeout=self.timeout_s
-            ) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = ""
@@ -153,9 +145,7 @@ class GlimmerLocalModel:
             except Exception:  # noqa: BLE001 -- best-effort error detail
                 detail = ""
             lowered = detail.lower()
-            if exc.code == 400 and (
-                "exceed" in lowered and "context" in lowered
-            ):
+            if exc.code == 400 and ("exceed" in lowered and "context" in lowered):
                 raise ModelError(
                     "local model prompt exceeds the server context "
                     f"window: {detail} Restart llama-server with a "
@@ -168,30 +158,23 @@ class GlimmerLocalModel:
             ) from exc
         except urllib.error.URLError as exc:
             raise ModelError(
-                f"local model server unreachable at {self.endpoint()}: "
-                f"{exc.reason}"
+                f"local model server unreachable at {self.endpoint()}: {exc.reason}"
             ) from exc
-        except (TimeoutError, socket.timeout) as exc:
+        except TimeoutError as exc:
             raise ModelError(
                 f"local model call timed out after {self.timeout_s}s"
             ) from exc
         except OSError as exc:
-            raise ModelError(
-                f"local model transport failed: {exc}"
-            ) from exc
+            raise ModelError(f"local model transport failed: {exc}") from exc
         try:
             decoded = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise ModelError(
-                f"local model server emitted invalid JSON: {exc}"
-            ) from exc
+            raise ModelError(f"local model server emitted invalid JSON: {exc}") from exc
         if not isinstance(decoded, Mapping):
             raise ModelError("local model server emitted a non-object reply")
         return decoded
 
-    def complete(
-        self, prompt: str, schema: Mapping[str, Any]
-    ) -> Completion:
+    def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
         """Run ``prompt`` under ``schema`` against the local server."""
         schema_dict = dict(schema)
         reply = self._post(
@@ -212,18 +195,14 @@ class GlimmerLocalModel:
             ) from exc
         if isinstance(content, list):
             content = "".join(
-                part.get("text", "")
-                for part in content
-                if isinstance(part, Mapping)
+                part.get("text", "") for part in content if isinstance(part, Mapping)
             )
         if not isinstance(content, str) or not content.strip():
             raise ModelError("local model reply carried no text content")
         try:
             data = json.loads(_strip_fences(content))
         except json.JSONDecodeError as exc:
-            raise ModelError(
-                f"local model answer is not valid JSON: {exc}"
-            ) from exc
+            raise ModelError(f"local model answer is not valid JSON: {exc}") from exc
         _check_conformance(data, schema_dict)
         usage_block = reply.get("usage")
         if not isinstance(usage_block, Mapping):

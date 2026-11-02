@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from profiles.hylogger.validation.dataset import read_csv_bytes, to_csv_bytes
-from profiles.hylogger.intake.reader import Sample, read_scalar_csv
 from profiles.hylogger.analysis.statistics import Profile, build_stats
+from profiles.hylogger.intake.reader import Sample, read_scalar_csv
+from profiles.hylogger.validation.dataset import read_csv_bytes, to_csv_bytes
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PDD446 = REPO_ROOT / "data" / "sources" / "PDD446-scalars.csv"
@@ -205,9 +205,12 @@ def test_pdd446_summary() -> None:
     stats = profile.stats
     print(
         "\nPDD446:",
-        "samples =", stats["n_samples"],
-        "valid_fraction =", stats["validity"]["valid_fraction"],
-        "spacing_median =", stats["geometry"]["spacing_m"]["p50"],
+        "samples =",
+        stats["n_samples"],
+        "valid_fraction =",
+        stats["validity"]["valid_fraction"],
+        "spacing_median =",
+        stats["geometry"]["spacing_m"]["p50"],
     )
     assert stats["n_samples"] == 39300
     assert 0.0 < stats["validity"]["valid_fraction"] < 1.0

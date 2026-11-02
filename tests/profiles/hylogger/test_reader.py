@@ -57,8 +57,20 @@ def test_field_mapping_column_order_independent(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "cell",
-    ["", "null", "NULL", "Null", "  null  ", "INVALID", "invalid", "Aspectral",
-     "ASPECTRAL", "NOTAROK", "notarok", " NOTAROK "],
+    [
+        "",
+        "null",
+        "NULL",
+        "Null",
+        "  null  ",
+        "INVALID",
+        "invalid",
+        "Aspectral",
+        "ASPECTRAL",
+        "NOTAROK",
+        "notarok",
+        " NOTAROK ",
+    ],
 )
 def test_no_answer_normalization(cell: str) -> None:
     assert normalize_group(cell) is None
@@ -98,7 +110,15 @@ def test_rows_without_usable_depth_dropped(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("cell", "expected"), [("1", True), ("0", False), (" 1 ", True), ("2", False), ("", False), (None, False)]
+    ("cell", "expected"),
+    [
+        ("1", True),
+        ("0", False),
+        (" 1 ", True),
+        ("2", False),
+        ("", False),
+        (None, False),
+    ],
 )
 def test_valid_mapping(cell: object, expected: bool) -> None:
     assert parse_valid(cell) is expected

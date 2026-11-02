@@ -125,7 +125,11 @@ def _ordered_subjects_problems(
     previous: int | None = None
     for fragment in subjects_oldest_first:
         position = next(
-            (index for index, subject in enumerate(oldest_first) if fragment in subject),
+            (
+                index
+                for index, subject in enumerate(oldest_first)
+                if fragment in subject
+            ),
             None,
         )
         if position is None:
@@ -153,9 +157,7 @@ def test_no_tracked_data_or_run_output() -> None:
         offenders = [
             path
             for path in tracked
-            if path == "data"
-            or path.startswith(("data/", "runs/"))
-            or path == "runs"
+            if path == "data" or path.startswith(("data/", "runs/")) or path == "runs"
         ]
         assert not offenders, f"tracked generated paths: {offenders[:5]}"
     else:
@@ -184,9 +186,7 @@ def test_history_never_added_data_or_run_output() -> None:
     added = {
         line
         for line in proc.stdout.splitlines()
-        if line == "data"
-        or line.startswith(("data/", "runs/"))
-        or line == "runs"
+        if line == "data" or line.startswith(("data/", "runs/")) or line == "runs"
     }
     assert not added, f"history committed generated paths: {sorted(added)[:5]}"
 
@@ -250,8 +250,6 @@ def test_no_new_merge_commits() -> None:
     # are not the product; HEAD is.
     proc = _git(REPO_ROOT, "log", "HEAD", "--merges", "--format=%H %s")
     assert proc.returncode == 0, proc.stderr
-    merges = [
-        line.split()[0] for line in proc.stdout.splitlines() if line.strip()
-    ]
+    merges = [line.split()[0] for line in proc.stdout.splitlines() if line.strip()]
     unknown = [sha for sha in merges if sha not in GRANDFATHERED_MERGES]
     assert not unknown, f"new merge commits in history: {unknown}"

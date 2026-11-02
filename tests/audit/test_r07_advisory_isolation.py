@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import pytest
 
@@ -85,9 +86,7 @@ def test_failing_deterministic_report_is_never_released(tmp_path: Path) -> None:
             registry,
             source=source,
             max_attempts=1,
-            model_factory=lambda role, config: FakeModel(
-                [{"seed": 11, "n_rows": 4}]
-            ),
+            model_factory=lambda role, config: FakeModel([{"seed": 11, "n_rows": 4}]),
             out=out,
             say=lambda message: None,
             ask=lambda prompt: "accept",
@@ -98,9 +97,9 @@ def test_failing_deterministic_report_is_never_released(tmp_path: Path) -> None:
     assert code == EXIT_FAILED, result
     assert result["status"] != "released"
     artifact_dir = result.get("artifact_dir")
-    assert artifact_dir is None or not (
-        Path(str(artifact_dir)) / "release.zip"
-    ).exists()
+    assert (
+        artifact_dir is None or not (Path(str(artifact_dir)) / "release.zip").exists()
+    )
 
 
 def test_strict_thresholds_fail_without_override(

@@ -69,13 +69,9 @@ def _write_hole(path: Path, rows: list[str]) -> None:
 
 
 def _calib_dir(tmp_path: Path) -> Path:
-    hole_a = [
-        _row(10.0 + i * 0.008, True, "A", "X") for i in range(6)
-    ]
+    hole_a = [_row(10.0 + i * 0.008, True, "A", "X") for i in range(6)]
     hole_a[2] = _row(10.008, True, "A", "X")  # repeated depth
-    hole_b = [
-        _row(20.0 + i * 0.008, True, "", "Y") for i in range(6)
-    ]
+    hole_b = [_row(20.0 + i * 0.008, True, "", "Y") for i in range(6)]
     hole_b[2] = _row(20.016, False, "", "Y")
     _write_hole(tmp_path / "HOLEA-scalars.csv", hole_a)
     _write_hole(tmp_path / "HOLEB-scalars.csv", hole_b)
@@ -166,7 +162,9 @@ def test_tir_persistence_p95_matches_frozen_calibration() -> None:
         assert persist_first is not None and persist_second is not None
         deltas.append(abs(persist_first - persist_second))
     deltas.sort()
-    assert TIR_PERSISTENCE_P95 == pytest.approx(deltas[int(0.95 * (len(deltas) - 1))], abs=1e-6)
+    assert TIR_PERSISTENCE_P95 == pytest.approx(
+        deltas[int(0.95 * (len(deltas) - 1))], abs=1e-6
+    )
 
 
 def test_thresholds_from_dict_defaults() -> None:

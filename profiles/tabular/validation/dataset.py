@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Mapping, Sequence, Union
+from collections.abc import Mapping, Sequence
+from typing import Union
 
 
-def to_csv_bytes(
-    rows: Sequence[Mapping[str, str]], columns: Sequence[str]
-) -> bytes:
+def to_csv_bytes(rows: Sequence[Mapping[str, str]], columns: Sequence[str]) -> bytes:
     """Serialise row mappings to CSV bytes under ``columns``."""
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\n")

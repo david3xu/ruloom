@@ -51,8 +51,9 @@ def _fmt(value: object) -> str:
 
 def main() -> int:
     data_dir = REPO_ROOT / "data" / "sources"
-    missing = [name for name in SOURCES
-               if not (data_dir / f"{name}-scalars.csv").is_file()]
+    missing = [
+        name for name in SOURCES if not (data_dir / f"{name}-scalars.csv").is_file()
+    ]
     if missing:
         print(
             f"scorecard needs data/sources ({', '.join(missing)} absent): "
@@ -61,7 +62,8 @@ def main() -> int:
         )
         return 2
     thresholds = load_thresholds(
-        REPO_ROOT / "profiles" / "hylogger" / "thresholds.json")
+        REPO_ROOT / "profiles" / "hylogger" / "thresholds.json"
+    )
     holes = thresholds.provenance.get("holes", [])
 
     lines = [
@@ -103,8 +105,10 @@ def main() -> int:
         "## Per-hole results",
         "",
     ]
-    verdict_table = ["| hole | seed | verdict | failed | skipped |",
-                     "|---|---|---|---|---|"]
+    verdict_table = [
+        "| hole | seed | verdict | failed | skipped |",
+        "|---|---|---|---|---|",
+    ]
     for name in SOURCES:
         source = read_scalar_csv(data_dir / f"{name}-scalars.csv")
         profile = Profile.from_samples(source, name, "scorecard")
@@ -120,16 +124,17 @@ def main() -> int:
         source_stats = build_stats(source)
         lines.append(f"### {name} (n={len(source)})")
         lines.append("")
-        lines.append("| channel | answer src | answer synth "
-                     "(min..max over seeds) | persist src | persist synth "
-                     "(min..max over seeds) |")
+        lines.append(
+            "| channel | answer src | answer synth "
+            "(min..max over seeds) | persist src | persist synth "
+            "(min..max over seeds) |"
+        )
         lines.append("|---|---|---|---|---|")
         per_channel: dict[str, dict[str, list[float]]] = {}
         for channel in ("swir", "tir"):
             rates, persists = [], []
             for seed in SEEDS:
-                synth_stats = build_stats(
-                    generate_samples(profile, seed, len(source)))
+                synth_stats = build_stats(generate_samples(profile, seed, len(source)))
                 rate = synth_stats[channel]["answer_rate"]
                 persist = synth_stats[channel]["persistence"]
                 if rate is not None:
@@ -139,23 +144,27 @@ def main() -> int:
             per_channel[channel] = {"rates": rates, "persists": persists}
             src_rate = _fmt(source_stats[channel]["answer_rate"])
             src_persist = _fmt(source_stats[channel]["persistence"])
-            rate_range = (
-                f"{min(rates):.6f}..{max(rates):.6f}" if rates else "n/a")
+            rate_range = f"{min(rates):.6f}..{max(rates):.6f}" if rates else "n/a"
             persist_range = (
-                f"{min(persists):.6f}..{max(persists):.6f}"
-                if persists else "n/a")
+                f"{min(persists):.6f}..{max(persists):.6f}" if persists else "n/a"
+            )
             lines.append(
                 f"| {channel} | {src_rate} | {rate_range} | "
-                f"{src_persist} | {persist_range} |")
+                f"{src_persist} | {persist_range} |"
+            )
         lines.append("")
-        lines.append("| seed | verdict | swir TVD (tol) | tir TVD (tol) | "
-                     "joint agree src -> synth | valid-run mean src -> synth "
-                     "| invalid-run mean src -> synth |")
+        lines.append(
+            "| seed | verdict | swir TVD (tol) | tir TVD (tol) | "
+            "joint agree src -> synth | valid-run mean src -> synth "
+            "| invalid-run mean src -> synth |"
+        )
         lines.append("|---|---|---|---|---|---|---|")
         for seed in SEEDS:
             synth = generate_samples(profile, seed, len(source))
             report = run_checks(
-                synth, thresholds, source_reference=reference,
+                synth,
+                thresholds,
+                source_reference=reference,
                 expected_geometry=expected,
                 artifact_name=f"{name}:seed-{seed}",
             )
@@ -163,25 +172,30 @@ def main() -> int:
             tvds = []
             for channel in ("swir", "tir"):
                 result = next(
-                    r for r in report.results
-                    if r.name == f"{channel}_fidelity")
+                    r for r in report.results if r.name == f"{channel}_fidelity"
+                )
                 tvds.append(result.detail)
             agree = (
                 f"{_fmt(source_stats['joint']['agreement'])} -> "
-                f"{_fmt(synth_stats['joint']['agreement'])}")
+                f"{_fmt(synth_stats['joint']['agreement'])}"
+            )
             valid_runs = (
                 f"{_fmt(source_stats['validity']['valid_runs']['mean'])} -> "
-                f"{_fmt(synth_stats['validity']['valid_runs']['mean'])}")
+                f"{_fmt(synth_stats['validity']['valid_runs']['mean'])}"
+            )
             invalid_runs = (
                 f"{_fmt(source_stats['validity']['invalid_runs']['mean'])} -> "
-                f"{_fmt(synth_stats['validity']['invalid_runs']['mean'])}")
+                f"{_fmt(synth_stats['validity']['invalid_runs']['mean'])}"
+            )
             lines.append(
                 f"| {seed} | {report.verdict} | {tvds[0]} | {tvds[1]} | "
-                f"{agree} | {valid_runs} | {invalid_runs} |")
+                f"{agree} | {valid_runs} | {invalid_runs} |"
+            )
             verdict_table.append(
                 f"| {name} | {seed} | {report.verdict} | "
                 f"{','.join(report.failed) or '-'} | "
-                f"{','.join(report.skipped) or '-'} |")
+                f"{','.join(report.skipped) or '-'} |"
+            )
         lines.append("")
     lines.append("## Verdict summary")
     lines.append("")

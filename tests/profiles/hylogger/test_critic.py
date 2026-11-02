@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import io
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import pytest
 
@@ -62,8 +63,7 @@ class FakeVisionClient:
         assert dict(schema) == CRITIC_SCHEMA
         return Completion(
             data={"note": self.note},
-            usage=Usage(model="fake-vision", input_tokens=7, output_tokens=3,
-                        calls=1),
+            usage=Usage(model="fake-vision", input_tokens=7, output_tokens=3, calls=1),
             meta={"model": "fake-vision"},
         )
 
@@ -80,8 +80,7 @@ class FakePlanner:
         assert dict(schema) == provider_schema(["fitted_markov_joint"])
         return Completion(
             data=dict(self._plan),
-            usage=Usage(model="fake", input_tokens=10, output_tokens=5,
-                        calls=1),
+            usage=Usage(model="fake", input_tokens=10, output_tokens=5, calls=1),
             meta={"model": "fake"},
         )
 
@@ -110,17 +109,14 @@ def test_critique_returns_note_and_model(tmp_path: Path) -> None:
     png_path.write_bytes(make_fixture_png(16, 8, PALETTE))
     client = FakeVisionClient("banded, continuous, no artefacts")
     note = critique_synthetic(client, png_path, _summary())
-    assert note == {"note": "banded, continuous, no artefacts",
-                    "model": "fake-vision"}
+    assert note == {"note": "banded, continuous, no artefacts", "model": "fake-vision"}
     assert client.calls == 1
     assert client.seen_paths == [str(png_path)]
 
 
 def test_critique_rejects_missing_image(tmp_path: Path) -> None:
     with pytest.raises(CriticError):
-        critique_synthetic(
-            FakeVisionClient(), tmp_path / "absent.png", _summary()
-        )
+        critique_synthetic(FakeVisionClient(), tmp_path / "absent.png", _summary())
 
 
 def test_critique_rejects_empty_note(tmp_path: Path) -> None:
@@ -134,8 +130,7 @@ def test_critique_rejects_client_without_image_method(tmp_path: Path) -> None:
     png_path = tmp_path / "synthetic.png"
     png_path.write_bytes(make_fixture_png(16, 8, PALETTE))
     with pytest.raises(CriticError):
-        critique_synthetic(FakePlanner({"seed": 1, "n_rows": 1}),
-                           png_path, _summary())
+        critique_synthetic(FakePlanner({"seed": 1, "n_rows": 1}), png_path, _summary())
 
 
 def _write_source(path: Path) -> Path:
@@ -165,13 +160,9 @@ def _write_thresholds(path: Path) -> Path:
             "spacing_median_m": Band("spacing_median_m", 0.005, 0.01),
             "repeated_depth_fraction": Band("repeated_depth_fraction", 0.0, 0.2),
             "valid_fraction": Band("valid_fraction", 0.5, 1.0),
-            "swir_answer_rate": Band(
-                "swir_answer_rate", 0.0, 1.0, vacuous=True
-            ),
+            "swir_answer_rate": Band("swir_answer_rate", 0.0, 1.0, vacuous=True),
             "tir_answer_rate": Band("tir_answer_rate", 0.9, 1.0),
-            "repeated_valid_fraction": Band(
-                "repeated_valid_fraction", 0.0, 0.05
-            ),
+            "repeated_valid_fraction": Band("repeated_valid_fraction", 0.0, 0.05),
             "backward_steps": Band("backward_steps", 0, 0),
         },
         swir_vocabulary=frozenset({"A", "B"}),
@@ -234,17 +225,20 @@ def _run_with_images(
     monkeypatch.setenv("RULOOM_THRESHOLDS", str(_write_thresholds(tmp_path)))
     out_dir = tmp_path / "out"
     argv = [
-        "run", str(csv_path),
-        "--profile", "hylogger",
-        "--images", str(images),
-        "--max-attempts", "2",
-        "--out", str(out_dir),
+        "run",
+        str(csv_path),
+        "--profile",
+        "hylogger",
+        "--images",
+        str(images),
+        "--max-attempts",
+        "2",
+        "--out",
+        str(out_dir),
     ]
     monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(answers) + "\n"))
     code = cli_module.main(list(argv), model=models)  # type: ignore[arg-type]
-    run_dirs = [
-        c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()
-    ]
+    run_dirs = [c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()]
     assert len(run_dirs) == 1
     return code, run_dirs[0]
 
@@ -256,9 +250,7 @@ def test_images_end_to_end_releases_with_advisory_note(
     models = _BothModels({"seed": 8, "n_rows": 8}, "plausibly banded")
     code, artifact = _run_with_images(tmp_path, monkeypatch, models)
     assert code == EXIT_OK
-    assert (artifact / "synthetic.png").read_bytes()[:8] == (
-        b"\x89PNG\r\n\x1a\n"
-    )
+    assert (artifact / "synthetic.png").read_bytes()[:8] == (b"\x89PNG\r\n\x1a\n")
     image_report = json.loads(
         (artifact / "image-validation.json").read_text(encoding="utf-8")
     )
@@ -300,9 +292,7 @@ def test_glowing_advisory_cannot_save_failing_image_checks(
     import profiles.hylogger.imaging.checks as image_checks
 
     monkeypatch.setattr(image_checks, "HISTOGRAM_DISTANCE_MAX", -1.0)
-    models = _BothModels(
-        {"seed": 8, "n_rows": 8}, "looks perfect, ship it at once"
-    )
+    models = _BothModels({"seed": 8, "n_rows": 8}, "looks perfect, ship it at once")
     code, artifact = _run_with_images(tmp_path, monkeypatch, models)
     assert code == EXIT_FAILED
     image_report = json.loads(
@@ -324,17 +314,19 @@ def test_no_images_flag_leaves_no_image_outputs(
     out_dir = tmp_path / "out"
     models = _BothModels({"seed": 8, "n_rows": 8}, "unused")
     argv = [
-        "run", str(csv_path),
-        "--profile", "hylogger",
-        "--max-attempts", "2",
-        "--out", str(out_dir),
+        "run",
+        str(csv_path),
+        "--profile",
+        "hylogger",
+        "--max-attempts",
+        "2",
+        "--out",
+        str(out_dir),
     ]
     monkeypatch.setattr("sys.stdin", io.StringIO("accept\nok\n"))
     code = cli_module.main(list(argv), model=models)  # type: ignore[arg-type]
     assert code == EXIT_OK
-    run_dirs = [
-        c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()
-    ]
+    run_dirs = [c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()]
     assert len(run_dirs) == 1
     artifact = run_dirs[0]
     assert not (artifact / "synthetic.png").exists()

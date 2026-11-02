@@ -28,8 +28,9 @@ import json
 import tempfile
 import zipfile
 import zlib
+from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from .hashing import sha256_bytes
 
@@ -75,9 +76,7 @@ def _check_entry_name(name: str) -> None:
         )
     parsed = PurePosixPath(name)
     if parsed.is_absolute():
-        raise ReleaseVerificationError(
-            f"release entry {name!r} is absolute: refusing"
-        )
+        raise ReleaseVerificationError(f"release entry {name!r} is absolute: refusing")
     if ".." in parsed.parts:
         raise ReleaseVerificationError(
             f"release entry {name!r} escapes its directory: refusing"
@@ -100,9 +99,7 @@ def _parse_checksums(text: str) -> dict[str, str]:
                 f"checksums.sha256 line {lineno} is malformed: refusing"
             )
         digest, name = parts
-        if len(digest) != 64 or any(
-            char not in "0123456789abcdef" for char in digest
-        ):
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise ReleaseVerificationError(
                 f"checksums.sha256 line {lineno} carries a bad digest: refusing"
             )
@@ -116,7 +113,9 @@ def _parse_checksums(text: str) -> dict[str, str]:
     return expected
 
 
-def _expected_members(manifest: Any) -> tuple[set[str], dict[str, dict[str, Any]]] | None:
+def _expected_members(
+    manifest: Any,
+) -> tuple[set[str], dict[str, dict[str, Any]]] | None:
     """Normalise the manifest argument to declared members, if any.
 
     Returns the declared names plus, per name, the recorded ``sha256``
@@ -146,9 +145,7 @@ def _expected_members(manifest: Any) -> tuple[set[str], dict[str, dict[str, Any]
     raise ReleaseVerificationError("manifest must list member names")
 
 
-def _check_report(
-    member: str, payload: Any, *, members: dict[str, bytes]
-) -> str:
+def _check_report(member: str, payload: Any, *, members: dict[str, bytes]) -> str:
     """Validate one report member; return its bound artifact hash."""
     if not isinstance(payload, Mapping):
         raise ReleaseVerificationError(
@@ -161,18 +158,13 @@ def _check_report(
             )
     bound = payload["artifact_sha256"]
     if not isinstance(bound, str) or not bound:
-        raise ReleaseVerificationError(
-            f"{member} carries no artifact hash: refusing"
-        )
+        raise ReleaseVerificationError(f"{member} carries no artifact hash: refusing")
     if payload["verdict"] != "pass":
         raise ReleaseVerificationError(
-            f"{member} verdict is {payload['verdict']!r}, not 'pass': "
-            "refusing"
+            f"{member} verdict is {payload['verdict']!r}, not 'pass': refusing"
         )
     if not isinstance(payload["results"], list):
-        raise ReleaseVerificationError(
-            f"{member} carries no results list: refusing"
-        )
+        raise ReleaseVerificationError(f"{member} carries no results list: refusing")
     target = PAYLOAD_MEMBER if member == REPORT_MEMBER else IMAGE_MEMBER
     try:
         current = members[target]
@@ -188,9 +180,7 @@ def _check_report(
     return bound
 
 
-def verify_release(
-    zip_path: str | Path, *, manifest: Any = None
-) -> dict[str, Any]:
+def verify_release(zip_path: str | Path, *, manifest: Any = None) -> dict[str, Any]:
     """Verify a release bundle; return its attested identity on success.
 
     ``manifest`` optionally carries the declared member list (the run's
@@ -235,16 +225,14 @@ def verify_release(
         for name in expected:
             if name not in names:
                 raise ReleaseVerificationError(
-                    f"attested member {name!r} is missing from the "
-                    "bundle: refusing"
+                    f"attested member {name!r} is missing from the bundle: refusing"
                 )
         declared, recorded = _expected_members(manifest)
         if declared is not None and recorded is not None:
             for name in sorted(declared):
                 if name not in names:
                     raise ReleaseVerificationError(
-                        f"declared member {name!r} is missing from the "
-                        "bundle: refusing"
+                        f"declared member {name!r} is missing from the bundle: refusing"
                     )
             for name in names:
                 if name != CHECKSUMS_NAME and name not in declared:
@@ -252,9 +240,7 @@ def verify_release(
                         f"bundle member {name!r} is not in the declared "
                         "manifest: refusing"
                     )
-        with tempfile.TemporaryDirectory(
-            prefix="ruloom-release-"
-        ) as staging:
+        with tempfile.TemporaryDirectory(prefix="ruloom-release-") as staging:
             stage = Path(staging)
             try:
                 archive.extractall(stage)
@@ -270,8 +256,7 @@ def verify_release(
     for name, digest in expected.items():
         if sha256_bytes(members[name]) != digest:
             raise ReleaseVerificationError(
-                f"member {name!r} does not match its recorded "
-                "checksum: refusing"
+                f"member {name!r} does not match its recorded checksum: refusing"
             )
     if manifest is not None:
         _, recorded = _expected_members(manifest)
@@ -303,16 +288,10 @@ def verify_release(
                 f"member {name!r} is not valid JSON: refusing"
             ) from exc
     if REPORT_MEMBER not in parsed:
-        raise ReleaseVerificationError(
-            f"bundle carries no {REPORT_MEMBER}: refusing"
-        )
-    artifact_sha = _check_report(
-        REPORT_MEMBER, parsed[REPORT_MEMBER], members=members
-    )
+        raise ReleaseVerificationError(f"bundle carries no {REPORT_MEMBER}: refusing")
+    artifact_sha = _check_report(REPORT_MEMBER, parsed[REPORT_MEMBER], members=members)
     if IMAGE_REPORT_MEMBER in parsed:
-        _check_report(
-            IMAGE_REPORT_MEMBER, parsed[IMAGE_REPORT_MEMBER], members=members
-        )
+        _check_report(IMAGE_REPORT_MEMBER, parsed[IMAGE_REPORT_MEMBER], members=members)
     return {
         "members": sorted(members),
         "artifact_sha256": artifact_sha,

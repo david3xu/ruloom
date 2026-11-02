@@ -17,10 +17,9 @@ refusal precedes the first source read.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
-
-import pytest
+from typing import Any
 
 from engine.audit.runlog import RunLog
 from engine.core.manifest import load_manifest
@@ -45,9 +44,7 @@ class CountingFactory:
 
 def _refused_run_dir(out: Path) -> Path:
     run_dirs = [
-        child
-        for child in (out / "runs").iterdir()
-        if (child / "run.json").is_file()
+        child for child in (out / "runs").iterdir() if (child / "run.json").is_file()
     ]
     assert len(run_dirs) == 1
     return run_dirs[0]
@@ -91,13 +88,9 @@ def _assert_durable_refusal(
 
 
 def test_unknown_strategy_refused_before_model(tmp_path: Path) -> None:
-    code, outcome, factory = _run_with_spec(
-        tmp_path, {"strategy": "no-such-strategy"}
-    )
+    code, outcome, factory = _run_with_spec(tmp_path, {"strategy": "no-such-strategy"})
     assert code == EXIT_FAILED
-    _assert_durable_refusal(
-        tmp_path / "out", outcome, factory, "unknown strategy"
-    )
+    _assert_durable_refusal(tmp_path / "out", outcome, factory, "unknown strategy")
 
 
 def test_unsupported_spec_version_refused_before_model(tmp_path: Path) -> None:
@@ -114,9 +107,7 @@ def test_rows_over_limit_refused_before_model(tmp_path: Path) -> None:
         tmp_path, {"limits": {"max_rows": manifest_max + 1, "max_attempts": 2}}
     )
     assert code == EXIT_FAILED
-    _assert_durable_refusal(
-        tmp_path / "out", outcome, factory, "exceed manifest limit"
-    )
+    _assert_durable_refusal(tmp_path / "out", outcome, factory, "exceed manifest limit")
 
 
 def test_imaging_where_unsupported_refused_before_model(tmp_path: Path) -> None:
@@ -136,15 +127,11 @@ def test_imaging_where_unsupported_refused_before_model(tmp_path: Path) -> None:
         ask=lambda prompt: "accept",
     )
     assert code == EXIT_FAILED
-    _assert_durable_refusal(
-        tmp_path / "out", outcome, factory, "declares ['scalar']"
-    )
+    _assert_durable_refusal(tmp_path / "out", outcome, factory, "declares ['scalar']")
 
 
 def test_unknown_output_modality_refused_before_model(tmp_path: Path) -> None:
-    code, outcome, factory = _run_with_spec(
-        tmp_path, {"outputs": ["scalar", "video"]}
-    )
+    code, outcome, factory = _run_with_spec(tmp_path, {"outputs": ["scalar", "video"]})
     assert code == EXIT_FAILED
     _assert_durable_refusal(
         tmp_path / "out", outcome, factory, "unknown output modality"
@@ -152,9 +139,7 @@ def test_unknown_output_modality_refused_before_model(tmp_path: Path) -> None:
 
 
 def test_spec_profile_mismatch_refused_before_model(tmp_path: Path) -> None:
-    code, outcome, factory = _run_with_spec(
-        tmp_path, {"profile": "no-such-profile"}
-    )
+    code, outcome, factory = _run_with_spec(tmp_path, {"profile": "no-such-profile"})
     assert code == EXIT_FAILED
     _assert_durable_refusal(
         tmp_path / "out", outcome, factory, "does not match run profile"
@@ -162,9 +147,7 @@ def test_spec_profile_mismatch_refused_before_model(tmp_path: Path) -> None:
 
 
 def test_spec_attempt_bound_mismatch_refused_before_model(tmp_path: Path) -> None:
-    code, outcome, factory = _run_with_spec(
-        tmp_path, {"limits": {"max_attempts": 5}}
-    )
+    code, outcome, factory = _run_with_spec(tmp_path, {"limits": {"max_attempts": 5}})
     assert code == EXIT_FAILED
     _assert_durable_refusal(
         tmp_path / "out", outcome, factory, "contradicts the caller bound"
@@ -212,11 +195,7 @@ def test_source_pin_mismatch_refused_at_intake(tmp_path: Path) -> None:
     assert code == EXIT_FAILED
     assert outcome["status"] == "error"
     assert factory.calls == []
-    run_dirs = [
-        child
-        for child in out.rglob("run.json")
-        if child.parent.name != "out"
-    ]
+    run_dirs = [child for child in out.rglob("run.json") if child.parent.name != "out"]
     assert len(run_dirs) == 1
     record = json.loads(run_dirs[0].read_text(encoding="utf-8"))
     assert record["status"] == "error"

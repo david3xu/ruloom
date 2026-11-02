@@ -47,8 +47,9 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from ..artifacts.hashing import sha256_bytes, sha256_canonical
 
@@ -128,8 +129,7 @@ def _check_bound(value: Any, *, field: str) -> int | None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise DispatchError(
-            f"request {field} must be a positive integer, got "
-            f"{value!r}: refusing"
+            f"request {field} must be a positive integer, got {value!r}: refusing"
         )
     return value
 
@@ -154,8 +154,7 @@ def effective_max_rows(request: Mapping[str, Any]) -> int | None:
         if limits is not None:
             if not isinstance(limits, Mapping):
                 raise DispatchError(
-                    f"request spec 'limits' must be a mapping, got "
-                    f"{limits!r}: refusing"
+                    f"request spec 'limits' must be a mapping, got {limits!r}: refusing"
                 )
             if "max_rows" in limits:
                 nested = _check_bound(
@@ -188,24 +187,14 @@ def _normalize_request(request: Mapping[str, Any]) -> dict[str, Any]:
                 "refusing (never silently unenforce a bound)"
             )
     profile = request.get("profile")
-    if profile is not None and (
-        not isinstance(profile, str) or not profile
-    ):
-        raise DispatchError(
-            "request 'profile' must be a non-empty string: refusing"
-        )
+    if profile is not None and (not isinstance(profile, str) or not profile):
+        raise DispatchError("request 'profile' must be a non-empty string: refusing")
     source = request.get("source")
-    if source is not None and (
-        not isinstance(source, str) or not source
-    ):
-        raise DispatchError(
-            "request 'source' must be a non-empty string: refusing"
-        )
+    if source is not None and (not isinstance(source, str) or not source):
+        raise DispatchError("request 'source' must be a non-empty string: refusing")
     spec = request.get("spec")
     if spec is not None and not isinstance(spec, Mapping):
-        raise DispatchError(
-            f"request 'spec' must be a mapping, got {spec!r}: refusing"
-        )
+        raise DispatchError(f"request 'spec' must be a mapping, got {spec!r}: refusing")
     _check_bound(request.get("max_attempts"), field="'max_attempts'")
     _check_bound(request.get("max_rows"), field="'max_rows'")
     effective_max_rows(request)
@@ -214,9 +203,7 @@ def _normalize_request(request: Mapping[str, Any]) -> dict[str, Any]:
         "source_sha256": _check_pin(
             request.get("source_sha256"), field="'source_sha256'"
         ),
-        "spec_digest": _check_pin(
-            request.get("spec_digest"), field="'spec_digest'"
-        ),
+        "spec_digest": _check_pin(request.get("spec_digest"), field="'spec_digest'"),
     }
 
 
@@ -337,8 +324,7 @@ class DispatchStore:
         path = self.items_dir / f"{clean}.json"
         if path.resolve().parent != self.items_dir.resolve():
             raise DispatchError(
-                f"dispatch item id {item_id!r} resolves outside "
-                "its store: refusing"
+                f"dispatch item id {item_id!r} resolves outside its store: refusing"
             )
         return path
 
@@ -484,26 +470,19 @@ class DispatchStore:
         event is appended and the fencing epoch never moves.
         """
         try:
-            existing = json.loads(
-                self._item_path(item_id).read_text(encoding="utf-8")
-            )
+            existing = json.loads(self._item_path(item_id).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise DispatchError(
                 f"dispatch item {item_id!r} is recorded but "
                 "unreadable: refusing (never duplicate blindly)"
             ) from exc
-        if (
-            not isinstance(existing, Mapping)
-            or existing.get("item_id") != item_id
-        ):
+        if not isinstance(existing, Mapping) or existing.get("item_id") != item_id:
             raise DispatchError(
-                f"dispatch item {item_id!r} carries a corrupt "
-                "record: refusing"
+                f"dispatch item {item_id!r} carries a corrupt record: refusing"
             )
         if existing.get("authority") != authority:
             raise AuthorityDenied(
-                f"dispatch item {item_id!r} belongs to another "
-                "authority: refusing"
+                f"dispatch item {item_id!r} belongs to another authority: refusing"
             )
         if _request_digest(existing.get("request")) != _request_digest(request):
             raise DispatchError(
@@ -535,7 +514,7 @@ class DispatchStore:
                 "idempotency_key": None,
                 "status": QUEUED,
                 "retries_used": 0,
-                    "attempts": 0,
+                "attempts": 0,
                 "max_retries": max_retries,
                 "lease": None,
                 "fencing": 0,
@@ -621,10 +600,7 @@ class DispatchStore:
                     f"idempotency key {idempotency_key!r} is recorded "
                     "but unreadable: refusing (never duplicate blindly)"
                 ) from exc
-            if (
-                not isinstance(seen, Mapping)
-                or seen.get("authority") != authority
-            ):
+            if not isinstance(seen, Mapping) or seen.get("authority") != authority:
                 raise AuthorityDenied(
                     f"idempotency key {idempotency_key!r} belongs to "
                     "another authority: refusing"
@@ -638,9 +614,7 @@ class DispatchStore:
                 # key reservation stands, so a different request under
                 # the same key is still refused against the binding.
                 bound = seen.get("request_identity")
-                if isinstance(bound, Mapping) and bound != dict(
-                    request_identity
-                ):
+                if isinstance(bound, Mapping) and bound != dict(request_identity):
                     raise DispatchError(
                         f"idempotency key {idempotency_key!r} is bound "
                         "to a different request: refusing"
@@ -673,9 +647,9 @@ class DispatchStore:
                     "an item owned by another authority: refusing"
                 )
             stored_identity = existing.get("request_identity")
-            if not isinstance(
-                stored_identity, Mapping
-            ) or stored_identity != dict(request_identity):
+            if not isinstance(stored_identity, Mapping) or stored_identity != dict(
+                request_identity
+            ):
                 raise DispatchError(
                     f"idempotency key {idempotency_key!r} is bound to "
                     "a different request: refusing (same-key retries "
@@ -707,7 +681,7 @@ class DispatchStore:
                 "idempotency_key": idempotency_key,
                 "status": QUEUED,
                 "retries_used": 0,
-                    "attempts": 0,
+                "attempts": 0,
                 "max_retries": max_retries,
                 "lease": None,
                 "fencing": 0,
@@ -793,8 +767,7 @@ class DispatchStore:
                 )
             elif status != QUEUED:
                 raise DispatchError(
-                    f"item {item_id!r} carries unknown status "
-                    f"{status!r}: refusing"
+                    f"item {item_id!r} carries unknown status {status!r}: refusing"
                 )
             token = int(record.get("fencing", 0)) + 1
             record["fencing"] = token
@@ -881,9 +854,7 @@ class DispatchStore:
         for field in ("run_id", "artifact_sha256", "zip_sha256"):
             value = accepted_run.get(field)
             if not isinstance(value, str) or not value:
-                raise DispatchError(
-                    f"accepted_run must carry a non-empty {field!r}"
-                )
+                raise DispatchError(f"accepted_run must carry a non-empty {field!r}")
         at = _resolve_now(now)
         with _store_lock(self.dir):
             record = self._read(item_id)
@@ -949,22 +920,18 @@ class DispatchStore:
                 return _copy_record(record)
             if status in (SUCCEEDED, EXHAUSTED):
                 raise DispatchError(
-                    f"item {item_id!r} is terminal ({status}): "
-                    "nothing to cancel"
+                    f"item {item_id!r} is terminal ({status}): nothing to cancel"
                 )
             if status not in (QUEUED, CLAIMED):
                 raise DispatchError(
-                    f"item {item_id!r} carries unknown status "
-                    f"{status!r}: refusing"
+                    f"item {item_id!r} carries unknown status {status!r}: refusing"
                 )
             record["status"] = CANCELLED
             record["lease"] = None
             record["fencing"] = int(record.get("fencing", 0)) + 1
             return self._write(record, event="cancelled", now=at)
 
-    def recover(
-        self, item_id: str, *, now: float | None = None
-    ) -> dict[str, Any]:
+    def recover(self, item_id: str, *, now: float | None = None) -> dict[str, Any]:
         """Return an expired lease to the queue (launcher-outage sweep).
 
         A fresh launcher runs this over claimed items after an outage:

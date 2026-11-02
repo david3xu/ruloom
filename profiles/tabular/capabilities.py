@@ -35,8 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from .analysis.calibration import load_thresholds
-from .validation.checks import run_checks
-from .validation.dataset import read as read_payload
+from .analysis.statistics import TabularProfile
 from .generation.generate import generate as generate_artifact
 from .generation.plan import (
     build_repair_prompt,
@@ -45,8 +44,8 @@ from .generation.plan import (
     validate_plan,
 )
 from .intake.reader import read_tabular_csv
-from .analysis.statistics import TabularProfile
-
+from .validation.checks import run_checks
+from .validation.dataset import read as read_payload
 
 #: Profile check statuses translated to the engine's recognised verdict
 #: statuses. A profile ``skip`` is recorded as engine ``skipped`` so it
@@ -76,9 +75,7 @@ def _sibling_manifest(source_path: Path, config: Any) -> Path | None:
     )
     name = source_path.name
     if name.endswith(data_suffix):
-        candidate = source_path.with_name(
-            name[: -len(data_suffix)] + manifest_suffix
-        )
+        candidate = source_path.with_name(name[: -len(data_suffix)] + manifest_suffix)
     else:
         candidate = source_path.with_name(source_path.stem + manifest_suffix)
     return candidate if candidate.is_file() else None
@@ -88,11 +85,7 @@ def _plan_max_rows(ctx: Any) -> int | None:
     """The manifest-declared row maximum, when the profile declares one."""
     bounds = ctx.plan_bounds()
     ceiling = bounds.get("max_rows") if isinstance(bounds, dict) else None
-    if (
-        isinstance(ceiling, bool)
-        or not isinstance(ceiling, int)
-        or ceiling < 1
-    ):
+    if isinstance(ceiling, bool) or not isinstance(ceiling, int) or ceiling < 1:
         return None
     return ceiling
 
@@ -117,11 +110,7 @@ def _spec_max_rows(ctx: Any) -> int | None:
     spec = ctx.spec_record()
     limits = spec.get("limits") if isinstance(spec, dict) else None
     ceiling = limits.get("max_rows") if isinstance(limits, dict) else None
-    if (
-        isinstance(ceiling, bool)
-        or not isinstance(ceiling, int)
-        or ceiling < 1
-    ):
+    if isinstance(ceiling, bool) or not isinstance(ceiling, int) or ceiling < 1:
         return _plan_max_rows(ctx)
     return ceiling
 
@@ -205,9 +194,7 @@ def intake(ctx: Any) -> None:
     )
     config = ctx.source_config
     licence = config.get("licence") if isinstance(config, dict) else None
-    attribution = (
-        config.get("attribution") if isinstance(config, dict) else None
-    )
+    attribution = config.get("attribution") if isinstance(config, dict) else None
     output_terms_grant = None
     if manifest is not None:
         record = json.loads(manifest.read_text(encoding="utf-8"))
@@ -243,10 +230,7 @@ def intake(ctx: Any) -> None:
             "output_terms_grant": output_terms_grant,
         },
     )
-    ctx.say(
-        f"[source_intake] {source_name}: {len(rows)} rows "
-        f"sha256={source_sha256}"
-    )
+    ctx.say(f"[source_intake] {source_name}: {len(rows)} rows sha256={source_sha256}")
     if licence or attribution:
         ctx.say(f"[source_intake] licence={licence} attribution={attribution}")
 
@@ -270,9 +254,7 @@ def profile_source(ctx: Any) -> None:
             "n_samples": len(frame["rows"]),
         },
     )
-    ctx.say(
-        f"[profile] statistics built over {len(frame['rows'])} rows"
-    )
+    ctx.say(f"[profile] statistics built over {len(frame['rows'])} rows")
 
 
 def plan(ctx: Any) -> None:
@@ -295,12 +277,8 @@ def plan(ctx: Any) -> None:
         ctx.say(f"[plan] error: {exc}")
         raise RuntimeError(f"plan failed: {exc}") from exc
     ctx.set_plan(dict(completion.data))
-    ctx.event(
-        "plan", "ok", {"plan": dict(completion.data)}, usage=completion.usage
-    )
-    ctx.say(
-        f"[plan] seed={completion.data['seed']} n_rows={completion.data['n_rows']}"
-    )
+    ctx.event("plan", "ok", {"plan": dict(completion.data)}, usage=completion.usage)
+    ctx.say(f"[plan] seed={completion.data['seed']} n_rows={completion.data['n_rows']}")
 
 
 def generate(ctx: Any) -> None:
@@ -334,9 +312,7 @@ def validate(ctx: Any) -> None:
         profile_columns=ctx.profile().stats.get("columns"),
         profile_mean=profile_mean,
         mean_column=mean_column,
-        artifact_name=(
-            f"{meta['source_name']}:attempt-{ctx.attempt_number}"
-        ),
+        artifact_name=(f"{meta['source_name']}:attempt-{ctx.attempt_number}"),
         artifact_sha256=artifact.sha256,
     )
     ctx.set_report(report)
@@ -393,8 +369,7 @@ def repair(ctx: Any) -> None:
         ctx.say(f"[repair] error: {exc}")
         raise RuntimeError(f"repair failed: {exc}") from exc
     ctx.set_plan(dict(new_plan))
-    ctx.event("repair", "ok", {"plan": dict(new_plan)},
-              usage=completion.usage)
+    ctx.event("repair", "ok", {"plan": dict(new_plan)}, usage=completion.usage)
 
 
 def describe(ctx: Any) -> None:
@@ -428,14 +403,12 @@ def package_artifact(ctx: Any) -> None:
         json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    (artifact_dir / "seed.txt").write_text(
-        f"{plan['seed']}\n", encoding="utf-8"
-    )
-    (artifact_dir / "provenance.md").write_text(
-        ctx.provenance_text(), encoding="utf-8"
-    )
+    (artifact_dir / "seed.txt").write_text(f"{plan['seed']}\n", encoding="utf-8")
+    (artifact_dir / "provenance.md").write_text(ctx.provenance_text(), encoding="utf-8")
     ctx.event(
-        "artifact", "ok", {"artifact_dir": str(artifact_dir)},
+        "artifact",
+        "ok",
+        {"artifact_dir": str(artifact_dir)},
         artifact_sha256=sha,
     )
     ctx.flush_log(artifact_dir / "run.jsonl")

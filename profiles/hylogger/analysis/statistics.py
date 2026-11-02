@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from ..intake.reader import Sample
 
@@ -53,7 +54,9 @@ def percentile(sorted_values: Sequence[float], pct: float) -> float:
     rank = (pct / 100) * (len(sorted_values) - 1)
     low = int(rank)
     frac = rank - low
-    return float(sorted_values[low] + frac * (sorted_values[low + 1] - sorted_values[low]))
+    return float(
+        sorted_values[low] + frac * (sorted_values[low + 1] - sorted_values[low])
+    )
 
 
 def _run_lengths(flags: Sequence[bool], value: bool) -> list[int]:
@@ -91,9 +94,7 @@ def label_persistence(samples: Sequence[Sample], channel: str) -> float | None:
     valid = [s for s in samples if s.valid]
     labels = [getattr(s, channel) for s in valid]
     pairs = [
-        (a, b)
-        for a, b in zip(labels, labels[1:])
-        if a is not None and b is not None
+        (a, b) for a, b in zip(labels, labels[1:]) if a is not None and b is not None
     ]
     if not pairs:
         return None
@@ -110,15 +111,16 @@ def _channel_stats(samples: Sequence[Sample], channel: str) -> dict[str, Any]:
         marginals[label] = marginals.get(label, 0) + 1
     total_answered = len(answered)
     marginal_fractions = (
-        {label: _r(count / total_answered, FRAC_ND) for label, count in marginals.items()}
+        {
+            label: _r(count / total_answered, FRAC_ND)
+            for label, count in marginals.items()
+        }
         if total_answered
         else {}
     )
 
     pairs = [
-        (a, b)
-        for a, b in zip(labels, labels[1:])
-        if a is not None and b is not None
+        (a, b) for a, b in zip(labels, labels[1:]) if a is not None and b is not None
     ]
     transitions: dict[str, dict[str, int]] = {}
     for a, b in pairs:
@@ -400,7 +402,7 @@ class Profile:
     @classmethod
     def from_samples(
         cls, samples: Sequence[Sample], source_name: str, source_sha256: str
-    ) -> "Profile":
+    ) -> Profile:
         """Build a profile of summary statistics for normalised samples."""
         return cls(
             source_name=source_name,

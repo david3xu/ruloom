@@ -14,9 +14,10 @@ declaration and enforces it mechanically at run time.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from ..artifacts.hashing import sha256_canonical
 
@@ -98,9 +99,7 @@ def _require(mapping: Mapping[str, Any], key: str, where: str) -> Any:
 CRITIC_POLICIES = ("required", "optional")
 
 
-def _check_capability(
-    cap_id: str, spec: Any, check_ids: set[str]
-) -> dict[str, Any]:
+def _check_capability(cap_id: str, spec: Any, check_ids: set[str]) -> dict[str, Any]:
     if not isinstance(spec, dict):
         raise ManifestError(f"capability {cap_id!r}: must be an object")
     if not isinstance(spec.get("impl"), str) or not spec["impl"]:
@@ -109,9 +108,7 @@ def _check_capability(
         if key in ("impl", "stage", "critic_policy"):
             continue
         if key not in PERMISSION_KEYS:
-            raise ManifestError(
-                f"capability {cap_id!r}: unknown permission {key!r}"
-            )
+            raise ManifestError(f"capability {cap_id!r}: unknown permission {key!r}")
     calls_model = spec.get("calls_model")
     if calls_model is not None and (
         not isinstance(calls_model, str) or not calls_model
@@ -144,8 +141,9 @@ def _check_graph(
     graph: Any, capabilities: Mapping[str, Any], manifest_id: str
 ) -> list[dict[str, Any]]:
     if not isinstance(graph, list) or not graph:
-        raise ManifestError(f"manifest {manifest_id!r}: 'graph' must be a "
-                            "non-empty list")
+        raise ManifestError(
+            f"manifest {manifest_id!r}: 'graph' must be a non-empty list"
+        )
     nodes: list[dict[str, Any]] = []
     for index, node in enumerate(graph):
         where = f"manifest {manifest_id!r} graph node {index}"
@@ -161,9 +159,7 @@ def _check_graph(
         if kind == "step":
             target = node["step"]
             if not isinstance(target, str) or target not in capabilities:
-                raise ManifestError(
-                    f"{where}: unknown capability {target!r}"
-                )
+                raise ManifestError(f"{where}: unknown capability {target!r}")
         elif kind == "gate":
             target = node["gate"]
             if not isinstance(target, str) or not target:
@@ -179,14 +175,11 @@ def _check_graph(
                 )
             ):
                 raise ManifestError(
-                    f"{where}: loop must list a non-empty body of "
-                    "declared capabilities"
+                    f"{where}: loop must list a non-empty body of declared capabilities"
                 )
             on_fail = node.get("on_fail")
             if not isinstance(on_fail, str) or on_fail not in capabilities:
-                raise ManifestError(
-                    f"{where}: loop needs an 'on_fail' capability"
-                )
+                raise ManifestError(f"{where}: loop needs an 'on_fail' capability")
             bound = node.get("max_attempts")
             if bound != MAX_ATTEMPTS_BINDING:
                 raise ManifestError(
@@ -206,8 +199,9 @@ CHECK_CONDITIONS = ("images_present",)
 
 def _check_checks(checks: Any, manifest_id: str) -> list[dict[str, Any]]:
     if not isinstance(checks, list) or not checks:
-        raise ManifestError(f"manifest {manifest_id!r}: 'checks' must be a "
-                            "non-empty list")
+        raise ManifestError(
+            f"manifest {manifest_id!r}: 'checks' must be a non-empty list"
+        )
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     for index, entry in enumerate(checks):
@@ -224,9 +218,7 @@ def _check_checks(checks: Any, manifest_id: str) -> list[dict[str, Any]]:
         if not isinstance(threshold, dict) or not isinstance(
             threshold.get("source"), str
         ):
-            raise ManifestError(
-                f"{where}: needs a 'threshold' object with a 'source'"
-            )
+            raise ManifestError(f"{where}: needs a 'threshold' object with a 'source'")
         if "required" in entry and not isinstance(entry["required"], bool):
             raise ManifestError(
                 f"{where}: 'required' must be true or false when present"
@@ -253,19 +245,18 @@ def _check_models(payload: Mapping[str, Any], manifest_id: str) -> dict[str, Any
     """
     models = payload.get("models", {})
     if not isinstance(models, dict):
-        raise ManifestError(f"manifest {manifest_id!r}: 'models' must be "
-                            "an object")
+        raise ManifestError(f"manifest {manifest_id!r}: 'models' must be an object")
     roles = models.get("roles", {})
     if not isinstance(roles, dict):
-        raise ManifestError(f"manifest {manifest_id!r}: 'models.roles' must "
-                            "be an object")
+        raise ManifestError(
+            f"manifest {manifest_id!r}: 'models.roles' must be an object"
+        )
     for role, binding in roles.items():
         if not isinstance(binding, Mapping):
             continue
         requires = binding.get("requires", {})
         wants_open = (
-            isinstance(requires, Mapping)
-            and requires.get("open_weight") is True
+            isinstance(requires, Mapping) and requires.get("open_weight") is True
         )
         if wants_open:
             adapter = binding.get("adapter", HOSTED_ADAPTER)
@@ -282,11 +273,7 @@ def _check_models(payload: Mapping[str, Any], manifest_id: str) -> dict[str, Any
                 f"manifest {manifest_id!r}: 'models.budget' must be an object"
             )
         ceiling = budget.get("max_tokens_per_run")
-        if (
-            not isinstance(ceiling, int)
-            or isinstance(ceiling, bool)
-            or ceiling < 1
-        ):
+        if not isinstance(ceiling, int) or isinstance(ceiling, bool) or ceiling < 1:
             raise ManifestError(
                 f"manifest {manifest_id!r}: 'models.budget' must declare a "
                 "positive integer 'max_tokens_per_run'"
@@ -361,8 +348,7 @@ def _check_release(release: Any, manifest_id: str) -> dict[str, Any]:
             )
         if source == "engine-log" and name != ENGINE_LOG_MEMBER:
             raise ManifestError(
-                f"{item}: only {ENGINE_LOG_MEMBER!r} may use "
-                "source 'engine-log'"
+                f"{item}: only {ENGINE_LOG_MEMBER!r} may use source 'engine-log'"
             )
         if source == ENGINE_REPORT_SOURCE and name != ENGINE_REPORT_MEMBER:
             raise ManifestError(
@@ -402,14 +388,11 @@ def _check_generation(generation: Any, manifest_id: str) -> dict[str, Any]:
     if (
         not isinstance(strategies, list)
         or not strategies
-        or any(
-            not isinstance(name, str) or not name for name in strategies
-        )
+        or any(not isinstance(name, str) or not name for name in strategies)
         or len(set(strategies)) != len(strategies)
     ):
         raise ManifestError(
-            f"{where} needs a non-empty 'strategies' list of unique "
-            "non-empty strings"
+            f"{where} needs a non-empty 'strategies' list of unique non-empty strings"
         )
     default = generation.get("default_strategy", strategies[0])
     if default not in strategies:
@@ -452,14 +435,12 @@ def validate_manifest(payload: Mapping[str, Any]) -> Manifest:
         )
     source = _require(payload, "source", f"manifest {manifest_id!r}")
     if not isinstance(source, dict):
-        raise ManifestError(f"manifest {manifest_id!r}: 'source' must be "
-                            "an object")
-    raw_capabilities = _require(
-        payload, "capabilities", f"manifest {manifest_id!r}"
-    )
+        raise ManifestError(f"manifest {manifest_id!r}: 'source' must be an object")
+    raw_capabilities = _require(payload, "capabilities", f"manifest {manifest_id!r}")
     if not isinstance(raw_capabilities, dict) or not raw_capabilities:
-        raise ManifestError(f"manifest {manifest_id!r}: 'capabilities' must "
-                            "be a non-empty object")
+        raise ManifestError(
+            f"manifest {manifest_id!r}: 'capabilities' must be a non-empty object"
+        )
     raw_checks = _require(payload, "checks", f"manifest {manifest_id!r}")
     checks = _check_checks(raw_checks, manifest_id)
     check_ids = {entry["id"] for entry in checks}
@@ -477,12 +458,10 @@ def validate_manifest(payload: Mapping[str, Any]) -> Manifest:
     generation = _check_generation(payload.get("generation"), manifest_id)
     limits = payload.get("limits", {})
     if not isinstance(limits, dict):
-        raise ManifestError(f"manifest {manifest_id!r}: 'limits' must be "
-                            "an object")
+        raise ManifestError(f"manifest {manifest_id!r}: 'limits' must be an object")
     version = payload.get("version", 0)
     if not isinstance(version, int) or isinstance(version, bool):
-        raise ManifestError(f"manifest {manifest_id!r}: 'version' must be "
-                            "an integer")
+        raise ManifestError(f"manifest {manifest_id!r}: 'version' must be an integer")
     digest = sha256_canonical(dict(payload))
     return Manifest(
         id=manifest_id,
@@ -535,14 +514,9 @@ def permission_of(manifest: Manifest, capability_id: str) -> dict[str, Any]:
         "reads_raw_source": bool(
             manifest.capabilities[capability_id].get("reads_raw_source", False)
         ),
-        "calls_model": manifest.capabilities[capability_id].get(
-            "calls_model"
-        ),
-        "advisory": bool(
-            manifest.capabilities[capability_id].get("advisory", False)
-        ),
+        "calls_model": manifest.capabilities[capability_id].get("calls_model"),
+        "advisory": bool(manifest.capabilities[capability_id].get("advisory", False)),
         "writes_verdict": bool(
             manifest.capabilities[capability_id].get("writes_verdict", False)
         ),
     }
-

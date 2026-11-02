@@ -14,8 +14,9 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import pytest
 
@@ -26,6 +27,7 @@ from engine.core.runner import EXIT_FAILED, EXIT_OK
 from models.base import Completion, ModelError, Usage
 from models.glimmer import GlimmerLocalModel
 from models.meta_cli import MuseCLIModel
+from profiles.hylogger import capabilities as hy_capabilities
 from profiles.hylogger.analysis.statistics import Profile
 from profiles.hylogger.generation.plan import provider_schema
 from profiles.hylogger.intake.reader import Sample
@@ -35,7 +37,6 @@ from profiles.hylogger.validation.critique import (
     build_critique_prompt,
     critique_report,
 )
-from profiles.hylogger import capabilities as hy_capabilities
 
 BASE_DEPTH = 123.456789
 STEP = 0.0078
@@ -75,9 +76,7 @@ def _samples() -> list[Sample]:
 
 
 def _profile_json() -> str:
-    return Profile.from_samples(
-        _samples(), "TOY-crit", "00" * 32
-    ).to_disclosed_json()
+    return Profile.from_samples(_samples(), "TOY-crit", "00" * 32).to_disclosed_json()
 
 
 def _report_dict(verdict: str = "pass") -> dict[str, Any]:
@@ -133,7 +132,9 @@ class FakeLocalCritic:
         return Completion(
             data=dict(self.note),
             usage=Usage(
-                model="fake-glimmer", input_tokens=9, output_tokens=4,
+                model="fake-glimmer",
+                input_tokens=9,
+                output_tokens=4,
                 calls=1,
             ),
             meta={"model": "fake-glimmer"},
@@ -176,9 +177,7 @@ def test_critique_rejects_bad_concerns() -> None:
 def test_critique_propagates_client_error_unchanged() -> None:
     refused = ModelError("local model server unreachable at x: refused")
     with pytest.raises(ModelError) as caught:
-        critique_report(
-            FakeLocalCritic(error=refused), _report_dict(), _profile_json()
-        )
+        critique_report(FakeLocalCritic(error=refused), _report_dict(), _profile_json())
     assert caught.value is refused
 
 
@@ -194,8 +193,7 @@ class FakePlanner:
         assert dict(schema) == provider_schema(["fitted_markov_joint"])
         return Completion(
             data=dict(self._plan),
-            usage=Usage(model="fake", input_tokens=10, output_tokens=5,
-                        calls=1),
+            usage=Usage(model="fake", input_tokens=10, output_tokens=5, calls=1),
             meta={"model": "fake"},
         )
 
@@ -248,13 +246,9 @@ def _write_thresholds(path: Path, *, valid_lo: float = 0.5) -> Path:
             "spacing_median_m": Band("spacing_median_m", 0.005, 0.01),
             "repeated_depth_fraction": Band("repeated_depth_fraction", 0.0, 0.2),
             "valid_fraction": Band("valid_fraction", valid_lo, 1.0),
-            "swir_answer_rate": Band(
-                "swir_answer_rate", 0.0, 1.0, vacuous=True
-            ),
+            "swir_answer_rate": Band("swir_answer_rate", 0.0, 1.0, vacuous=True),
             "tir_answer_rate": Band("tir_answer_rate", 0.9, 1.0),
-            "repeated_valid_fraction": Band(
-                "repeated_valid_fraction", 0.0, 0.05
-            ),
+            "repeated_valid_fraction": Band("repeated_valid_fraction", 0.0, 0.05),
             "backward_steps": Band("backward_steps", 0, 0),
         },
         swir_vocabulary=frozenset({"A", "B"}),
@@ -322,10 +316,14 @@ def _run(
     )
     out_dir = tmp_path / "out"
     argv = [
-        "run", str(csv_path),
-        "--profile", "hylogger",
-        "--max-attempts", "1",
-        "--out", str(out_dir),
+        "run",
+        str(csv_path),
+        "--profile",
+        "hylogger",
+        "--max-attempts",
+        "1",
+        "--out",
+        str(out_dir),
         *extra_argv,
     ]
     monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(answers) + "\n"))
@@ -359,9 +357,7 @@ def test_local_critic_end_to_end_releases_with_note(
             {"critique": "report reads trustworthy", "concerns": ["skips"]}
         ),
     )
-    code, artifact = _run(
-        tmp_path, monkeypatch, models, extra_argv=["--local-critic"]
-    )
+    code, artifact = _run(tmp_path, monkeypatch, models, extra_argv=["--local-critic"])
     assert code == EXIT_OK
     assert artifact is not None
     stored = json.loads((artifact / "critic-note.json").read_text(encoding="utf-8"))
@@ -391,9 +387,7 @@ def test_damning_note_cannot_fail_a_passing_run(
             }
         ),
     )
-    code, artifact = _run(
-        tmp_path, monkeypatch, models, extra_argv=["--local-critic"]
-    )
+    code, artifact = _run(tmp_path, monkeypatch, models, extra_argv=["--local-critic"])
     assert code == EXIT_OK
     assert artifact is not None
     report = json.loads(
@@ -409,13 +403,14 @@ def test_glowing_note_cannot_save_a_failing_run(
     """A glowing Glimmer note cannot rescue failing deterministic checks."""
     models = _BothModels(
         {"seed": 8, "n_rows": 8},
-        FakeLocalCritic(
-            {"critique": "perfect, ship it at once", "concerns": []}
-        ),
+        FakeLocalCritic({"critique": "perfect, ship it at once", "concerns": []}),
     )
     code, artifact = _run(
-        tmp_path, monkeypatch, models,
-        extra_argv=["--local-critic"], valid_lo=0.99,
+        tmp_path,
+        monkeypatch,
+        models,
+        extra_argv=["--local-critic"],
+        valid_lo=0.99,
     )
     assert code == EXIT_FAILED
     assert artifact is not None
@@ -457,9 +452,7 @@ def test_flag_on_leaves_payload_bytes_unchanged(
     _, off_artifact = _run(tmp_path / "off", monkeypatch, off_models)
     assert on_artifact is not None and off_artifact is not None
     for name in ("data.csv", "plan.json", "validation-report.json", "seed.txt"):
-        assert (on_artifact / name).read_bytes() == (
-            off_artifact / name
-        ).read_bytes()
+        assert (on_artifact / name).read_bytes() == (off_artifact / name).read_bytes()
 
 
 def test_unreachable_server_fails_loudly(
@@ -470,9 +463,7 @@ def test_unreachable_server_fails_loudly(
         {"seed": 8, "n_rows": 8},
         FakeLocalCritic(error=ModelError("connection refused by glimmer")),
     )
-    code, artifact = _run(
-        tmp_path, monkeypatch, models, extra_argv=["--local-critic"]
-    )
+    code, artifact = _run(tmp_path, monkeypatch, models, extra_argv=["--local-critic"])
     assert code == EXIT_FAILED
     # The required critic's failure still leaves a durable failed record.
     assert artifact is not None

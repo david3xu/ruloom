@@ -41,16 +41,10 @@ from pathlib import Path
 from typing import Any
 
 from .analysis.calibration import load_thresholds
-from .validation.checks import (
-    run_checks,
-    source_fidelity_reference,
-)
-from .validation.dataset import read as read_artifact
+from .analysis.statistics import Profile
 from .generation.generate import generate as generate_artifact
 from .generation.plan import propose, provider_schema, validate_plan
 from .generation.repair import build_repair_prompt
-from .analysis.statistics import Profile
-from .intake.reader import read_scalar_csv
 from .imaging.checks import run_image_checks
 from .imaging.critic import critique_synthetic
 from .imaging.generate import synthesize as synthesize_image
@@ -61,8 +55,13 @@ from .imaging.statistics import (
     read_statistics,
     summarize_for_prompt,
 )
+from .intake.reader import read_scalar_csv
+from .validation.checks import (
+    run_checks,
+    source_fidelity_reference,
+)
 from .validation.critique import critique_report
-
+from .validation.dataset import read as read_artifact
 
 #: Profile check statuses translated to the engine's recognised verdict
 #: statuses. A profile ``skip`` is recorded as engine ``skipped`` so it
@@ -92,9 +91,7 @@ def _sibling_manifest(source_path: Path, config: Any) -> Path | None:
     )
     name = source_path.name
     if name.endswith(data_suffix):
-        candidate = source_path.with_name(
-            name[: -len(data_suffix)] + manifest_suffix
-        )
+        candidate = source_path.with_name(name[: -len(data_suffix)] + manifest_suffix)
     else:
         candidate = source_path.with_name(source_path.stem + manifest_suffix)
     return candidate if candidate.is_file() else None
@@ -104,11 +101,7 @@ def _plan_max_rows(ctx: Any) -> int | None:
     """The manifest-declared row maximum, when the profile declares one."""
     bounds = ctx.plan_bounds()
     ceiling = bounds.get("max_rows") if isinstance(bounds, dict) else None
-    if (
-        isinstance(ceiling, bool)
-        or not isinstance(ceiling, int)
-        or ceiling < 1
-    ):
+    if isinstance(ceiling, bool) or not isinstance(ceiling, int) or ceiling < 1:
         return None
     return ceiling
 
@@ -133,11 +126,7 @@ def _spec_max_rows(ctx: Any) -> int | None:
     spec = ctx.spec_record()
     limits = spec.get("limits") if isinstance(spec, dict) else None
     ceiling = limits.get("max_rows") if isinstance(limits, dict) else None
-    if (
-        isinstance(ceiling, bool)
-        or not isinstance(ceiling, int)
-        or ceiling < 1
-    ):
+    if isinstance(ceiling, bool) or not isinstance(ceiling, int) or ceiling < 1:
         return _plan_max_rows(ctx)
     return ceiling
 
@@ -245,9 +234,7 @@ def intake(ctx: Any) -> None:
     )
     config = ctx.source_config
     licence = config.get("licence") if isinstance(config, dict) else None
-    attribution = (
-        config.get("attribution") if isinstance(config, dict) else None
-    )
+    attribution = config.get("attribution") if isinstance(config, dict) else None
     output_terms_grant = None
     if manifest is not None:
         record = json.loads(manifest.read_text(encoding="utf-8"))
@@ -284,8 +271,7 @@ def intake(ctx: Any) -> None:
         },
     )
     ctx.say(
-        f"[source_intake] {source_name}: {len(samples)} rows "
-        f"sha256={source_sha256}"
+        f"[source_intake] {source_name}: {len(samples)} rows sha256={source_sha256}"
     )
     if licence or attribution:
         ctx.say(f"[source_intake] licence={licence} attribution={attribution}")
@@ -336,11 +322,8 @@ def plan(ctx: Any) -> None:
         ctx.say(f"[plan] error: {exc}")
         raise RuntimeError(f"plan failed: {exc}") from exc
     ctx.set_plan(dict(completion.data))
-    ctx.event("plan", "ok", {"plan": dict(completion.data)},
-              usage=completion.usage)
-    ctx.say(
-        f"[plan] seed={completion.data['seed']} n_rows={completion.data['n_rows']}"
-    )
+    ctx.event("plan", "ok", {"plan": dict(completion.data)}, usage=completion.usage)
+    ctx.say(f"[plan] seed={completion.data['seed']} n_rows={completion.data['n_rows']}")
 
 
 def generate(ctx: Any) -> None:
@@ -389,9 +372,7 @@ def validate(ctx: Any) -> None:
     try:
         samples = read_artifact(payload)
     except ValueError as exc:
-        raise RuntimeError(
-            f"synthetic artifact failed schema parse: {exc}"
-        ) from exc
+        raise RuntimeError(f"synthetic artifact failed schema parse: {exc}") from exc
     thresholds = load_thresholds(_thresholds_path())
     meta = ctx.source_meta()
     report = run_checks(
@@ -399,9 +380,7 @@ def validate(ctx: Any) -> None:
         thresholds,
         source_reference=ctx.reference_stats(),
         expected_geometry=_expected_geometry(ctx),
-        artifact_name=(
-            f"{meta['source_name']}:attempt-{ctx.attempt_number}"
-        ),
+        artifact_name=(f"{meta['source_name']}:attempt-{ctx.attempt_number}"),
         artifact_sha256=artifact.sha256,
     )
     ctx.set_report(report)
@@ -452,8 +431,7 @@ def repair(ctx: Any) -> None:
         ctx.say(f"[repair] error: {exc}")
         raise RuntimeError(f"repair failed: {exc}") from exc
     ctx.set_plan(dict(new_plan))
-    ctx.event("repair", "ok", {"plan": dict(new_plan)},
-              usage=completion.usage)
+    ctx.event("repair", "ok", {"plan": dict(new_plan)}, usage=completion.usage)
 
 
 def image_intake(ctx: Any) -> None:
@@ -512,9 +490,7 @@ def image_synthesize(ctx: Any) -> None:
     bundle["image_artifact_sha"] = artifact.sha256
     records = bundle.get("records") or []
     image_id = records[0]["name"] if records else "synthetic.png"
-    bundle["scene"] = build_schematic_scene(
-        reference, image_id
-    ).to_dict()
+    bundle["scene"] = build_schematic_scene(reference, image_id).to_dict()
     ctx.set_companion(bundle)
     ctx.event(
         "image_synthesize",
@@ -633,12 +609,8 @@ def package_artifact(ctx: Any) -> None:
         json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    (artifact_dir / "seed.txt").write_text(
-        f"{plan['seed']}\n", encoding="utf-8"
-    )
-    (artifact_dir / "provenance.md").write_text(
-        ctx.provenance_text(), encoding="utf-8"
-    )
+    (artifact_dir / "seed.txt").write_text(f"{plan['seed']}\n", encoding="utf-8")
+    (artifact_dir / "provenance.md").write_text(ctx.provenance_text(), encoding="utf-8")
     bundle = ctx.companion()
     if bundle.get("image_artifact_sha") is not None:
         (artifact_dir / "synthetic.png").write_bytes(
@@ -660,23 +632,19 @@ def package_artifact(ctx: Any) -> None:
         )
         if bundle.get("report") is not None:
             (artifact_dir / "image-validation.json").write_text(
-                json.dumps(
-                    bundle["report"], indent=2, sort_keys=True
-                )
-                + "\n",
+                json.dumps(bundle["report"], indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
     note = ctx.advisory("local_critique_note")
     if note is not None:
         (artifact_dir / "critic-note.json").write_text(
-            json.dumps(
-                note, indent=2, sort_keys=True
-            )
-            + "\n",
+            json.dumps(note, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
     ctx.event(
-        "artifact", "ok", {"artifact_dir": str(artifact_dir)},
+        "artifact",
+        "ok",
+        {"artifact_dir": str(artifact_dir)},
         artifact_sha256=sha,
     )
     ctx.flush_log(artifact_dir / "run.jsonl")

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 from ..intake.reader import Sample
 

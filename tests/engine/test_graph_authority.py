@@ -11,8 +11,9 @@ any run.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
@@ -107,17 +108,13 @@ def test_execute_refuses_registry_missing_a_declared_stage(
     tmp_path: Path,
 ) -> None:
     source = _write_source(tmp_path)
-    registry = {
-        name: fn for name, fn in CAPABILITIES.items() if name != "validate"
-    }
+    registry = {name: fn for name, fn in CAPABILITIES.items() if name != "validate"}
     code, _result = execute(
         MANIFEST,
         registry,
         source=source,
         max_attempts=1,
-        model_factory=lambda role, config: FakeModel(
-            [{"seed": 1, "n_rows": 100}]
-        ),
+        model_factory=lambda role, config: FakeModel([{"seed": 1, "n_rows": 100}]),
         out=tmp_path / "out",
         say=lambda message: None,
         ask=lambda prompt: "accept",
@@ -130,6 +127,7 @@ def test_engine_walks_only_declared_stages(tmp_path: Path) -> None:
     called: list[str] = []
     registry: dict[str, Any] = {}
     for name, fn in CAPABILITIES.items():
+
         def _wrapped(ctx: Any, _fn: Any = fn, _name: str = name) -> None:
             called.append(_name)
             _fn(ctx)
@@ -145,18 +143,14 @@ def test_engine_walks_only_declared_stages(tmp_path: Path) -> None:
         registry,
         source=source,
         max_attempts=1,
-        model_factory=lambda role, config: FakeModel(
-            [{"seed": 1, "n_rows": 100}]
-        ),
+        model_factory=lambda role, config: FakeModel([{"seed": 1, "n_rows": 100}]),
         out=tmp_path / "out",
         say=lambda message: None,
         ask=lambda prompt: "accept",
     )
     assert code == EXIT_OK
     assert "sleeper" not in called
-    declared = {
-        node["step"] for node in MANIFEST.graph if "step" in node
-    } | {
+    declared = {node["step"] for node in MANIFEST.graph if "step" in node} | {
         stage
         for node in MANIFEST.graph
         if "loop" in node
@@ -204,9 +198,7 @@ def test_capability_context_carries_no_peer_authority(tmp_path: Path) -> None:
         registry,
         source=source,
         max_attempts=1,
-        model_factory=lambda role, config: FakeModel(
-            [{"seed": 1, "n_rows": 100}]
-        ),
+        model_factory=lambda role, config: FakeModel([{"seed": 1, "n_rows": 100}]),
         out=tmp_path / "out",
         say=lambda message: None,
         ask=lambda prompt: "accept",

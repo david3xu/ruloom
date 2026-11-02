@@ -11,8 +11,9 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import pytest
 
@@ -42,7 +43,7 @@ def _write_source(tmp_path: Path, stem: str = "TOY-hole-scalars") -> Path:
     for i, (mask, swir, tir) in enumerate(COVERAGE):
         lines.append(f"{BASE_DEPTH + i * STEP},{mask},{swir},{tir}")
     csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    manifest = tmp_path / f"{stem[:-len('-scalars')]}-source.json"
+    manifest = tmp_path / f"{stem[: -len('-scalars')]}-source.json"
     manifest.write_text(
         json.dumps(
             {
@@ -62,13 +63,9 @@ def _write_thresholds(tmp_path: Path) -> Path:
             "spacing_median_m": Band("spacing_median_m", 0.005, 0.01),
             "repeated_depth_fraction": Band("repeated_depth_fraction", 0.0, 0.2),
             "valid_fraction": Band("valid_fraction", 0.5, 1.0),
-            "swir_answer_rate": Band(
-                "swir_answer_rate", 0.0, 1.0, vacuous=True
-            ),
+            "swir_answer_rate": Band("swir_answer_rate", 0.0, 1.0, vacuous=True),
             "tir_answer_rate": Band("tir_answer_rate", 0.9, 1.0),
-            "repeated_valid_fraction": Band(
-                "repeated_valid_fraction", 0.0, 0.05
-            ),
+            "repeated_valid_fraction": Band("repeated_valid_fraction", 0.0, 0.05),
             "backward_steps": Band("backward_steps", 0, 0),
         },
         swir_vocabulary=frozenset({"A", "B"}),
@@ -130,7 +127,10 @@ def test_accept_writes_release_and_verifies_chain(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
     code, out_dir, _ = _run(
-        monkeypatch, tmp_path, [{"seed": 8, "n_rows": 8}], "accept\nLooks good — ship it.\n"
+        monkeypatch,
+        tmp_path,
+        [{"seed": 8, "n_rows": 8}],
+        "accept\nLooks good — ship it.\n",
     )
     assert code == 0
     artifact = _artifact_dir(out_dir)
@@ -158,9 +158,7 @@ def test_accept_writes_release_and_verifies_chain(
         "release",
     ):
         assert expected in stages
-    review = next(
-        event for event in log.events if event["stage"] == "human_review"
-    )
+    review = next(event for event in log.events if event["stage"] == "human_review")
     assert review["status"] == "accept"
     assert review["details"]["note"] == "Looks good — ship it."
 
@@ -188,12 +186,8 @@ def test_accept_writes_release_and_verifies_chain(
         # event afterwards), so verify against the archived bytes.
         for line in checksums.splitlines():
             digest, name = line.split("  ")
-            assert (
-                hashlib.sha256(archive.read(name)).hexdigest() == digest
-            )
-        zipped_log = RunLog.from_jsonl(
-            archive.read("run.jsonl").decode("utf-8")
-        )
+            assert hashlib.sha256(archive.read(name)).hexdigest() == digest
+        zipped_log = RunLog.from_jsonl(archive.read("run.jsonl").decode("utf-8"))
     assert zipped_log.verify()
     assert [e["stage"] for e in zipped_log.events][-1] == "human_review"
     release = next(event for event in log.events if event["stage"] == "release")
@@ -215,9 +209,7 @@ def test_reject_writes_no_release(
     assert not (artifact / "checksums.sha256").exists()
     log = RunLog.read_jsonl(artifact / "run.jsonl")
     assert log.verify()
-    review = next(
-        event for event in log.events if event["stage"] == "human_review"
-    )
+    review = next(event for event in log.events if event["stage"] == "human_review")
     assert review["status"] == "reject"
     assert review["details"]["note"] == "Not yet."
 
@@ -236,9 +228,7 @@ def test_modify_writes_no_release_nonzero(
     assert not (artifact / "release.zip").exists()
     log = RunLog.read_jsonl(artifact / "run.jsonl")
     assert log.verify()
-    review = next(
-        event for event in log.events if event["stage"] == "human_review"
-    )
+    review = next(event for event in log.events if event["stage"] == "human_review")
     assert review["status"] == "modify"
     assert review["details"]["note"] == "  keep leading spaces"
 
@@ -269,9 +259,7 @@ def test_max_attempts_flag_is_required(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     csv_path = _write_source(tmp_path)
-    monkeypatch.setenv(
-        "RULOOM_THRESHOLDS", str(_write_thresholds(tmp_path))
-    )
+    monkeypatch.setenv("RULOOM_THRESHOLDS", str(_write_thresholds(tmp_path)))
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
     with pytest.raises(SystemExit):
         cli_module.main(["run", str(csv_path)], model=FakeModel([]))

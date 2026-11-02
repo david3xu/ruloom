@@ -12,8 +12,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
@@ -49,9 +50,7 @@ class _Proc:
         self.stderr = ""
 
 
-def _stub_run(
-    monkeypatch: pytest.MonkeyPatch, proc: _Proc
-) -> dict[str, Any]:
+def _stub_run(monkeypatch: pytest.MonkeyPatch, proc: _Proc) -> dict[str, Any]:
     seen: dict[str, Any] = {}
 
     def _fake_run(argv: Any, **kwargs: Any) -> _Proc:
@@ -137,9 +136,7 @@ def test_child_env_is_explicit_and_secret_free(
 ) -> None:
     monkeypatch.setenv(PROBE_KEY, PROBE_VALUE)
     seen = _stub_run(monkeypatch, _answer())
-    MuseCLIModel(allowed_root=tmp_path).complete(
-        "make a plan", {"type": "object"}
-    )
+    MuseCLIModel(allowed_root=tmp_path).complete("make a plan", {"type": "object"})
     child_env = seen["env"]
     assert isinstance(child_env, dict)
     assert PROBE_KEY not in child_env
@@ -152,9 +149,7 @@ def test_argv_carries_no_peer_dispatch_capability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen = _stub_run(monkeypatch, _answer())
-    MuseCLIModel(allowed_root=tmp_path).complete(
-        "make a plan", {"type": "object"}
-    )
+    MuseCLIModel(allowed_root=tmp_path).complete("make a plan", {"type": "object"})
     argv = seen["argv"]
     assert argv[:2] == ["muse", "exec"]
     assert "--json" in argv
@@ -173,7 +168,9 @@ def test_effective_permissions_recorded_with_returned_identity(
     monkeypatch.setenv(PROBE_KEY, PROBE_VALUE)
     seen = _stub_run(monkeypatch, _answer())
     model = MuseCLIModel(
-        model="muse-spark-1.3", effort="max", contributor=True,
+        model="muse-spark-1.3",
+        effort="max",
+        contributor=True,
         allowed_root=tmp_path,
     )
     completion = model.complete("make a plan", {"type": "object"})
@@ -195,9 +192,7 @@ def test_complete_with_image_records_invocation(
     image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
     seen = _stub_run(monkeypatch, _answer())
     model = MuseCLIModel(allowed_root=tmp_path)
-    completion = model.complete_with_image(
-        "describe", {"type": "object"}, image
-    )
+    completion = model.complete_with_image("describe", {"type": "object"}, image)
     assert seen["cwd"] == str(tmp_path)
     assert "--image" in seen["argv"]
     assert model.last_invocation["cwd"] == str(tmp_path)
@@ -243,9 +238,7 @@ def test_run_record_stores_effective_invocation_per_call(
                 "returned_model": "fake",
             }
 
-        def complete(
-            self, prompt: str, schema: Mapping[str, Any]
-        ) -> Completion:
+        def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
             return Completion(
                 data={"seed": 1, "n_rows": 100},
                 usage=Usage(model="fake", input_tokens=1, output_tokens=1),
@@ -270,14 +263,10 @@ def test_run_record_stores_effective_invocation_per_call(
     run_dir = out / "runs" / str(result["run_id"])
     events = [
         _json.loads(line)
-        for line in (run_dir / "events.jsonl").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        for line in (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    invocations = [
-        event for event in events if event["stage"] == "model_invocation"
-    ]
+    invocations = [event for event in events if event["stage"] == "model_invocation"]
     assert invocations, "no model_invocation event in the run record"
     details = invocations[0]["details"]
     assert details["role"] == "planner"
