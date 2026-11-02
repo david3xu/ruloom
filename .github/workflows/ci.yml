@@ -14,6 +14,10 @@ jobs:
           # topology test reads phased commits from HEAD history and needs
           # no branch refs, but it does need the history itself.
           fetch-depth: 0
+          # On pull_request events the checkout default is the merge ref
+          # (refs/pull/N/merge). Pin to the PR head SHA so CI tests exactly
+          # the pushed commits; on push events fall back to github.sha.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
