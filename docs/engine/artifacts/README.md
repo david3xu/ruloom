@@ -132,7 +132,11 @@ record moves `in_progress` before
 any copy and `complete` only after the destination verifies, so an
 interrupted publication resumes to identical bytes and re-publishing
 is a no-op; unattributed destination bytes and second releases for
-one item are refused. Verify and copy operate on one captured
+one item are refused. Once complete, a destination that stops
+attesting the recorded bytes refuses re-publication -- recovery goes
+through the authorised `repair` operation, which preserves any
+replaced bytes beside the destination and appends the authorising
+decision to the record. Verify and copy operate on one captured
 immutable byte snapshot: the run file is never re-read for shippable
 bytes, a post-acceptance change refuses at the stability guard, and
 the snapshot, destination, and persisted accepted digests must agree

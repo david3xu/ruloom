@@ -887,3 +887,143 @@ def test_download_same_source_and_destination_is_lossless(
     with pytest.raises(PublicationError, match="consumer verification"):
         download(broken, broken)
     assert broken.read_bytes() == broken_bytes
+
+
+def test_republish_refuses_when_complete_destination_missing(tmp_path: Path) -> None:
+    """HP-02 A02: a complete record with a missing destination refuses.
+
+    The bytes are gone, so plain re-publication must not silently
+    re-copy: recovery goes through the authorised repair operation,
+    which records the decision.
+    """
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    _, item = _succeeded_item(base, run_dir, outcome)
+    publisher = _publisher(base)
+    publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0)
+    dest = base / "published" / f"{item['item_id']}.zip"
+    assert dest.is_file()
+    dest.unlink()
+    with pytest.raises(PublicationError, match="no longer attests"):
+        publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0 + 10.0)
+    assert not dest.exists()
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "complete"
+
+
+def test_republish_refuses_unexpected_destination_bytes(tmp_path: Path) -> None:
+    """HP-02 A02: a complete record with foreign destination bytes refuses.
+
+    Plain re-publication must never overwrite bytes it cannot
+    attribute to its own record -- the foreign bytes stay untouched
+    and the record stays complete.
+    """
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    _, item = _succeeded_item(base, run_dir, outcome)
+    publisher = _publisher(base)
+    publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0)
+    dest = base / "published" / f"{item['item_id']}.zip"
+    dest.write_bytes(b"not our bundle")
+    with pytest.raises(PublicationError, match="no longer attests"):
+        publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0 + 10.0)
+    assert dest.read_bytes() == b"not our bundle"
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "complete"
+
+
+def test_repair_restores_missing_destination_and_records_decision(
+    tmp_path: Path,
+) -> None:
+    """HP-02 A02: authorised repair restores a missing destination.
+
+    The repair restores the recorded bytes, keeps the record
+    complete, and appends the authorising decision (who, when, why,
+    what was found) -- after which plain re-publication is a no-op
+    again.
+    """
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    _, item = _succeeded_item(base, run_dir, outcome)
+    publisher = _publisher(base)
+    first = publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0)
+    dest = base / "published" / f"{item['item_id']}.zip"
+    shipped = dest.read_bytes()
+    dest.unlink()
+    with pytest.raises(PublicationError, match="without a reason"):
+        publisher.repair(
+            item["item_id"], run_dir, authority="team-a", reason="  ", now=T0 + 10.0
+        )
+    with pytest.raises(AuthorityDenied):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-b",
+            reason="restore after disk loss",
+            now=T0 + 10.0,
+        )
+    assert not dest.exists()
+    identity = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="restore after disk loss",
+        now=T0 + 20.0,
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert dest.read_bytes() == shipped
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "complete"
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    entry = repairs[0]
+    assert entry["authority"] == "team-a"
+    assert entry["reason"] == "restore after disk loss"
+    assert entry["found"] == "absent"
+    assert entry["restored"] == first["zip_sha256"]
+    assert entry["at"] == T0 + 20.0
+    second = publisher.publish(
+        item["item_id"], run_dir, authority="team-a", now=T0 + 30.0
+    )
+    assert second["zip_sha256"] == first["zip_sha256"]
+
+
+def test_repair_preserves_replaced_bytes_and_records_decision(
+    tmp_path: Path,
+) -> None:
+    """HP-02 A02: repair quarantines unexpected bytes before restoring.
+
+    The replaced file is preserved beside the destination under a
+    digest-derived name (never silently dropped), the recorded bytes
+    are restored, and the decision entry names what was found and
+    where the replaced bytes went.
+    """
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    _, item = _succeeded_item(base, run_dir, outcome)
+    publisher = _publisher(base)
+    first = publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0)
+    dest = base / "published" / f"{item['item_id']}.zip"
+    shipped = dest.read_bytes()
+    dest.write_bytes(b"not our bundle")
+    foreign_digest = sha256_bytes(b"not our bundle")
+    identity = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="destination overwritten by stray copy",
+        now=T0 + 10.0,
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert dest.read_bytes() == shipped
+    preserved = dest.parent / f"{dest.name}.replaced.{foreign_digest}"
+    assert preserved.read_bytes() == b"not our bundle"
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "complete"
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    entry = repairs[0]
+    assert entry["found"] == foreign_digest
+    assert entry["preserved"] == preserved.name
+    assert entry["restored"] == first["zip_sha256"]
+    assert entry["reason"] == "destination overwritten by stray copy"
