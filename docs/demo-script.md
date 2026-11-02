@@ -44,4 +44,7 @@ explicitly: the critic is advisory and cannot change the verdict.
 - Upload publicly (unlisted is acceptable if the submission form accepts a link).
 - Put the video link in `README.md` next to the Status section after upload.
 - Attach pitch slides (PDF, max 25 MB) through the submission form, per the
-  GSWA README checklist in the hackathon home repository.
+  GSWA README checklist in the hackathon home repository. Margin note:
+  that checklist was not found in plan docs 01-13, so the slides
+  requirement is unverified here — confirm the current requirement on
+  the submission form itself before submitting.
