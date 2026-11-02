@@ -380,8 +380,15 @@ class DispatchStore:
 
         With ``idempotency_key`` set, a second submit carrying the same
         key returns the first submit's record unchanged -- no duplicate
-        item is created. A key first seen under another authority is
-        refused, so one authority cannot squat or adopt another's key.
+        item is created -- but only when the caller-supplied key matches
+        *and* the canonical request identity matches the binding
+        persisted at first submission. A key first seen under another
+        authority is refused, so one authority cannot squat or adopt
+        another's key, and the same key with a different request is
+        refused instead of silently returning another request's item.
+        An unkeyed submit whose canonical identity matches an item
+        owned by another authority is refused as well, so a keyless
+        resubmission can never return or shadow a foreign owner's job.
         ``max_retries`` bounds how many reported failures *and*
         expired leases return the item to the queue before it rests
         ``exhausted`` (expiry consumes the same budget; the launch
@@ -442,6 +449,7 @@ class DispatchStore:
                     max_retries=max_retries,
                     now=at,
                 )
+            self._refuse_foreign_duplicate(authority, identity)
             return self._write(
                 {
                     "item_id": uuid.uuid4().hex,
@@ -541,6 +549,36 @@ class DispatchStore:
             now=now,
         )
 
+    def _refuse_foreign_duplicate(
+        self, authority: str, request_identity: Mapping[str, Any]
+    ) -> None:
+        """Refuse an unkeyed submit matching another owner's item.
+
+        The canonical request identity is compared against every
+        stored item; a match owned by a different authority is a
+        cross-owner duplicate and is refused loudly, so the
+        resubmission can never return or shadow the foreign job.
+        Same-authority duplicates still create distinct items: only
+        a foreign match refuses.
+        """
+        want = dict(request_identity)
+        for path in sorted(self.items_dir.glob("*.json")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(record, Mapping):
+                continue
+            if record.get("authority") == authority:
+                continue
+            if record.get("request_identity") == want:
+                raise AuthorityDenied(
+                    f"request matches dispatch item "
+                    f"{record.get('item_id')!r} owned by another "
+                    "authority: refusing (resubmit with that item's "
+                    "idempotency key under its own authority)"
+                )
+
     def _submit_keyed(
         self,
         *,
@@ -552,7 +590,15 @@ class DispatchStore:
         item_id: str | None,
         now: float,
     ) -> dict[str, Any]:
-        """Submit guarded by an exclusively created key file (one winner)."""
+        """Submit guarded by an exclusively created key file (one winner).
+
+        The key file persists the key-to-request binding (the
+        canonical request identity) at first submission. A retry
+        returns the bound item unchanged only when the caller and the
+        identity both match the binding; any other collision --
+        another authority, or the same key with a different request
+        -- is refused loudly.
+        """
         key_path = _key_path(self.keys_dir, idempotency_key)
         try:
             with open(key_path, "x", encoding="utf-8") as handle:
@@ -561,6 +607,7 @@ class DispatchStore:
                         {
                             "item_id": item_id or uuid.uuid4().hex,
                             "authority": authority,
+                            "request_identity": dict(request_identity),
                         },
                         sort_keys=True,
                     )
@@ -585,38 +632,72 @@ class DispatchStore:
             stored_id = seen.get("item_id")
             check_item_id(stored_id)
             try:
-                return self._read(stored_id)
+                existing = self._read(stored_id)
             except ItemNotFound:
-                pass  # The first submit died before writing its item.
-            return self._write(
-                {
-                    "item_id": stored_id,
-                    "authority": authority,
-                    "request": dict(request),
-                    "request_identity": dict(request_identity),
-                    "idempotency_key": idempotency_key,
-                    "status": QUEUED,
-                    "retries_used": 0,
-                    "attempts": 0,
-                    "max_retries": max_retries,
-                    "lease": None,
-                    "fencing": 0,
-                    "accepted_run": None,
-                    "error": None,
-                    "history": [],
-                    "created_at": now,
-                    "updated_at": now,
-                },
-                event="submitted",
-                now=now,
-            )
+                # The first submit died before writing its item: the
+                # key reservation stands, so a different request under
+                # the same key is still refused against the binding.
+                bound = seen.get("request_identity")
+                if isinstance(bound, Mapping) and bound != dict(
+                    request_identity
+                ):
+                    raise DispatchError(
+                        f"idempotency key {idempotency_key!r} is bound "
+                        "to a different request: refusing"
+                    )
+                return self._write(
+                    {
+                        "item_id": stored_id,
+                        "authority": authority,
+                        "request": dict(request),
+                        "request_identity": dict(request_identity),
+                        "idempotency_key": idempotency_key,
+                        "status": QUEUED,
+                        "retries_used": 0,
+                        "attempts": 0,
+                        "max_retries": max_retries,
+                        "lease": None,
+                        "fencing": 0,
+                        "accepted_run": None,
+                        "error": None,
+                        "history": [],
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                    event="submitted",
+                    now=now,
+                )
+            if existing.get("authority") != authority:
+                raise AuthorityDenied(
+                    f"idempotency key {idempotency_key!r} resolves to "
+                    "an item owned by another authority: refusing"
+                )
+            stored_identity = existing.get("request_identity")
+            if not isinstance(
+                stored_identity, Mapping
+            ) or stored_identity != dict(request_identity):
+                raise DispatchError(
+                    f"idempotency key {idempotency_key!r} is bound to "
+                    "a different request: refusing (same-key retries "
+                    "must repeat the bound request identity)"
+                )
+            return _copy_record(existing)
         seen = json.loads(key_path.read_text(encoding="utf-8"))
         chosen = str(seen["item_id"])
         if item_id is not None and self._item_path(chosen).is_file():
             # A fresh key naming an existing item: the explicit-id
             # collision rule applies (same authority and request adopt
-            # it unchanged; anything else refuses).
-            return self._adopt_existing(authority, request, chosen)
+            # it unchanged; anything else refuses). A refused adoption
+            # removes the key file just created, so the failed attempt
+            # leaves no binding pointing at another owner's item.
+            try:
+                return self._adopt_existing(authority, request, chosen)
+            except DispatchError:
+                try:
+                    key_path.unlink()
+                except OSError:
+                    pass
+                raise
         return self._write(
             {
                 "item_id": chosen,
