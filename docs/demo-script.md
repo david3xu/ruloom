@@ -30,7 +30,7 @@ Optional, if the local critic is wanted on camera (server must be started
 first, model already on disk):
 
 ```bash
-llama-server -m ~/models/muse-glimmer/Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf --port 8080
+llama-server -m ~/models/muse-glimmer/Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf --port 8080 -c 32768
 .venv/bin/ruloom run data/sources/PDD446-scalars.csv --max-attempts 3 --local-critic
 ```
 
