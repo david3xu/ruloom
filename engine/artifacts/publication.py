@@ -61,9 +61,13 @@ still matches is a no-op returning the same identity. Once the record
 is complete the destination must keep attesting the recorded bytes:
 a missing, corrupt, or foreign destination refuses re-publication
 instead of being silently re-copied -- recovery goes through the
-authorised ``repair`` operation, which preserves any replaced bytes
-beside the destination and appends the authorising decision (who,
-when, why, what was found) to the record. Publication never
+authorised ``repair`` operation, which persists the identified
+intent (who, when, why, what was found, what will be restored, where
+replaced bytes go) before moving any byte, then restores the recorded
+bytes, preserves any replaced bytes beside the destination under a
+digest-derived name, and finalises the intent into a repairs entry
+idempotently (a retry after the copy finalises without copying
+again). Publication never
 overwrites destination bytes it cannot attribute to its own record:
 foreign bytes refuse loudly instead.
 
@@ -185,6 +189,130 @@ def _remove_stale_tmps(dest_dir: Path, dest_name: str) -> None:
                 path.unlink()
             except OSError:
                 pass
+
+
+def _quarantine_replaced(dest: Path, preserved_path: Path, *, found: str) -> None:
+    """Move diverged destination bytes into the digest-named quarantine.
+
+    When the quarantine already holds the found bytes (a retry after
+    the move, or an earlier repair of identical bytes), the duplicate
+    destination is unlinked instead of being renamed over them. The
+    quarantine is re-checked here so a swap under the gate refuses
+    instead of dropping bytes.
+    """
+    if preserved_path.is_file():
+        if sha256_bytes(preserved_path.read_bytes()) != found:
+            raise PublicationError(
+                f"repair quarantine {preserved_path.name!r} holds "
+                "unexpected bytes: refusing"
+            )
+        dest.unlink()
+    else:
+        dest.rename(preserved_path)
+
+
+def _check_pending_repair(
+    clean_id: str,
+    dest_dir: Path,
+    dest_name: str,
+    pending: Any,
+    snapshot_digest: str,
+) -> dict[str, Any]:
+    """Validate a persisted repair intent, or refuse before any mutation.
+
+    The intent must carry its authorisation (authority, reason, time),
+    the observed ``found`` state, the ``restored`` digest equal to the
+    verified snapshot, and the quarantine name exactly derived from
+    this destination and found state (``absent`` carries no name).
+    Anything else is malformed history and refuses without moving a
+    byte.
+    """
+    if not isinstance(pending, Mapping):
+        raise PublicationError(
+            f"item {clean_id!r} publication record carries a "
+            "malformed pending repair: refusing"
+        )
+    intent = dict(pending)
+    at = intent.get("at")
+    if isinstance(at, bool) or not isinstance(at, (int, float)):
+        raise PublicationError(
+            f"item {clean_id!r} carries a malformed pending repair (no time): refusing"
+        )
+    if not isinstance(intent.get("authority"), str) or not intent.get("authority"):
+        raise PublicationError(
+            f"item {clean_id!r} carries a malformed pending repair "
+            "(no authority): refusing"
+        )
+    reason = intent.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise PublicationError(
+            f"item {clean_id!r} carries a malformed pending repair "
+            "(no reason): refusing"
+        )
+    found = intent.get("found")
+    if not isinstance(found, str) or not found:
+        raise PublicationError(
+            f"item {clean_id!r} carries a malformed pending repair "
+            "(nothing found): refusing"
+        )
+    if intent.get("restored") != snapshot_digest:
+        raise PublicationError(
+            f"item {clean_id!r} pending repair authorises different bytes: "
+            "refusing (one item ships one release)"
+        )
+    preserved = intent.get("preserved")
+    if found == "absent":
+        if preserved is not None:
+            raise PublicationError(
+                f"item {clean_id!r} carries a malformed pending repair: refusing"
+            )
+    else:
+        if preserved != f"{dest_name}.replaced.{found}":
+            raise PublicationError(
+                f"item {clean_id!r} carries a malformed pending repair: refusing"
+            )
+        candidate = dest_dir / preserved
+        try:
+            inside = candidate.resolve().parent == dest_dir.resolve()
+        except OSError:
+            inside = False
+        if not inside:
+            raise PublicationError(
+                f"item {clean_id!r} carries a malformed pending repair "
+                "(outside the published area): refusing"
+            )
+    return intent
+
+
+def _pending_resumes(
+    pending: Mapping[str, Any],
+    dest_dir: Path,
+    current: str | None,
+) -> bool:
+    """Decide whether a pending intent still describes this destination.
+
+    True when the destination still holds the found bytes (nothing
+    mutated yet, so the intent may be refreshed) or when the quarantine
+    already holds them (the move happened, so the retry must resume
+    from the intent instead of re-observing). Any third state -- new
+    bytes planted mid-repair -- is not a resume and must refuse rather
+    than orphan the already-quarantined bytes.
+    """
+    found = pending.get("found")
+    preserved = pending.get("preserved")
+    if isinstance(preserved, str) and found != "absent":
+        try:
+            quarantined = dest_dir / preserved
+            if (
+                quarantined.is_file()
+                and sha256_bytes(quarantined.read_bytes()) == found
+            ):
+                return True
+        except OSError:
+            pass
+    if found == "absent":
+        return current is None
+    return current == found
 
 
 def _read_record(path: Path) -> dict[str, Any] | None:
@@ -885,13 +1013,34 @@ class Publisher:
             and dest.is_file()
             and sha256_bytes(dest.read_bytes()) == snapshot_digest
         ):
-            return {
-                "item_id": clean_id,
-                "dest": str(dest),
-                "zip_sha256": snapshot_digest,
-                "artifact_sha256": identity["artifact_sha256"],
-                "members": list(identity["members"]),
-            }
+            pending_raw = prior.get("pending_repair")
+            if pending_raw is None:
+                return {
+                    "item_id": clean_id,
+                    "dest": str(dest),
+                    "zip_sha256": snapshot_digest,
+                    "artifact_sha256": identity["artifact_sha256"],
+                    "members": list(identity["members"]),
+                }
+            previous = prior.get("repairs", [])
+            if not isinstance(previous, list):
+                raise PublicationError(
+                    f"item {clean_id!r} publication record carries a "
+                    "malformed repair history: refusing"
+                )
+            pending = _check_pending_repair(
+                clean_id, self.dest_dir, dest_name, pending_raw, snapshot_digest
+            )
+            return self._finalise_repair(
+                record_path,
+                prior,
+                clean_id,
+                previous,
+                pending,
+                identity,
+                snapshot_digest,
+                now=at,
+            )
         if (
             isinstance(prior, dict)
             and prior.get("status") == COMPLETE
@@ -984,13 +1133,18 @@ class Publisher:
 
         Plain re-publication refuses once the destination stops
         attesting the recorded bytes; this is the only operation that
-        restores them. It re-runs every acceptance guard, restores
-        exactly the recorded bytes (never a new release -- one item
-        ships one release), preserves any replaced bytes beside the
-        destination under a digest-derived name instead of dropping
-        them, and appends the authorising decision to the record. A
-        destination that still matches needs no repair and returns
-        the same identity without recording anything.
+        restores them. It re-runs every acceptance guard, validates
+        the repair history before moving any byte, persists the
+        identified intent (who, when, why, what was found, what will
+        be restored, where replaced bytes go) before mutating, then
+        restores exactly the recorded bytes (never a new release --
+        one item ships one release), preserves any replaced bytes
+        beside the destination under a digest-derived name instead
+        of dropping them, and finalises the intent into the record
+        idempotently. A destination that still matches with no
+        pending intent needs no repair and returns the same identity
+        without recording anything; a matching destination with a
+        pending intent finalises that intent instead of copying again.
         """
         at = _resolve_now(now)
         clean_id = _check_item_id(item_id)
@@ -1034,7 +1188,14 @@ class Publisher:
         reason: str,
         now: float,
     ) -> dict[str, Any]:
-        """Restore one verified snapshot over a diverged destination."""
+        """Restore one verified snapshot over a diverged destination.
+
+        The repair history is validated before anything moves; the
+        identified intent is then persisted before any byte moves, so
+        a crash mid-repair resumes from that intent instead of losing
+        the authorisation. A retry that finds the destination already
+        matching finalises the pending intent without copying again.
+        """
         at = now
         self._require_shippable(clean_id, run_path, acceptance, authority)
         record_path = self._record_path(clean_id)
@@ -1060,31 +1221,81 @@ class Publisher:
                 f"destination {dest_name!r} resolves outside the "
                 "published area: refusing"
             )
-        if dest.is_file() and sha256_bytes(dest.read_bytes()) == snapshot_digest:
-            return {
-                "item_id": clean_id,
-                "dest": str(dest),
-                "zip_sha256": snapshot_digest,
-                "artifact_sha256": identity["artifact_sha256"],
-                "members": list(identity["members"]),
-            }
-        found: str
-        preserved: str | None = None
-        if dest.is_file():
-            found = sha256_bytes(dest.read_bytes())
-            preserved_path = self.dest_dir / f"{dest_name}.replaced.{found}"
-            if preserved_path.is_file():
-                if sha256_bytes(preserved_path.read_bytes()) != found:
+        previous = prior.get("repairs", [])
+        if not isinstance(previous, list):
+            raise PublicationError(
+                f"item {clean_id!r} publication record carries a "
+                "malformed repair history: refusing"
+            )
+        pending_raw = prior.get("pending_repair")
+        pending = (
+            None
+            if pending_raw is None
+            else _check_pending_repair(
+                clean_id, self.dest_dir, dest_name, pending_raw, snapshot_digest
+            )
+        )
+        current = sha256_bytes(dest.read_bytes()) if dest.is_file() else None
+        if current == snapshot_digest:
+            if pending is None:
+                return {
+                    "item_id": clean_id,
+                    "dest": str(dest),
+                    "zip_sha256": snapshot_digest,
+                    "artifact_sha256": identity["artifact_sha256"],
+                    "members": list(identity["members"]),
+                }
+            return self._finalise_repair(
+                record_path,
+                prior,
+                clean_id,
+                previous,
+                pending,
+                identity,
+                snapshot_digest,
+                now=at,
+            )
+        if pending is not None:
+            if not _pending_resumes(pending, self.dest_dir, current):
+                raise PublicationError(
+                    f"item {clean_id!r} has a repair already in progress "
+                    "for different bytes: refusing (finish or investigate "
+                    "before re-authorising)"
+                )
+            intent = pending
+        else:
+            if current is None:
+                found: str = "absent"
+                preserved: str | None = None
+            else:
+                found = current
+                preserved = f"{dest_name}.replaced.{found}"
+                preserved_path = self.dest_dir / preserved
+                if preserved_path.is_file() and (
+                    sha256_bytes(preserved_path.read_bytes()) != found
+                ):
                     raise PublicationError(
                         f"repair quarantine {preserved_path.name!r} holds "
                         "unexpected bytes: refusing"
                     )
-                dest.unlink()
-            else:
-                dest.rename(preserved_path)
-            preserved = preserved_path.name
-        else:
-            found = "absent"
+            intent = {
+                "at": at,
+                "authority": authority,
+                "reason": reason,
+                "found": found,
+                "restored": snapshot_digest,
+                "preserved": preserved,
+            }
+            _atomic_write_json(
+                record_path,
+                {**prior, "updated_at": at, "pending_repair": intent},
+            )
+        if intent["preserved"] is not None and dest.is_file():
+            _quarantine_replaced(
+                dest,
+                self.dest_dir / intent["preserved"],
+                found=intent["found"],
+            )
         _remove_stale_tmps(self.dest_dir, dest_name)
         _stage_and_commit(self.dest_dir, dest_name, snapshot)
         if sha256_bytes(dest.read_bytes()) != snapshot_digest:
@@ -1094,34 +1305,59 @@ class Publisher:
             )
         sidecar = self.dest_dir / f"{dest_name}.sha256"
         _atomic_write_bytes(sidecar, f"{snapshot_digest}  {dest_name}\n".encode())
-        previous = prior.get("repairs", [])
-        if not isinstance(previous, list):
-            raise PublicationError(
-                f"item {clean_id!r} publication record carries a "
-                "malformed repair history: refusing"
-            )
+        return self._finalise_repair(
+            record_path,
+            prior,
+            clean_id,
+            previous,
+            intent,
+            identity,
+            snapshot_digest,
+            now=at,
+        )
+
+    def _finalise_repair(
+        self,
+        record_path: Path,
+        prior: Mapping[str, Any],
+        clean_id: str,
+        previous: list[Any],
+        intent: Mapping[str, Any],
+        identity: Mapping[str, Any],
+        snapshot_digest: str,
+        *,
+        now: float,
+    ) -> dict[str, Any]:
+        """Append the authorised intent to the record and clear it.
+
+        Idempotent: the entry carries the original authorisation
+        (authority, reason, time, found state), so a retry after the
+        copy appends exactly one entry for that intent and clears it;
+        a later call with no pending intent is a no-op elsewhere.
+        """
         record = {
             "item_id": clean_id,
             "authority": prior.get("authority"),
             "run_id": prior.get("run_id"),
             "zip_sha256": snapshot_digest,
             "artifact_sha256": identity["artifact_sha256"],
-            "dest_name": dest_name,
+            "dest_name": prior.get("dest_name"),
             "status": COMPLETE,
-            "updated_at": at,
+            "updated_at": now,
             "repairs": [
                 *previous,
                 {
-                    "at": at,
-                    "authority": authority,
-                    "reason": reason,
-                    "found": found,
+                    "at": intent["at"],
+                    "authority": intent["authority"],
+                    "reason": intent["reason"],
+                    "found": intent["found"],
                     "restored": snapshot_digest,
-                    "preserved": preserved,
+                    "preserved": intent["preserved"],
                 },
             ],
         }
         _atomic_write_json(record_path, record)
+        dest = self.dest_dir / str(prior.get("dest_name"))
         return {
             "item_id": clean_id,
             "dest": str(dest),

@@ -1086,3 +1086,405 @@ def test_repair_preserves_replaced_bytes_and_records_decision(
     assert entry["preserved"] == preserved.name
     assert entry["restored"] == first["zip_sha256"]
     assert entry["reason"] == "destination overwritten by stray copy"
+
+
+def _published_then_diverged(
+    base: Path, tmp_path: Path, *, foreign: bytes = b"not our bundle"
+) -> tuple:
+    """Publish once, then plant foreign bytes at the destination.
+
+    Returns ``(run_dir, outcome, item, publisher, dest, shipped, first)``
+    where ``shipped`` is the attested bytes and ``first`` the publish
+    identity. Shared setup for the IP-03 durable-repair tests.
+    """
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    _, item = _succeeded_item(base, run_dir, outcome)
+    publisher = _publisher(base)
+    first = publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0)
+    dest = base / "published" / f"{item['item_id']}.zip"
+    shipped = dest.read_bytes()
+    dest.write_bytes(foreign)
+    return run_dir, outcome, item, publisher, dest, shipped, first
+
+
+def test_repair_persists_intent_before_copy_and_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IP-03 B03: the repair intent is durable before any byte moves.
+
+    A crash at the copy leaves the intent in the record (who, when,
+    why, what was found, what will be restored, where the replaced
+    bytes went) with no repairs entry yet; the replaced bytes are
+    already quarantined. A retry resumes from that intent and records
+    exactly one entry carrying the original authorisation.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+    foreign_digest = sha256_bytes(b"not our bundle")
+
+    def boom(dest_dir: Path, dest_name: str, payload: bytes) -> Path:
+        raise RuntimeError("injected copy failure")
+
+    monkeypatch.setattr(publication, "_stage_and_commit", boom)
+    with pytest.raises(RuntimeError, match="injected copy failure"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after stray copy",
+            now=T0 + 10.0,
+        )
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "complete"
+    assert record.get("repairs", []) == []
+    pending = record.get("pending_repair")
+    assert isinstance(pending, dict)
+    assert pending["authority"] == "team-a"
+    assert pending["reason"] == "restore after stray copy"
+    assert pending["found"] == foreign_digest
+    assert pending["restored"] == first["zip_sha256"]
+    assert pending["at"] == T0 + 10.0
+    assert not dest.exists()
+    preserved = dest.parent / f"{dest.name}.replaced.{foreign_digest}"
+    assert preserved.read_bytes() == b"not our bundle"
+    monkeypatch.undo()
+
+    identity = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="restore after stray copy",
+        now=T0 + 20.0,
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert dest.read_bytes() == shipped
+    assert preserved.read_bytes() == b"not our bundle"
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "complete"
+    assert "pending_repair" not in record
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    assert repairs[0]["found"] == foreign_digest
+    assert repairs[0]["preserved"] == preserved.name
+    assert repairs[0]["at"] == T0 + 10.0
+    assert list((base / "published").glob("*.tmp.*")) == []
+
+
+def test_repair_crash_during_preserve_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IP-03 B03: a crash while quarantining leaves intent, not damage.
+
+    The intent is already durable, the destination still holds the
+    foreign bytes, and no quarantine exists yet. A retry quarantines,
+    restores, and records exactly one entry.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+    foreign_digest = sha256_bytes(b"not our bundle")
+
+    def boom(dest_path: Path, preserved_path: Path, *, found: str) -> None:
+        raise RuntimeError("injected preserve failure")
+
+    monkeypatch.setattr(publication, "_quarantine_replaced", boom)
+    with pytest.raises(RuntimeError, match="injected preserve failure"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after stray copy",
+            now=T0 + 10.0,
+        )
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "complete"
+    assert record.get("repairs", []) == []
+    pending = record.get("pending_repair")
+    assert isinstance(pending, dict) and pending["found"] == foreign_digest
+    assert dest.read_bytes() == b"not our bundle"
+    assert not (dest.parent / f"{dest.name}.replaced.{foreign_digest}").exists()
+    monkeypatch.undo()
+
+    identity = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="restore after stray copy",
+        now=T0 + 20.0,
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert dest.read_bytes() == shipped
+    record = publisher.get(item["item_id"])
+    assert record is not None and "pending_repair" not in record
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    assert repairs[0]["found"] == foreign_digest
+
+
+def test_repair_crash_at_sidecar_finalises_without_recopy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IP-03 B03: a crash after the copy finalises idempotently.
+
+    The destination already matches, so the retry must not copy again
+    (the ZIP-already-matches path): it finalises the pending intent
+    into exactly one repairs entry.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+
+    real_write = publication._atomic_write_bytes
+
+    def boom(path: Path, payload: bytes) -> Path:
+        if path.name.endswith(".sha256"):
+            raise RuntimeError("injected sidecar failure")
+        return real_write(path, payload)
+
+    monkeypatch.setattr(publication, "_atomic_write_bytes", boom)
+    with pytest.raises(RuntimeError, match="injected sidecar failure"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after stray copy",
+            now=T0 + 10.0,
+        )
+    assert dest.read_bytes() == shipped
+    record = publisher.get(item["item_id"])
+    assert record is not None and isinstance(record.get("pending_repair"), dict)
+    assert record.get("repairs", []) == []
+    monkeypatch.undo()
+
+    copies = {"n": 0}
+    real_stage = publication._stage_and_commit
+
+    def counting(dest_dir: Path, dest_name: str, payload: bytes) -> Path:
+        copies["n"] += 1
+        return real_stage(dest_dir, dest_name, payload)
+
+    monkeypatch.setattr(publication, "_stage_and_commit", counting)
+    identity = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="restore after stray copy",
+        now=T0 + 20.0,
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert copies["n"] == 0
+    record = publisher.get(item["item_id"])
+    assert record is not None and "pending_repair" not in record
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    assert repairs[0]["restored"] == first["zip_sha256"]
+
+
+def test_repair_crash_at_final_record_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IP-03 B03: a crash at the final record write records once.
+
+    The bytes and sidecar are already restored; the intent is still
+    pending. A retry appends exactly one entry and clears the intent,
+    and a further repair is a no-op (never a duplicate entry).
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+
+    real_write_json = publication._atomic_write_json
+    calls = {"n": 0}
+
+    def boom(path: Path, record: object) -> Path:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("injected final-record failure")
+        return real_write_json(path, record)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(publication, "_atomic_write_json", boom)
+    with pytest.raises(RuntimeError, match="injected final-record failure"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after stray copy",
+            now=T0 + 10.0,
+        )
+    assert dest.read_bytes() == shipped
+    record = publisher.get(item["item_id"])
+    assert record is not None and isinstance(record.get("pending_repair"), dict)
+    assert record.get("repairs", []) == []
+    monkeypatch.undo()
+
+    identity = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="restore after stray copy",
+        now=T0 + 20.0,
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    record = publisher.get(item["item_id"])
+    assert record is not None and "pending_repair" not in record
+    assert isinstance(record.get("repairs"), list) and len(record["repairs"]) == 1
+
+    again = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="restore after stray copy",
+        now=T0 + 30.0,
+    )
+    assert again["zip_sha256"] == first["zip_sha256"]
+    record = publisher.get(item["item_id"])
+    assert record is not None and len(record["repairs"]) == 1
+
+
+def test_repair_crash_at_intent_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IP-03 B03: a crash at the intent write mutates nothing.
+
+    The first record write fails, so the destination, the quarantine
+    area, and the record are all untouched. A retry converges with one
+    entry.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+    foreign_digest = sha256_bytes(b"not our bundle")
+
+    real_write_json = publication._atomic_write_json
+    calls = {"n": 0}
+
+    def boom(path: Path, record: object) -> Path:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("injected intent failure")
+        return real_write_json(path, record)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(publication, "_atomic_write_json", boom)
+    with pytest.raises(RuntimeError, match="injected intent failure"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after stray copy",
+            now=T0 + 10.0,
+        )
+    assert dest.read_bytes() == b"not our bundle"
+    assert not (dest.parent / f"{dest.name}.replaced.{foreign_digest}").exists()
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "complete"
+    assert "pending_repair" not in record
+    assert record.get("repairs", []) == []
+    monkeypatch.undo()
+
+    identity = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="restore after stray copy",
+        now=T0 + 20.0,
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert dest.read_bytes() == shipped
+    record = publisher.get(item["item_id"])
+    assert record is not None and "pending_repair" not in record
+    assert isinstance(record.get("repairs"), list) and len(record["repairs"]) == 1
+
+
+def test_repair_validates_history_before_mutating(tmp_path: Path) -> None:
+    """IP-03 B03: malformed repair history refuses before any byte moves.
+
+    A corrupt ``repairs`` list or a corrupt pending intent refuses
+    without quarantining, copying, or persisting a new intent -- the
+    foreign destination and the record are left exactly as found.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, _, _ = _published_then_diverged(base, tmp_path)
+    record_path = base / "publications" / f"{item['item_id']}.json"
+
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["repairs"] = "corrupt"
+    record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(PublicationError, match="malformed"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after stray copy",
+            now=T0 + 10.0,
+        )
+    assert dest.read_bytes() == b"not our bundle"
+    assert "pending_repair" not in publisher.get(item["item_id"])
+
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["repairs"] = []
+    record["pending_repair"] = {"bogus": True}
+    record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(PublicationError, match="malformed"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after stray copy",
+            now=T0 + 20.0,
+        )
+    assert dest.read_bytes() == b"not our bundle"
+    assert publisher.get(item["item_id"])["pending_repair"] == {"bogus": True}
+
+
+def test_publish_finalises_interrupted_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IP-03 B03: plain publication finalises a pending repair intent.
+
+    A repair interrupted after the copy leaves matching bytes with the
+    intent still pending. A later plain publish (no divergence left to
+    repair) finalises that intent into one entry instead of leaving
+    the authorisation dangling.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+
+    real_write_json = publication._atomic_write_json
+    calls = {"n": 0}
+
+    def boom(path: Path, record: object) -> Path:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("injected final-record failure")
+        return real_write_json(path, record)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(publication, "_atomic_write_json", boom)
+    with pytest.raises(RuntimeError, match="injected final-record failure"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after stray copy",
+            now=T0 + 10.0,
+        )
+    assert dest.read_bytes() == shipped
+    assert isinstance(publisher.get(item["item_id"]).get("pending_repair"), dict)
+    monkeypatch.undo()
+
+    identity = publisher.publish(
+        item["item_id"], run_dir, authority="team-a", now=T0 + 20.0
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    record = publisher.get(item["item_id"])
+    assert record is not None and "pending_repair" not in record
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    assert repairs[0]["reason"] == "restore after stray copy"

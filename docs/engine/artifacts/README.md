@@ -140,9 +140,14 @@ staged tmp files beside the destination, never a foreign
 destination). Only owned staging files are recovered; anything else
 refuses loudly. Once complete, a destination that stops
 attesting the recorded bytes refuses re-publication -- recovery goes
-through the authorised `repair` operation, which preserves any
-replaced bytes beside the destination and appends the authorising
-decision to the record. Verify and copy operate on one captured
+through the authorised `repair` operation, which validates the repair
+history before moving any byte, persists the identified intent (who,
+when, why, what was found, what will be restored, where replaced
+bytes go) before mutating, preserves any replaced bytes beside the
+destination under a digest-derived name, and finalises the intent
+into the record idempotently (a retry after the copy finalises
+without copying again; plain publication finalises a pending intent
+left by an interrupted repair). Verify and copy operate on one captured
 immutable byte snapshot: the run file is never re-read for shippable
 bytes, a post-acceptance change refuses at the stability guard, and
 the snapshot, destination, and persisted accepted digests must agree

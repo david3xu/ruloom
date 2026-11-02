@@ -130,7 +130,15 @@ persisted acceptance record before any byte is copied:
   bytes (never a new release), preserves any replaced bytes beside
   the destination under a digest-derived name, and appends the
   authorising decision (who, when, why, what was found) to the
-  record.
+  record. The repair is durable (IP-03, audit B03): the history is
+  validated before anything moves, the identified intent (who, when,
+  why, what was found, what will be restored, where replaced bytes
+  go) is persisted before any byte moves, and the intent is finalised
+  idempotently after the restore -- a retry after the copy finalises
+  without copying again (including the ZIP-already-matches path, and
+  via plain publication when the bytes already match), so a crash at
+  any write phase (intent, quarantine, copy, sidecar, final record)
+  resumes from the persisted intent with exactly one entry.
 - Publication never overwrites destination bytes it cannot attribute
   to its own record: unattributed foreign bytes refuse loudly, and one
   item ships exactly one release. Publication item ids take the same
@@ -197,11 +205,14 @@ Control cases (committed tests, no sleeps — clocks are injected):
   on retry (HP-01 A01): same key with a changed `max_rows`, a changed
   attempt bound, or a changed/added spec overlay refuses with history
   and fencing kept.
-- `tests/engine/test_publication.py` (32 tests): publish/download
+- `tests/engine/test_publication.py` (39 tests): publish/download
   round trip with hash equality to the reviewed `release.sha256`,
   idempotent re-publish, interrupted-copy resume to identical bytes,
   interrupted-mark adoption, in-progress foreign-destination refusal
   with bytes preserved and record staying in-progress (IP-02 B02),
+  durable repair authorisation with intent persisted before mutation
+  and idempotent finalise after restore at every write phase
+  (IP-03 B03),
   foreign-authority denial, unsucceeded /
   wrong-run / changed-bytes refusal, missing and bit-flipped release
   refusal, foreign-destination refusal, one-item-one-release, download
