@@ -741,3 +741,115 @@ def test_submit_unpinned_request_carries_empty_identity(
         "source_sha256": None,
         "spec_digest": None,
     }
+
+
+def test_keyed_retry_identical_returns_same_item_unchanged(
+    tmp_path: Path,
+) -> None:
+    """DP-02 C03(b): same key plus identical request returns one item.
+
+    The retry returns the stored record unchanged: no new history
+    event, no fencing-epoch move, no replacement record.
+    """
+    store = _store(tmp_path)
+    first = store.submit(
+        authority="team-a", request=_request(), idempotency_key="k", now=T0,
+    )
+    store.claim(first["item_id"], worker="w1", lease_seconds=600.0, now=T0)
+    before = store.get(first["item_id"])
+    second = store.submit(
+        authority="team-a", request=_request(), idempotency_key="k", now=T0,
+    )
+    assert second == before
+    assert second["history"] == before["history"]
+    assert second["fencing"] == before["fencing"]
+    assert second["status"] == "claimed"
+    items = list((tmp_path / "out" / "dispatch" / "items").glob("*.json"))
+    assert len(items) == 1
+
+
+def test_keyed_retry_changed_request_refuses(tmp_path: Path) -> None:
+    """DP-02 C03(c): same key with a different request is refused loudly.
+
+    A changed source pin and a changed profile both mismatch the
+    key-to-request binding persisted at first submission. The stored
+    record keeps its history and fencing epoch.
+    """
+    store = _store(tmp_path)
+    first = store.submit(
+        authority="team-a", request=_request(), idempotency_key="k", now=T0,
+    )
+    with pytest.raises(DispatchError):
+        store.submit(
+            authority="team-a",
+            request=_request(source_sha256="c" * 64),
+            idempotency_key="k",
+            now=T0,
+        )
+    with pytest.raises(DispatchError):
+        store.submit(
+            authority="team-a",
+            request=_request(profile="hylogger"),
+            idempotency_key="k",
+            now=T0,
+        )
+    intact = store.get(first["item_id"])
+    assert intact["request"] == _request()
+    assert [entry["event"] for entry in intact["history"]] == ["submitted"]
+    assert intact["fencing"] == 0
+    items = list((tmp_path / "out" / "dispatch" / "items").glob("*.json"))
+    assert len(items) == 1
+
+
+def test_keyed_retry_matches_on_canonical_identity_only(
+    tmp_path: Path,
+) -> None:
+    """DP-02 C03(d): key equivalence uses the DP-01 request identity.
+
+    Fields outside the bound identity (the source label, caller
+    bounds) do not distinguish a retry: the same pins under the same
+    key return the first item instead of refusing or duplicating.
+    """
+    store = _store(tmp_path)
+    pinned = _request(source_sha256="a" * 64, spec_digest="b" * 64)
+    first = store.submit(
+        authority="team-a", request=pinned, idempotency_key="k", now=T0,
+    )
+    second = store.submit(
+        authority="team-a",
+        request=_request(
+            source="renamed-source.csv",
+            max_attempts=9,
+            source_sha256="a" * 64,
+            spec_digest="b" * 64,
+        ),
+        idempotency_key="k",
+        now=T0,
+    )
+    assert second["item_id"] == first["item_id"]
+    assert second["request"] == pinned
+    items = list((tmp_path / "out" / "dispatch" / "items").glob("*.json"))
+    assert len(items) == 1
+
+
+def test_unkeyed_resubmission_matching_foreign_item_refuses(
+    tmp_path: Path,
+) -> None:
+    """DP-02 C03(a): an unkeyed duplicate of another owner's job refuses.
+
+    Owner B submits with an explicit key; owner A resubmits the same
+    request body without the key. The resubmission is refused loudly
+    instead of returning B's job, and B's record is untouched.
+    """
+    store = _store(tmp_path)
+    foreign = store.submit(
+        authority="team-b", request=_request(), idempotency_key="bk",
+        now=T0,
+    )
+    with pytest.raises(AuthorityDenied):
+        store.submit(authority="team-a", request=_request(), now=T0)
+    intact = store.get(foreign["item_id"])
+    assert intact["authority"] == "team-b"
+    assert [entry["event"] for entry in intact["history"]] == ["submitted"]
+    items = list((tmp_path / "out" / "dispatch" / "items").glob("*.json"))
+    assert len(items) == 1

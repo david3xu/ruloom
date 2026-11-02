@@ -10,14 +10,19 @@ JSON records under the same output root the runs live under.
 One JSON record per submitted item under `<base>/dispatch/`:
 
 - `submit` is idempotent: the same `idempotency_key` returns the first
-  record instead of duplicating work. A key first seen under another
-  authority is refused, so keys cannot be squatted across authorities.
-  An explicit `item_id` is create-only and collision-safe: the first
-  submit creates the item, and a later submit naming the same id
-  returns the existing record unchanged only under the same authority
-  and request. A changed request or a foreign authority is refused, so
-  no resubmission rewrites another owner's history or resets its
-  fencing epoch.
+  record instead of duplicating work, but only when the key and the
+  canonical request identity both match the binding persisted at first
+  submission. A key first seen under another authority is refused, so
+  keys cannot be squatted across authorities, and the same key with a
+  different request is refused instead of returning another request's
+  item. An unkeyed submit whose canonical identity matches another
+  owner's item is refused as well, so a keyless resubmission can never
+  return or shadow a foreign job. An explicit `item_id` is create-only
+  and collision-safe: the first submit creates the item, and a later
+  submit naming the same id returns the existing record unchanged only
+  under the same authority and request. A changed request or a foreign
+  authority is refused, so no resubmission rewrites another owner's
+  history or resets its fencing epoch.
 - Every entry point taking an item id validates a narrow canonical
   shape (letters, digits, dash, underscore; at most 64 characters)
   before any I/O, and record paths are verified to stay inside the
@@ -145,7 +150,7 @@ report → publish → download, executed under a fresh `/tmp` root:
 
 Control cases (committed tests, no sleeps — clocks are injected):
 
-- `tests/engine/test_dispatch.py` (40 tests): idempotent submit,
+- `tests/engine/test_dispatch.py` (44 tests): idempotent submit,
   key-across-authorities denial, single-winner claim under 8 threads,
   live-conflict vs expired-redispatch (with retry budget to spend),
   terminal claim refusal, heartbeat extension and stale/wrong-worker/
@@ -163,7 +168,11 @@ Control cases (committed tests, no sleeps — clocks are injected):
   exhaustion, four-cycle bound, and fencing preserved, plus
   request-binding repair (DP-01 C01): unknown request fields refused,
   malformed pins/bounds and conflicting `max_rows` refused, canonical
-  request identity persisted (pinned and unpinned shapes).
+  request identity persisted (pinned and unpinned shapes), plus keyed
+  retry binding (DP-02 C03): same key with identical request returns
+  the stored record unchanged, same key with a different request
+  refuses, key equivalence compares the canonical request identity
+  only, and an unkeyed duplicate of a foreign owner's item refuses.
 - `tests/engine/test_publication.py` (27 tests): publish/download
   round trip with hash equality to the reviewed `release.sha256`,
   idempotent re-publish, interrupted-copy resume to identical bytes,

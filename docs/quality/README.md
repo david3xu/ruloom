@@ -377,8 +377,11 @@ re-read for shippable bytes, a post-acceptance change refuses at the
 stability guard with the item never marked complete, and the
 snapshot, destination, and persisted accepted digests must agree
 before the complete mark. Evidence:
-`tests/engine/test_dispatch.py` (40 tests: unknown fields, malformed
-bounds/pins, conflicting `max_rows`, persisted identity) and
+`tests/engine/test_dispatch.py` (44 tests: unknown fields, malformed
+bounds/pins, conflicting `max_rows`, persisted identity, plus DP-02
+C03 keyed-retry binding: identical retry returns the stored record
+unchanged, changed-request key reuse refuses, identity-only
+equivalence, foreign unkeyed duplicate refuses) and
 `tests/engine/test_publication.py` (27 tests: wrong-source,
 tighter-row-bound, and changed-source refusals with nothing shipped;
 post-acceptance ZIP swaps, corrupt and well-formed, refused with no
