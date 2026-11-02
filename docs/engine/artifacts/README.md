@@ -50,8 +50,10 @@ historical member list; packaging still refuses any gap.
 
 Each run owns its release location: `runs/<run-id>/` holds
 `decision.json`, `manifest.json` (the complete release manifest with
-the evidence digest, the final digest, and every member hash),
-`release.zip`, and the detached `release.sha256` hash. The ZIP is
+the evidence digest, the final digest, every member hash, and the
+persisted acceptance record -- the gate verdict plus the required
+checks publication binds), `release.zip`, and the detached
+`release.sha256` hash. The ZIP is
 built from the frozen snapshot in a temporary file, verified, and
 renamed into place; any failure mid-packaging leaves no partial
 `release.zip` (and no manifest or hash), the decision stays recorded,
@@ -65,11 +67,15 @@ compression are fixed.
 the bundle alone: entry names must be flat (no absolute paths, no
 parent escapes), every declared member must be present with no extras,
 every member must match `checksums.sha256`, every `.json` member must
-parse, the validation report must carry its required fields, and the
-report's artifact hash must resolve to the shipped payload bytes (an
-older substituted report fails even when the checksums were re-cut
-around it). Any violation raises loudly; a return means every check
-passed.
+parse, the validation report must carry its required fields with its
+verdict reading exactly `pass`, and the report's artifact hash must
+resolve to the shipped payload bytes (an older substituted report
+fails even when the checksums were re-cut around it). When the
+manifest records member hashes and sizes, the shipped bytes must
+match those too: a changed report with re-cut internal checksums
+still fails against the stale external record, because the external
+manifest is authority over names, not just a member list. Any
+violation raises loudly; a return means every check passed.
 
 ## Rights evidence and output terms
 
@@ -103,17 +109,28 @@ name (`output_terms`) plus the recorded value.
 Packing writes `release.zip` into the run directory at accept time;
 publication (`engine/artifacts/publication.py`) is the step after
 that, copying the accepted bundle into a separate published area
-with its own durable record (`<base>/publications/`). It ships only
-a `succeeded` dispatch item's reviewed bytes -- the bundle must pass
-consumer verification, the run and zip digests must match the success
-report, and the publishing authority must own the item. The record
-moves `in_progress` before any copy and `complete` only after the
-destination verifies, so an interrupted publication resumes to
-identical bytes and re-publishing is a no-op; unattributed
-destination bytes and second releases for one item are refused.
-`download` verifies the bundle at the destination and removes it when
-verification fails. Corruption inside the deflated bytes is a
-`ReleaseVerificationError` refusal, never a raw decoding crash.
+with its own durable record (`<base>/publications/`). The worker's
+success report is evidence, not authority: it names a run, and
+publication resolves that run's persisted acceptance record -- the
+detached `release.sha256` binding the shipped bytes, a human
+`decision.json` verdict of `accept` binding the frozen evidence
+digest, a `frozen-manifest.json` matching that digest, a
+`manifest.json` whose members, sizes, hashes, and artifact digest
+match the frozen evidence member for member, a shipped validation
+report reading `pass` and covering every persisted required check,
+and a single selected attempt whose receipt records `pass` for the
+artifact. The reported digests must equal the persisted ones (a
+worker claim of an all-zero artifact digest refuses instead of
+shipping different bytes), and a requested profile must equal the
+run's own. It ships only a `succeeded` dispatch item's reviewed bytes
+under the owning authority. The record moves `in_progress` before
+any copy and `complete` only after the destination verifies, so an
+interrupted publication resumes to identical bytes and re-publishing
+is a no-op; unattributed destination bytes and second releases for
+one item are refused. `download` verifies the bundle at the
+destination and removes it when verification fails. Corruption inside
+the deflated bytes is a `ReleaseVerificationError` refusal, never a
+raw decoding crash.
 
 ## Feature record
 

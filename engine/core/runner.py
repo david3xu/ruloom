@@ -1421,6 +1421,10 @@ class _Runner:
             entries = _package.candidate_entries(
                 files, attempt=self._frozen_attempt or 0
             )
+            verdict, failed = self.final_decision()
+            required_checks = applicable_required_ids(
+                self.manifest.checks, conditions=self.run_conditions()
+            )
             _package.write_release_manifest(
                 run_dir,
                 {
@@ -1430,6 +1434,11 @@ class _Runner:
                     "manifest_digest": _package.candidate_digest(entries),
                     "members": entries,
                     "rights": self._rights_record(),
+                    "acceptance": {
+                        "verdict": verdict,
+                        "failed": list(failed),
+                        "required_checks": sorted(required_checks),
+                    },
                 },
             )
             _package.write_detached_hash(run_dir, zip_digest)

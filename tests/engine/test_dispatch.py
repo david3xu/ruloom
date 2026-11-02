@@ -390,3 +390,154 @@ def test_records_are_copies_and_list_filters(tmp_path: Path) -> None:
     assert [
         item["item_id"] for item in store.list_items(status="cancelled")
     ] == [first["item_id"]]
+
+
+def _explicit(
+    store: DispatchStore,
+    *,
+    authority: str = "team-a",
+    request: dict[str, Any] | None = None,
+    item_id: str = "fixed-id",
+    now: float = T0,
+) -> dict[str, Any]:
+    return store.submit(
+        authority=authority,
+        request=dict(request) if request is not None else _request(),
+        item_id=item_id,
+        now=now,
+    )
+
+
+def test_explicit_id_resubmission_returns_the_immutable_record(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    first = _explicit(store)
+    lease = store.claim(
+        first["item_id"], worker="w1", lease_seconds=600.0, now=T0
+    )["lease"]
+    store.report_success(
+        first["item_id"],
+        worker="w1",
+        token=lease["token"],
+        accepted_run={
+            "run_id": "r",
+            "artifact_sha256": "a",
+            "zip_sha256": "z",
+        },
+        now=T0,
+    )
+    before = store.get("fixed-id")
+    second = _explicit(store)
+    assert second == before
+    assert second["history"] == before["history"]
+    assert second["fencing"] == before["fencing"]
+    assert second["status"] == "succeeded"
+    items = list((tmp_path / "out" / "dispatch" / "items").glob("*.json"))
+    assert len(items) == 1
+
+
+def test_explicit_id_same_authority_changed_request_refuses(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    first = _explicit(store)
+    store.claim(first["item_id"], worker="w1", lease_seconds=600.0, now=T0)
+    with pytest.raises(DispatchError):
+        _explicit(store, request=_request(extra="changed"))
+    intact = store.get("fixed-id")
+    assert intact["request"] == _request()
+    assert intact["status"] == "claimed"
+    assert [entry["event"] for entry in intact["history"]] == [
+        "submitted",
+        "claimed",
+    ]
+
+
+def test_explicit_id_foreign_authority_refuses_and_keeps_history(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    first = _explicit(store, authority="owner-a")
+    store.claim(first["item_id"], worker="w1", lease_seconds=30.0, now=T0)
+    store.cancel(first["item_id"], authority="owner-a", now=T0 + 1.0)
+    before = store.get("fixed-id")
+    with pytest.raises(AuthorityDenied):
+        _explicit(store, authority="owner-b")
+    after = store.get("fixed-id")
+    assert after == before
+    assert after["authority"] == "owner-a"
+    assert after["status"] == "cancelled"
+    assert len(after["history"]) == len(before["history"]) == 3
+    assert after["fencing"] == before["fencing"] == 2
+
+
+def test_explicit_id_keyed_collision_with_foreign_item_refuses(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    _explicit(store, authority="team-a")
+    with pytest.raises(AuthorityDenied):
+        store.submit(
+            authority="team-b",
+            request=_request(),
+            idempotency_key="fresh-key",
+            item_id="fixed-id",
+            now=T0,
+        )
+    intact = store.get("fixed-id")
+    assert intact["authority"] == "team-a"
+    assert len(intact["history"]) == 1
+
+
+@pytest.mark.parametrize(
+    "bad_id",
+    [
+        "../../escaped",
+        "..\\escaped",
+        "/absolute",
+        "a/b",
+        "a\\b",
+        ".",
+        "..",
+        "has space",
+        "",
+        "x" * 65,
+        "trailing-dot.",
+    ],
+)
+def test_item_id_rejects_traversal_and_shape_variants(
+    tmp_path: Path, bad_id: str
+) -> None:
+    store = _store(tmp_path)
+    with pytest.raises(DispatchError):
+        store.submit(authority="team-a", request=_request(), item_id=bad_id)
+    _explicit(store, item_id="good-id")
+    for call in (
+        lambda: store.claim(f"no-such-{bad_id}", worker="w1",
+                            lease_seconds=60.0, now=T0),
+        lambda: store.get(bad_id),
+        lambda: store.cancel(bad_id, authority="team-a", now=T0),
+        lambda: store.recover(bad_id, now=T0),
+    ):
+        with pytest.raises(DispatchError):
+            call()
+    with pytest.raises(DispatchError):
+        store.report_success(
+            bad_id, worker="w1", token=1,
+            accepted_run={"run_id": "r", "artifact_sha256": "a",
+                          "zip_sha256": "z"}, now=T0,
+        )
+    with pytest.raises(DispatchError):
+        store.report_failure(
+            bad_id, worker="w1", token=1, error="boom", now=T0,
+        )
+    with pytest.raises(DispatchError):
+        store.heartbeat(
+            bad_id, worker="w1", token=1, lease_seconds=60.0, now=T0,
+        )
+    escaped = tmp_path / "out" / "dispatch" / "escaped.json"
+    assert not escaped.exists()
+    assert sorted(
+        path.name for path in (tmp_path / "out" / "dispatch" / "items").glob("*")
+    ) == ["good-id.json"]

@@ -213,3 +213,69 @@ def test_undeclared_extra_member_fails(tmp_path: Path) -> None:
     path = _seal(tmp_path, files, "t.zip")
     with pytest.raises(ReleaseVerificationError):
         verify_release(path, manifest=list(_files()))
+
+
+def _manifest_with_hashes(files: dict[str, bytes]) -> dict[str, object]:
+    return {
+        "members": [
+            {
+                "path": name,
+                "size": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+            for name, payload in sorted(files.items())
+        ]
+    }
+
+
+def test_stale_manifest_hash_refuses_altered_member(tmp_path: Path) -> None:
+    """A changed report with re-cut internal checksums still fails.
+
+    The ZIP is self-consistent, but the external manifest still binds
+    the original bytes: the consumer must verify recorded hashes, not
+    only member names.
+    """
+    files = _files()
+    manifest = _manifest_with_hashes(files)
+    report = _report(files["data.csv"])
+    report["verdict"] = "fail"
+    report["results"] = [
+        {"name": "audit_counterexample", "status": "fail",
+         "detail": "changed after acceptance"}
+    ]
+    files["validation-report.json"] = (
+        json.dumps(report, indent=2, sort_keys=True).encode() + b"\n"
+    )
+    path = _seal(tmp_path, files, "t.zip")
+    with pytest.raises(ReleaseVerificationError):
+        verify_release(path, manifest=manifest)
+
+
+def test_manifest_size_mismatch_refuses(tmp_path: Path) -> None:
+    files = _files()
+    manifest = _manifest_with_hashes(files)
+    members = manifest["members"]
+    assert isinstance(members, list)
+    entry = dict(members[0])
+    entry["size"] = int(entry["size"]) + 1
+    manifest["members"] = [entry] + list(members[1:])
+    path = _seal(tmp_path, files, "t.zip")
+    with pytest.raises(ReleaseVerificationError):
+        verify_release(path, manifest=manifest)
+
+
+def test_non_pass_verdict_refuses(tmp_path: Path) -> None:
+    """A report verdict must read exactly ``pass``: fail is a refusal."""
+    files = _files()
+    report = _report(files["data.csv"])
+    report["verdict"] = "fail"
+    report["results"] = [
+        {"name": "audit_counterexample", "status": "fail",
+         "detail": "changed after acceptance"}
+    ]
+    files["validation-report.json"] = (
+        json.dumps(report, indent=2, sort_keys=True).encode() + b"\n"
+    )
+    path = _seal(tmp_path, files, "t.zip")
+    with pytest.raises(ReleaseVerificationError):
+        verify_release(path, manifest=list(files))

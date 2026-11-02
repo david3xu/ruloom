@@ -242,7 +242,7 @@ def test_publish_refuses_unsucceeded_or_mismatched_work(
     (run_dir / "release.zip").write_bytes(
         (run_dir / "release.zip").read_bytes() + b"\x00"
     )
-    with pytest.raises(PublicationError, match="changed since the success"):
+    with pytest.raises(PublicationError, match="does not match the shipped bytes"):
         publisher.publish(stale["item_id"], run_dir, authority="team-a")
 
 
@@ -351,3 +351,224 @@ def test_end_to_end_submit_claim_run_report_publish_download(
     assert fetched["artifact_sha256"] == outcome["artifact_sha256"]
     run_record = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     assert fetched["artifact_sha256"] == run_record["artifact_sha256"]
+
+
+def _altered_run_dir(
+    base: Path, run_dir: Path, outcome: Mapping[str, Any]
+) -> tuple[Path, str]:
+    """Copy a run but change only validation-report.json to a failure.
+
+    The internal checksums are re-cut around the altered bytes while
+    the external manifest still binds the originals, and no new
+    acceptance decision or detached hash is created.
+    """
+    import zipfile
+
+    from engine.artifacts.hashing import sha256_bytes
+    from engine.artifacts.package import build_checksums, build_zip_bytes
+
+    with zipfile.ZipFile(run_dir / "release.zip") as archive:
+        members = {
+            name: archive.read(name)
+            for name in archive.namelist()
+            if name != "checksums.sha256"
+        }
+    report = json.loads(members["validation-report.json"])
+    report["verdict"] = "fail"
+    report["results"] = [
+        {
+            "name": "audit_counterexample",
+            "status": "fail",
+            "detail": "This file was changed after acceptance",
+        }
+    ]
+    members["validation-report.json"] = (
+        json.dumps(report, indent=2, sort_keys=True).encode() + b"\n"
+    )
+    members["checksums.sha256"] = build_checksums(members).encode()
+    altered = base / "altered" / outcome["run_id"]
+    altered.mkdir(parents=True)
+    (altered / "release.zip").write_bytes(build_zip_bytes(members))
+    (altered / "manifest.json").write_text(
+        (run_dir / "manifest.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return altered, sha256_bytes(build_zip_bytes(members))
+
+
+def _succeeded_alteration(
+    base: Path, altered: Path, outcome: Mapping[str, Any], altered_sha: str
+) -> dict[str, Any]:
+    """Report the altered bundle through a live lease (worker evidence)."""
+    store = DispatchStore(base)
+    item = store.submit(
+        authority="owner-a",
+        request={"profile": "tabular", "source": "sample-tabular.csv"},
+        now=T0,
+    )
+    lease = store.claim(
+        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
+    )["lease"]
+    return store.report_success(
+        item["item_id"],
+        worker="w1",
+        token=lease["token"],
+        accepted_run={
+            "run_id": outcome["run_id"],
+            "artifact_sha256": outcome["artifact_sha256"],
+            "zip_sha256": altered_sha,
+        },
+        now=T0,
+    )
+
+
+def test_publish_refuses_altered_report_with_stale_manifest(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    altered, altered_sha = _altered_run_dir(base, run_dir, outcome)
+    assert altered_sha != (
+        run_dir / "release.sha256"
+    ).read_text(encoding="utf-8").split()[0]
+    item = _succeeded_alteration(base, altered, outcome, altered_sha)
+    with pytest.raises(PublicationError):
+        _publisher(base).publish(item["item_id"], altered, authority="owner-a")
+    assert not (base / "published" / f"{item['item_id']}.zip").exists()
+    assert _publisher(base).get(item["item_id"]) is None
+
+
+def test_publish_binds_reported_digests_to_persisted_acceptance(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    store = DispatchStore(base)
+    item = store.submit(
+        authority="owner-a",
+        request={"profile": "tabular", "source": "sample-tabular.csv"},
+        now=T0,
+    )
+    lease = store.claim(
+        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
+    )["lease"]
+    zip_sha = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
+    item = store.report_success(
+        item["item_id"],
+        worker="w1",
+        token=lease["token"],
+        accepted_run={
+            "run_id": outcome["run_id"],
+            "artifact_sha256": "0" * 64,
+            "zip_sha256": zip_sha,
+        },
+        now=T0,
+    )
+    with pytest.raises(PublicationError, match="artifact"):
+        _publisher(base).publish(item["item_id"], run_dir, authority="owner-a")
+    assert not (base / "published" / f"{item['item_id']}.zip").exists()
+    assert _publisher(base).get(item["item_id"]) is None
+
+
+def test_publish_requires_detached_release_hash(tmp_path: Path) -> None:
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    _, item = _succeeded_item(base, run_dir, outcome)
+    (run_dir / "release.sha256").unlink()
+    with pytest.raises(PublicationError, match="release.sha256"):
+        _publisher(base).publish(item["item_id"], run_dir, authority="owner-a")
+
+    run_dir2, outcome2 = _accepted_run(base, _write_source(tmp_path))
+    _, item2 = _succeeded_item(base, run_dir2, outcome2, key="detached2")
+    (run_dir2 / "release.sha256").write_text(
+        f"{'f' * 64}  release.zip\n", encoding="utf-8"
+    )
+    with pytest.raises(PublicationError, match="release.sha256"):
+        _publisher(base).publish(item2["item_id"], run_dir2, authority="owner-a")
+
+
+def test_publish_requires_an_accepted_decision_binding(tmp_path: Path) -> None:
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    _, item = _succeeded_item(base, run_dir, outcome)
+    decision = json.loads((run_dir / "decision.json").read_text(encoding="utf-8"))
+    decision["verdict"] = "reject"
+    (run_dir / "decision.json").write_text(
+        json.dumps(decision, indent=2) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(PublicationError, match="accept"):
+        _publisher(base).publish(item["item_id"], run_dir, authority="owner-a")
+
+    run_dir2, outcome2 = _accepted_run(base, _write_source(tmp_path))
+    _, item2 = _succeeded_item(base, run_dir2, outcome2, key="decision2")
+    (run_dir2 / "decision.json").unlink()
+    with pytest.raises(PublicationError, match="decision"):
+        _publisher(base).publish(item2["item_id"], run_dir2, authority="owner-a")
+
+
+def test_publish_binds_request_profile_to_run_profile(tmp_path: Path) -> None:
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    store = DispatchStore(base)
+    item = store.submit(
+        authority="owner-a",
+        request={
+            "profile": "hylogger",
+            "source": "different-source.csv",
+            "spec": {"n_rows": 9999},
+        },
+        now=T0,
+    )
+    lease = store.claim(
+        item["item_id"], worker="w1", lease_seconds=600.0, now=T0
+    )["lease"]
+    zip_sha = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
+    item = store.report_success(
+        item["item_id"],
+        worker="w1",
+        token=lease["token"],
+        accepted_run={
+            "run_id": outcome["run_id"],
+            "artifact_sha256": outcome["artifact_sha256"],
+            "zip_sha256": zip_sha,
+        },
+        now=T0,
+    )
+    with pytest.raises(PublicationError, match="profile"):
+        _publisher(base).publish(item["item_id"], run_dir, authority="owner-a")
+    assert _publisher(base).get(item["item_id"]) is None
+
+
+def test_publish_records_required_report_coverage(tmp_path: Path) -> None:
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    record = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert record["acceptance"]["verdict"] == "pass"
+    assert len(record["acceptance"]["required_checks"]) > 1
+    assert record["acceptance"]["failed"] == []
+
+
+def test_publish_refuses_unsatisfied_required_coverage(tmp_path: Path) -> None:
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    _, item = _succeeded_item(base, run_dir, outcome)
+    record = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    required = list(record["acceptance"]["required_checks"])
+    assert len(required) > 1
+    record["acceptance"]["required_checks"] = required + ["no_such_check"]
+    (run_dir / "manifest.json").write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(PublicationError, match="required"):
+        _publisher(base).publish(item["item_id"], run_dir, authority="owner-a")
+    assert _publisher(base).get(item["item_id"]) is None
+
+
+def test_publish_rejects_traversal_item_ids(tmp_path: Path) -> None:
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    for bad_id in ("../../escaped", "/absolute", "a/b", "..", ""):
+        with pytest.raises((PublicationError, AuthorityDenied)):
+            _publisher(base).publish(bad_id, run_dir, authority="team-a")
+    assert not (base / "escape-test.json").exists()
+    assert list((base / "publications").glob("*.json")) == []

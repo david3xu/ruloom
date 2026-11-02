@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -45,7 +46,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Mapping
 
-from ..artifacts.hashing import sha256_bytes
+from ..artifacts.hashing import sha256_bytes, sha256_canonical
 
 #: Directory (under the store base) holding the dispatch records.
 STORE_DIR_NAME = "dispatch"
@@ -55,6 +56,37 @@ ITEMS_DIR_NAME = "items"
 
 #: Idempotency-key index: one tiny file per key, created exclusively.
 KEYS_DIR_NAME = "keys"
+
+#: Canonical submitter-supplied item ids: start alphanumerical, then
+#: letters, digits, dash or underscore, at most 64 characters. The
+#: shape excludes separators, dots and absolute paths, so an id can
+#: never address a record outside the store's own items directory.
+ITEM_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+
+
+def check_item_id(item_id: Any) -> str:
+    """Validate a caller-supplied item id, or refuse loudly.
+
+    Every public entry point taking an item id runs this before any
+    I/O. Anything outside the canonical shape -- separators,
+    backslashes, dots, absolute paths, empty or overlong values --
+    is refused instead of being interpolated into a record path.
+    """
+    if not isinstance(item_id, str) or not ITEM_ID_RE.fullmatch(item_id):
+        raise DispatchError(
+            f"dispatch item id {item_id!r} is outside the canonical "
+            "form (letters, digits, dash, underscore; at most 64): "
+            "refusing"
+        )
+    return item_id
+
+
+def _request_digest(request: Any) -> str:
+    """Canonical digest of a submit request (collision comparison)."""
+    if not isinstance(request, Mapping):
+        return sha256_canonical({"__invalid__": repr(request)})
+    return sha256_canonical(dict(request))
+
 
 #: Item states. ``queued`` is actionable; ``claimed`` is leased to one
 #: worker; ``succeeded``, ``exhausted`` and ``cancelled`` are terminal.
@@ -161,12 +193,19 @@ class DispatchStore:
         self.keys_dir.mkdir(parents=True, exist_ok=True)
 
     def _item_path(self, item_id: str) -> Path:
-        return self.items_dir / f"{item_id}.json"
+        """The record path for one id, contained inside the store."""
+        clean = check_item_id(item_id)
+        path = self.items_dir / f"{clean}.json"
+        if path.resolve().parent != self.items_dir.resolve():
+            raise DispatchError(
+                f"dispatch item id {item_id!r} resolves outside "
+                "its store: refusing"
+            )
+        return path
 
     def _read(self, item_id: str) -> dict[str, Any]:
         """Load one record, or raise :class:`ItemNotFound`."""
-        if not isinstance(item_id, str) or not item_id:
-            raise ItemNotFound("dispatch item id must be a non-empty string")
+        check_item_id(item_id)
         try:
             return json.loads(self._item_path(item_id).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -206,6 +245,14 @@ class DispatchStore:
         refused, so one authority cannot squat or adopt another's key.
         ``max_retries`` bounds how many reported failures return the
         item to the queue before it rests ``exhausted``.
+
+        An explicit ``item_id`` is create-only and collision-safe: the
+        first submit creates the item, and a later submit naming the
+        same id returns the existing record unchanged -- same owning
+        authority and same request -- without touching its history or
+        fencing epoch. A changed request or a foreign authority is
+        refused loudly, so no resubmission can rewrite another
+        owner's history or reset its fencing.
         """
         if not isinstance(authority, str) or not authority.strip():
             raise DispatchError("submit requires a non-empty authority")
@@ -221,6 +268,8 @@ class DispatchStore:
             not isinstance(idempotency_key, str) or not idempotency_key
         ):
             raise DispatchError("idempotency_key must be a non-empty string")
+        if item_id is not None:
+            check_item_id(item_id)
         at = _resolve_now(now)
         with _store_lock(self.dir):
             if idempotency_key is not None:
@@ -232,9 +281,17 @@ class DispatchStore:
                     item_id=item_id,
                     now=at,
                 )
+            if item_id is not None:
+                return self._submit_explicit(
+                    authority=authority,
+                    request=request,
+                    item_id=item_id,
+                    max_retries=max_retries,
+                    now=at,
+                )
             return self._write(
                 {
-                    "item_id": item_id or uuid.uuid4().hex,
+                    "item_id": uuid.uuid4().hex,
                     "authority": authority,
                     "request": dict(request),
                     "idempotency_key": None,
@@ -252,6 +309,79 @@ class DispatchStore:
                 event="submitted",
                 now=at,
             )
+
+    def _adopt_existing(
+        self, authority: str, request: Mapping[str, Any], item_id: str
+    ) -> dict[str, Any]:
+        """Return the immutable record for a colliding explicit id.
+
+        The stored authority and request digest must both match the
+        caller; anything else is a foreign or changed resubmission and
+        is refused. The record is returned unchanged: no history
+        event is appended and the fencing epoch never moves.
+        """
+        try:
+            existing = json.loads(
+                self._item_path(item_id).read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise DispatchError(
+                f"dispatch item {item_id!r} is recorded but "
+                "unreadable: refusing (never duplicate blindly)"
+            ) from exc
+        if (
+            not isinstance(existing, Mapping)
+            or existing.get("item_id") != item_id
+        ):
+            raise DispatchError(
+                f"dispatch item {item_id!r} carries a corrupt "
+                "record: refusing"
+            )
+        if existing.get("authority") != authority:
+            raise AuthorityDenied(
+                f"dispatch item {item_id!r} belongs to another "
+                "authority: refusing"
+            )
+        if _request_digest(existing.get("request")) != _request_digest(request):
+            raise DispatchError(
+                f"dispatch item {item_id!r} already exists with a "
+                "different request: refusing (explicit ids are "
+                "create-only)"
+            )
+        return _copy_record(existing)
+
+    def _submit_explicit(
+        self,
+        *,
+        authority: str,
+        request: Mapping[str, Any],
+        item_id: str,
+        max_retries: int,
+        now: float,
+    ) -> dict[str, Any]:
+        """Create one explicitly named item, or adopt it unchanged."""
+        if self._item_path(item_id).is_file():
+            return self._adopt_existing(authority, request, item_id)
+        return self._write(
+            {
+                "item_id": item_id,
+                "authority": authority,
+                "request": dict(request),
+                "idempotency_key": None,
+                "status": QUEUED,
+                "retries_used": 0,
+                "max_retries": max_retries,
+                "lease": None,
+                "fencing": 0,
+                "accepted_run": None,
+                "error": None,
+                "history": [],
+                "created_at": now,
+                "updated_at": now,
+            },
+            event="submitted",
+            now=now,
+        )
 
     def _submit_keyed(
         self,
@@ -293,13 +423,15 @@ class DispatchStore:
                     f"idempotency key {idempotency_key!r} belongs to "
                     "another authority: refusing"
                 )
+            stored_id = seen.get("item_id")
+            check_item_id(stored_id)
             try:
-                return self._read(str(seen["item_id"]))
+                return self._read(stored_id)
             except ItemNotFound:
                 pass  # The first submit died before writing its item.
             return self._write(
                 {
-                    "item_id": str(seen["item_id"]),
+                    "item_id": stored_id,
                     "authority": authority,
                     "request": dict(request),
                     "idempotency_key": idempotency_key,
@@ -318,9 +450,15 @@ class DispatchStore:
                 now=now,
             )
         seen = json.loads(key_path.read_text(encoding="utf-8"))
+        chosen = str(seen["item_id"])
+        if item_id is not None and self._item_path(chosen).is_file():
+            # A fresh key naming an existing item: the explicit-id
+            # collision rule applies (same authority and request adopt
+            # it unchanged; anything else refuses).
+            return self._adopt_existing(authority, request, chosen)
         return self._write(
             {
-                "item_id": str(seen["item_id"]),
+                "item_id": chosen,
                 "authority": authority,
                 "request": dict(request),
                 "idempotency_key": idempotency_key,

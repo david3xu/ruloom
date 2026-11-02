@@ -79,17 +79,24 @@ a refusal means.
 `dispatch.py` coordinates *which* work runs and *who owns it*, in a
 local durable store beside the per-run history (`<base>/dispatch/`,
 one JSON record per item). Submits are idempotent (the same key
-returns the first item; cross-authority key reuse is refused), claims
-lease an item to one worker with a monotonic fencing token and an
-expiry (a live lease blocks rivals; an expired lease is
-re-dispatchable, which is the launcher-outage path), and every
-lease-holder operation must present the current token, so stale
-workers are fenced off after cancel or supersession. Cancellation and
-publication require the submitting authority; failures return the
-item to the queue until `max_retries` is spent, then it rests
-`exhausted`. Within one launcher process every claim runs under a
-per-store lock (exactly one threaded winner); every record write is
-atomic, so a crash leaves the previous record intact.
+returns the first item; cross-authority key reuse is refused), and an
+explicit item id is create-only: resubmitting it returns the existing
+record unchanged only under the same authority and request, while a
+changed request or a foreign authority is refused -- history is never
+rewritten and the fencing epoch never resets. Item ids take a narrow
+canonical shape at every entry point (letters, digits, dash,
+underscore; at most 64 characters), so no id can address a record
+outside the store's own items directory. Claims lease an item to one
+worker with a monotonic fencing token and an expiry (a live lease
+blocks rivals; an expired lease is re-dispatchable, which is the
+launcher-outage path), and every lease-holder operation must present
+the current token, so stale workers are fenced off after cancel or
+supersession. Cancellation and publication require the submitting
+authority; failures return the item to the queue until `max_retries`
+is spent, then it rests `exhausted`. Within one launcher process
+every claim runs under a per-store lock (exactly one threaded
+winner); every record write is atomic, so a crash leaves the previous
+record intact.
 
 ## Feature records
 

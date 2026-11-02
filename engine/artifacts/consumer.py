@@ -7,11 +7,13 @@ claims, without trusting the producer's working files:
 * entry hygiene -- no absolute paths and no parent-directory escapes,
   so extraction cannot write outside the destination;
 * completeness -- every declared member is present and no unexpected
-  entry rides along;
+  entry rides along; when the manifest records hashes and sizes, the
+  shipped bytes must match those too, not only the member names;
 * integrity -- every member's bytes hash to the ``checksums.sha256``
   value recorded alongside them;
 * readability -- every ``.json`` member parses;
-* report contract -- the validation report carries its required fields;
+* report contract -- the validation report carries its required fields
+  and its verdict reads exactly ``pass``;
 * reference binding -- the report's artifact hash resolves to the
   shipped payload bytes (a substituted older report fails even when
   the checksums were re-cut around it).
@@ -114,22 +116,33 @@ def _parse_checksums(text: str) -> dict[str, str]:
     return expected
 
 
-def _expected_member_names(manifest: Any) -> set[str] | None:
-    """Normalise the manifest argument to expected member names, if any."""
+def _expected_members(manifest: Any) -> tuple[set[str], dict[str, dict[str, Any]]] | None:
+    """Normalise the manifest argument to declared members, if any.
+
+    Returns the declared names plus, per name, the recorded ``sha256``
+    and ``size`` when the manifest carries them (a plain sequence of
+    names declares no hashes or sizes). Recorded values are returned
+    verbatim; :func:`verify_release` refuses on any mismatch.
+    """
     if manifest is None:
-        return None
+        return set(), None
     if isinstance(manifest, Mapping):
         members = manifest.get("members", [])
         names: set[str] = set()
+        recorded: dict[str, dict[str, Any]] = {}
         if isinstance(members, list):
             for entry in members:
                 if isinstance(entry, Mapping):
                     name = entry.get("path", entry.get("name"))
                     if isinstance(name, str) and name:
                         names.add(name)
-        return names
+                        recorded[name] = {
+                            "sha256": entry.get("sha256"),
+                            "size": entry.get("size"),
+                        }
+        return names, recorded
     if isinstance(manifest, Sequence) and not isinstance(manifest, (str, bytes)):
-        return {str(name) for name in manifest}
+        return {str(name) for name in manifest}, {}
     raise ReleaseVerificationError("manifest must list member names")
 
 
@@ -151,9 +164,10 @@ def _check_report(
         raise ReleaseVerificationError(
             f"{member} carries no artifact hash: refusing"
         )
-    if not isinstance(payload["verdict"], str) or not payload["verdict"]:
+    if payload["verdict"] != "pass":
         raise ReleaseVerificationError(
-            f"{member} carries no verdict: refusing"
+            f"{member} verdict is {payload['verdict']!r}, not 'pass': "
+            "refusing"
         )
     if not isinstance(payload["results"], list):
         raise ReleaseVerificationError(
@@ -182,7 +196,10 @@ def verify_release(
     ``manifest`` optionally carries the declared member list (the run's
     ``manifest.json`` payload or a plain sequence of names): every
     declared member must be present and no undeclared entry may ride
-    along. Without it, completeness is checked against
+    along. When manifest entries record ``sha256`` and ``size``, the
+    shipped bytes must match those too -- a re-cut internal checksum
+    around substituted bytes still fails against the stale external
+    record. Without a manifest, completeness is checked against
     ``checksums.sha256`` alone.
     """
     archive_path = Path(zip_path)
@@ -221,8 +238,8 @@ def verify_release(
                     f"attested member {name!r} is missing from the "
                     "bundle: refusing"
                 )
-        declared = _expected_member_names(manifest)
-        if declared is not None:
+        declared, recorded = _expected_members(manifest)
+        if declared is not None and recorded is not None:
             for name in sorted(declared):
                 if name not in names:
                     raise ReleaseVerificationError(
@@ -256,6 +273,25 @@ def verify_release(
                 f"member {name!r} does not match its recorded "
                 "checksum: refusing"
             )
+    if manifest is not None:
+        _, recorded = _expected_members(manifest)
+        if recorded:
+            for name in sorted(recorded):
+                if name not in members:
+                    continue
+                entry = recorded[name]
+                want_sha = entry.get("sha256")
+                if want_sha is not None and sha256_bytes(members[name]) != want_sha:
+                    raise ReleaseVerificationError(
+                        f"member {name!r} does not match its manifest "
+                        "recorded hash: refusing"
+                    )
+                want_size = entry.get("size")
+                if want_size is not None and len(members[name]) != want_size:
+                    raise ReleaseVerificationError(
+                        f"member {name!r} does not match its manifest "
+                        "recorded size: refusing"
+                    )
     parsed: dict[str, Any] = {}
     for name, payload in members.items():
         if not name.endswith(".json"):
