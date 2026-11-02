@@ -132,7 +132,13 @@ record moves `in_progress` before
 any copy and `complete` only after the destination verifies, so an
 interrupted publication resumes to identical bytes and re-publishing
 is a no-op; unattributed destination bytes and second releases for
-one item are refused. Once complete, a destination that stops
+one item are refused. Ownership needs a matching content digest in
+every phase: an in-progress record alone never establishes ownership
+of other bytes, so a differing destination is never adopted as the
+record's own interrupted copy (an interrupted copy leaves only
+staged tmp files beside the destination, never a foreign
+destination). Only owned staging files are recovered; anything else
+refuses loudly. Once complete, a destination that stops
 attesting the recorded bytes refuses re-publication -- recovery goes
 through the authorised `repair` operation, which preserves any
 replaced bytes beside the destination and appends the authorising
