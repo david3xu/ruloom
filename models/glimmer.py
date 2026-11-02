@@ -27,7 +27,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from .base import Completion, ModelError, Usage
+from .base import UNKNOWN_MODEL, Completion, ModelError, Usage
 
 #: Default base URL of the local ``llama-server`` instance.
 DEFAULT_BASE_URL = "http://127.0.0.1:8080"
@@ -208,7 +208,12 @@ class GlimmerLocalModel:
         if not isinstance(usage_block, Mapping):
             usage_block = {}
         reported = reply.get("model")
-        recorded = reported if isinstance(reported, str) and reported else self.model
+        if isinstance(reported, str) and reported.strip():
+            recorded = reported
+        else:
+            # The transport named no model: record unknown, never the
+            # requested name, so requested vs observed stay separate.
+            recorded = UNKNOWN_MODEL
 
         def _count(key: str) -> int:
             value = usage_block.get(key, 0)

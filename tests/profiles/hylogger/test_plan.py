@@ -255,13 +255,16 @@ def test_adapter_aggregates_per_model_usage(
     _run_stub(monkeypatch, _Proc(stdout=stdout))
     completion = MuseCLIModel().complete("make a plan", PLAN_SCHEMA)
     assert completion.usage == Usage(
-        model="muse-spark-1.3",
+        model="multiple:a+b",
         input_tokens=10,
         cached_tokens=2,
         output_tokens=4,
         reasoning_tokens=5,
         calls=3,
     )
+    assert completion.meta["model"] == "multiple:a+b"
+    assert completion.meta["requested_model"] == "muse-spark-1.3"
+    assert [entry["model"] for entry in completion.meta["models"]] == ["a", "b"]
 
 
 def test_adapter_prefers_structured_output_event(

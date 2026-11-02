@@ -134,12 +134,20 @@ are stripped before the child starts), and exactly the `muse exec`
 argv the adapter builds, which names no MCP servers, tool dispatch, or
 peer routing. Every call records its effective invocation -- argv,
 pinned cwd, inherited env key names (never values), contributor flag,
-and the returned model identity -- to the adapter's `last_invocation`
-record and to a per-call `model_invocation` event in the run log
-(`engine/core/runner.py`), so the run record shows which restricted
-invocation acted. Secret values never enter the record. The default
-pins preserve the validated planner path unchanged; callers needing
-tighter confinement pass an explicit allowed root.
+the requested model, and the observed model the transport reported --
+to the adapter's `last_invocation` record and to a per-call
+`model_invocation` event in the run log (`engine/core/runner.py`), so
+the run record shows which restricted invocation acted. Requested vs
+observed stay separate: `Usage.model` and completion `meta["model"]`
+carry what the transport reported (`unknown` when it reported no
+usable name, a `multiple:...` aggregate when it reported several,
+with the normalised per-model entries kept in `meta["models"]` and
+summed into the usage totals), while `meta["requested_model"]` and the
+invocation record keep what was asked. A mismatch never refuses; both
+sides are recorded, and the local Glimmer adapter follows the same
+unknown-when-silent convention. Secret values never enter the record.
+The default pins preserve the validated planner path unchanged;
+callers needing tighter confinement pass an explicit allowed root.
 
 Denial is proven child-side, not only asserted on the pre-exec dict
 (`tests/models/test_child_capability.py`, rule

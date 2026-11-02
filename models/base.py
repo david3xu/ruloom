@@ -17,9 +17,25 @@ class ModelError(Exception):
     """A model call failed: refusal, nonzero exit, or malformed answer."""
 
 
+#: Observed model identity when the transport supplies no usable name.
+#: Adapters record this in ``Usage.model`` and ``Completion.meta["model"]``
+#: when the wire reply names no model; the requested identity is never
+#: substituted there -- it lives in ``Completion.meta["requested_model"]``
+#: and the invocation record instead.
+UNKNOWN_MODEL = "unknown"
+
+
 @dataclass(frozen=True)
 class Usage:
-    """Token usage aggregated across the per-model entries of a run."""
+    """Token usage aggregated across the per-model entries of a run.
+
+    ``model`` is the *observed* identity the transport reported for the
+    call (``UNKNOWN_MODEL`` when it reported none, a ``multiple:...``
+    aggregate when it reported several). It never falls back to the
+    requested name; the full per-model breakdown rides in
+    ``Completion.meta["models"]`` and the requested name in
+    ``Completion.meta["requested_model"]``.
+    """
 
     model: str
     input_tokens: int = 0
