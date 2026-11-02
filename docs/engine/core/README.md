@@ -83,7 +83,13 @@ returns the first item; cross-authority key reuse is refused), and an
 explicit item id is create-only: resubmitting it returns the existing
 record unchanged only under the same authority and request, while a
 changed request or a foreign authority is refused -- history is never
-rewritten and the fencing epoch never resets. Item ids take a narrow
+rewritten and the fencing epoch never resets. Submit validates the
+declared request (supported fields only: profile, source,
+source-content and spec digest pins, spec overlay, row/attempt
+bounds; unknown fields, malformed pins/bounds, and conflicting row
+bounds refuse) and persists the bound request identity (profile,
+pinned source-content digest, pinned normalised spec digest) that
+publication later matches against the run. Item ids take a narrow
 canonical shape at every entry point (letters, digits, dash,
 underscore; at most 64 characters), so no id can address a record
 outside the store's own items directory. Claims lease an item to one

@@ -83,6 +83,24 @@ persisted acceptance record before any byte is copied:
   persisted accepted ones (an all-zero artifact claim refuses instead
   of shipping different bytes) and a requested profile equal to the
   run's own.
+- Request-to-run binding (DP-01, audit C01): the dispatch request's
+  bound identity (profile, pinned source-content digest, pinned
+  normalised spec digest, persisted at submit; unknown fields,
+  malformed pins/bounds, and conflicting row bounds refuse at submit)
+  must equal the identity the run's acceptance record binds and the
+  identity the run's own record delivers. Profile-name equality alone
+  never suffices: a request for source B naming source A's run
+  refuses, as does a run whose bytes changed after submit or whose
+  executed bound exceeds a declared `max_rows`.
+- Single-snapshot publication (DP-01, audit C02): the run ZIP is read
+  once into an immutable snapshot staged through a private temp file;
+  consumer verification, acceptance resolution, and the copy all run
+  against that snapshot, and the returned identity derives from it
+  alone. A stability guard re-checks the run file after acceptance:
+  bytes swapped in after the gate refuse (corrupt or well-formed),
+  the item is never marked complete, and the published digest never
+  differs from the accepted one. The snapshot, destination, and
+  persisted accepted digests must all agree before the complete mark.
 - The record moves `in_progress` before any copy and `complete` only
   after the destination bytes and sidecar verify. A crash in between
   resumes to the same bytes on re-publication (no destination: copy
@@ -127,7 +145,7 @@ report → publish → download, executed under a fresh `/tmp` root:
 
 Control cases (committed tests, no sleeps — clocks are injected):
 
-- `tests/engine/test_dispatch.py` (36 tests): idempotent submit,
+- `tests/engine/test_dispatch.py` (40 tests): idempotent submit,
   key-across-authorities denial, single-winner claim under 8 threads,
   live-conflict vs expired-redispatch (with retry budget to spend),
   terminal claim refusal, heartbeat extension and stale/wrong-worker/
@@ -142,8 +160,11 @@ Control cases (committed tests, no sleeps — clocks are injected):
   outside the store, plus atomic-retry repair (CP-03 A06):
   expired-claim reclaim and recovery sweep each consume one retry with
   `attempts` persisted separately, `retries_exhausted_by_expiry`
-  exhaustion, four-cycle bound, and fencing preserved.
-- `tests/engine/test_publication.py` (22 tests): publish/download
+  exhaustion, four-cycle bound, and fencing preserved, plus
+  request-binding repair (DP-01 C01): unknown request fields refused,
+  malformed pins/bounds and conflicting `max_rows` refused, canonical
+  request identity persisted (pinned and unpinned shapes).
+- `tests/engine/test_publication.py` (27 tests): publish/download
   round trip with hash equality to the reviewed `release.sha256`,
   idempotent re-publish, interrupted-copy resume to identical bytes,
   interrupted-mark adoption, foreign-authority denial, unsucceeded /
@@ -159,7 +180,10 @@ Control cases (committed tests, no sleeps — clocks are injected):
   (CP-03 A05): invalid download preserves an existing good destination
   byte-identical, interrupted commit preserves the destination with no
   stale tmp, and same source/destination verifies in place without
-  deletion.
+  deletion, plus request-binding and snapshot repair (DP-01 C01+C02):
+  wrong-source, tighter-row-bound, and changed-source requests refused
+  with nothing shipped, and post-acceptance ZIP swaps (corrupt and
+  well-formed variants) refused with the item never marked complete.
 - `tests/engine/test_consumer.py` (14 tests): the producer-side
   guarantees above, plus trust repair (CP-01): stale-manifest hash
   refusal, recorded-size mismatch refusal, and non-`pass` verdict

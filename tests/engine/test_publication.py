@@ -17,10 +17,12 @@ from typing import Any, Mapping, Sequence
 import pytest
 
 from engine.artifacts import publication
+from engine.artifacts.hashing import sha256_bytes
 from engine.artifacts.publication import PublicationError, Publisher, download
 from engine.core.dispatch import AuthorityDenied, DispatchStore
 from engine.core.manifest import load_manifest
 from engine.core.runner import EXIT_OK, execute
+from engine.core.spec import normalize_spec
 from models.base import Completion, Usage
 from profiles.tabular.capabilities import CAPABILITIES
 
@@ -84,13 +86,41 @@ def _accepted_run(out: Path, source: Path) -> tuple[Path, dict[str, Any]]:
     return run_dir, outcome
 
 
+def _request_pins(run_dir: Path) -> dict[str, str]:
+    """Derive the request pins the run's own record implies (DP-01).
+
+    Reads the run's recorded source path, spec bound, and attempt count
+    back out of ``run.json`` and returns the source-content digest and
+    normalised spec digest a dispatch request for this exact run must
+    declare. The run itself is the oracle: whatever the engine measured
+    and normalised is what the binding compares against.
+    """
+    record = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    request = record["run"]["request"]
+    source_path = Path(request["source"])
+    _, spec_digest = normalize_spec(
+        None,
+        MANIFEST,
+        source=source_path,
+        max_attempts=int(request["max_attempts"]),
+    )
+    return {
+        "source_sha256": sha256_bytes(source_path.read_bytes()),
+        "spec_digest": spec_digest,
+    }
+
+
 def _succeeded_item(
     base: Path, run_dir: Path, outcome: Mapping[str, Any], *, key: str = "k1"
 ) -> tuple[DispatchStore, dict[str, Any]]:
     store = DispatchStore(base)
     item = store.submit(
         authority="team-a",
-        request={"profile": "tabular", "source": "sample-tabular.csv"},
+        request={
+            "profile": "tabular",
+            "source": "sample-tabular.csv",
+            **_request_pins(run_dir),
+        },
         idempotency_key=key,
         now=T0,
     )
@@ -309,12 +339,18 @@ def test_end_to_end_submit_claim_run_report_publish_download(
 ) -> None:
     base = tmp_path / "out"
     store = DispatchStore(base)
+    source_path = _write_source(tmp_path)
+    _, spec_digest = normalize_spec(
+        None, MANIFEST, source=source_path, max_attempts=1
+    )
     item = store.submit(
         authority="e2e",
         request={
             "profile": "tabular",
             "source": "sample-tabular.csv",
             "max_attempts": 1,
+            "source_sha256": sha256_bytes(source_path.read_bytes()),
+            "spec_digest": spec_digest,
         },
         idempotency_key="e2e-1",
         max_retries=1,
@@ -324,7 +360,7 @@ def test_end_to_end_submit_claim_run_report_publish_download(
         item["item_id"], worker="launcher-1", lease_seconds=600.0, now=T0
     )["lease"]
 
-    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    run_dir, outcome = _accepted_run(base, source_path)
     zip_sha = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
     item = store.report_success(
         item["item_id"],
@@ -628,6 +664,224 @@ def test_download_interrupted_commit_preserves_destination(
     fetched = download(good_source, dest)
     assert dest.read_bytes() == good_bytes
     assert fetched["zip_sha256"] == reviewed
+
+
+def _write_source_b(path: Path) -> Path:
+    """A second source with different values (hence a different digest)."""
+    csv_path = path / "source-b.csv"
+    csv_path.write_text("value,label\n9,Z\n8,Y\n7,Z\n6,Y\n", encoding="utf-8")
+    return csv_path
+
+
+def _report(
+    store: DispatchStore,
+    item_id: str,
+    run_dir: Path,
+    outcome: Mapping[str, Any],
+    *,
+    worker: str = "w1",
+) -> dict[str, Any]:
+    """Report a run through a live lease with genuine digests."""
+    lease = store.claim(
+        item_id, worker=worker, lease_seconds=600.0, now=T0
+    )["lease"]
+    zip_sha = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
+    return store.report_success(
+        item_id,
+        worker=worker,
+        token=lease["token"],
+        accepted_run={
+            "run_id": outcome["run_id"],
+            "artifact_sha256": outcome["artifact_sha256"],
+            "zip_sha256": zip_sha,
+        },
+        now=T0,
+    )
+
+
+def test_publish_refuses_wrong_source_request_binding(
+    tmp_path: Path,
+) -> None:
+    """DP-01 C01(a): a job for source B must not ship source A's run.
+
+    The run is accepted from source A; a separate job pins source B's
+    content digest (same profile) and names the A run with genuine
+    hashes. Publication must refuse: profile-name equality alone never
+    suffices.
+    """
+    base = tmp_path / "out"
+    source_a = _write_source(tmp_path)
+    run_dir, outcome = _accepted_run(base, source_a)
+    pins = _request_pins(run_dir)
+
+    source_b = _write_source_b(tmp_path)
+    store = DispatchStore(base)
+    item = store.submit(
+        authority="team-a",
+        request={
+            "profile": "tabular",
+            "source": "source-b.csv",
+            "source_sha256": sha256_bytes(source_b.read_bytes()),
+            "spec_digest": pins["spec_digest"],
+        },
+        now=T0,
+    )
+    item = _report(store, item["item_id"], run_dir, outcome)
+    with pytest.raises(PublicationError, match="source"):
+        _publisher(base).publish(item["item_id"], run_dir, authority="team-a")
+    assert not (base / "published" / f"{item['item_id']}.zip").exists()
+    assert _publisher(base).get(item["item_id"]) is None
+
+
+def test_publish_refuses_tighter_row_bound(tmp_path: Path) -> None:
+    """DP-01 C01(b): a max_rows:1 request must not ship a 100-row run.
+
+    The job carries a GenerationSpec bound of one row against the
+    existing 100-row accepted run. The shipped row count must satisfy
+    the requested bound, so publication refuses.
+    """
+    base = tmp_path / "out"
+    source_path = _write_source(tmp_path)
+    run_dir, outcome = _accepted_run(base, source_path)
+    pins = _request_pins(run_dir)
+    _, tight_digest = normalize_spec(
+        {"limits": {"max_rows": 1}},
+        MANIFEST,
+        source=source_path,
+        max_attempts=1,
+    )
+
+    store = DispatchStore(base)
+    item = store.submit(
+        authority="team-a",
+        request={
+            "profile": "tabular",
+            "source": "sample-tabular.csv",
+            "source_sha256": pins["source_sha256"],
+            "spec_digest": tight_digest,
+            "spec": {"limits": {"max_rows": 1}},
+        },
+        now=T0,
+    )
+    item = _report(store, item["item_id"], run_dir, outcome)
+    with pytest.raises(PublicationError, match="max_rows"):
+        _publisher(base).publish(item["item_id"], run_dir, authority="team-a")
+    assert not (base / "published" / f"{item['item_id']}.zip").exists()
+    assert _publisher(base).get(item["item_id"]) is None
+
+
+def test_publish_refuses_changed_source_bytes(tmp_path: Path) -> None:
+    """DP-01 C01(c): bytes changed at the same path after submit refuse.
+
+    The job pins the source digest measured at submit time; the file is
+    then rewritten at the same path before the run, so the run measures
+    a different digest. Publication must refuse the mismatch.
+    """
+    base = tmp_path / "out"
+    source_path = _write_source(tmp_path)
+    _, spec_digest = normalize_spec(
+        None, MANIFEST, source=source_path, max_attempts=1
+    )
+    pinned = sha256_bytes(source_path.read_bytes())
+    store = DispatchStore(base)
+    item = store.submit(
+        authority="team-a",
+        request={
+            "profile": "tabular",
+            "source": "sample-tabular.csv",
+            "source_sha256": pinned,
+            "spec_digest": spec_digest,
+        },
+        now=T0,
+    )
+    source_path.write_text(
+        "value,label\n5,Q\n6,Q\n7,Q\n8,Q\n", encoding="utf-8"
+    )
+    assert sha256_bytes(source_path.read_bytes()) != pinned
+
+    run_dir, outcome = _accepted_run(base, source_path)
+    item = _report(store, item["item_id"], run_dir, outcome)
+    with pytest.raises(PublicationError, match="source"):
+        _publisher(base).publish(item["item_id"], run_dir, authority="team-a")
+    assert not (base / "published" / f"{item['item_id']}.zip").exists()
+    assert _publisher(base).get(item["item_id"]) is None
+
+
+def _swap_after_acceptance(
+    monkeypatch: pytest.MonkeyPatch, run_dir: Path, swapped: bytes
+) -> None:
+    """Deterministic hook at the acceptance/copy boundary (DP-01 C02).
+
+    Wraps the snapshot-stability guard so the run ZIP is replaced just
+    after acceptance resolution and restored in ``finally``. The guard
+    itself performs the tripwire read, so the swap is always observed.
+    """
+    from engine.artifacts import publication as publication_module
+
+    real_guard = publication_module._verify_snapshot_stable
+    zip_path = run_dir / "release.zip"
+    original = zip_path.read_bytes()
+
+    def hooked(zip_file: Path, snapshot_digest: str) -> None:
+        zip_file.write_bytes(swapped)
+        try:
+            real_guard(zip_file, snapshot_digest)
+        finally:
+            zip_file.write_bytes(original)
+
+    monkeypatch.setattr(
+        publication_module, "_verify_snapshot_stable", hooked
+    )
+
+
+def test_publish_refuses_zip_swap_after_acceptance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DP-01 C02(d): bytes swapped after acceptance refuse, never ship.
+
+    The run ZIP is replaced after acceptance resolution but before the
+    copy. Publication must refuse, leave no destination, and never mark
+    the item complete; the published digest never differs from the
+    accepted one because nothing is published.
+    """
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    _, item = _succeeded_item(base, run_dir, outcome)
+    accepted = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
+
+    _swap_after_acceptance(monkeypatch, run_dir, b"forged-bytes")
+    with pytest.raises(PublicationError, match="changed after acceptance"):
+        _publisher(base).publish(item["item_id"], run_dir, authority="team-a")
+    dest = base / "published" / f"{item['item_id']}.zip"
+    assert not dest.exists()
+    record = _publisher(base).get(item["item_id"])
+    assert record is None or record["status"] != "complete"
+
+
+def test_publish_refuses_well_formed_zip_swap_after_acceptance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DP-01 C02(d): even a well-formed different bundle refuses.
+
+    Same boundary as above, but the swapped-in bytes are another valid
+    accepted bundle (different digest). The guard compares digests, not
+    well-formedness, so publication still refuses with nothing shipped.
+    """
+    base = tmp_path / "out"
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    other_dir, _ = _accepted_run(base, _write_source(tmp_path))
+    _, item = _succeeded_item(base, run_dir, outcome)
+    accepted = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
+    swapped = (other_dir / "release.zip").read_bytes()
+    assert sha256_bytes(swapped) != accepted
+
+    _swap_after_acceptance(monkeypatch, run_dir, swapped)
+    with pytest.raises(PublicationError, match="changed after acceptance"):
+        _publisher(base).publish(item["item_id"], run_dir, authority="team-a")
+    dest = base / "published" / f"{item['item_id']}.zip"
+    assert not dest.exists()
+    record = _publisher(base).get(item["item_id"])
+    assert record is None or record["status"] != "complete"
 
 
 def test_download_same_source_and_destination_is_lossless(
