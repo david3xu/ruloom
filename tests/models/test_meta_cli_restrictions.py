@@ -1,10 +1,13 @@
-"""Restricted model invocation: env stripped, cwd pinned, recorded.
+"""Restricted model invocation: env stripped, cwd pinned, spawn gated, recorded.
 
 The hosted ``muse exec`` adapter must run the child with a pinned
 working directory, a minimal allowlisted environment (secrets never
-inherited), and an argv that names no peer-dispatch capability; every
-call's effective permissions land in the run record. All subprocess
-use here is stubbed -- no live model calls.
+inherited), and an argv that names no peer-dispatch capability; the
+spawn gate refuses tool/dispatch flags before anything spawns, and
+every call's requested vs observed permissions land in the run record.
+The pinned directory is not filesystem confinement (absolute host
+paths outside the root stay reachable). All subprocess use here is
+stubbed -- no live model calls.
 """
 
 from __future__ import annotations
@@ -18,10 +21,12 @@ from typing import Any
 
 import pytest
 
-from models.base import Completion, Usage
+from models.base import Completion, ModelError, Usage
 from models.meta_cli import (
     ALLOWED_ENV_KEYS,
+    REQUESTED_PERMISSIONS,
     MuseCLIModel,
+    enforce_spawn_policy,
     resolve_cwd,
     restricted_env,
 )
@@ -236,6 +241,16 @@ def test_run_record_stores_effective_invocation_per_call(
                 "contributor": True,
                 "model": "fake",
                 "returned_model": "fake",
+                "requested_permissions": {
+                    "filesystem": "cwd-pinned-only",
+                    "tools": "none",
+                },
+                "observed_permissions": {
+                    "filesystem": "cwd-pinned-only",
+                    "filesystem_limit": "absolute host paths outside "
+                    "the root are not contained",
+                    "tools": "none-named-on-argv",
+                },
             }
 
         def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
@@ -274,5 +289,56 @@ def test_run_record_stores_effective_invocation_per_call(
     assert details["invocation"]["cwd"] == str(tmp_path)
     assert details["invocation"]["contributor"] is True
     assert details["invocation"]["returned_model"] == "fake"
+    assert details["invocation"]["requested_permissions"]["tools"] == "none"
+    assert (
+        "absolute host paths"
+        in details["invocation"]["observed_permissions"]["filesystem_limit"]
+    )
     assert PROBE_KEY not in details["invocation"]["env_keys"]
     assert PROBE_VALUE not in _json.dumps(invocations)
+
+
+def test_requested_policy_names_no_tool_or_peer_capability() -> None:
+    """The requested policy grants no tool, peer, or confinement it lacks."""
+    assert REQUESTED_PERMISSIONS["tools"] == "none"
+    assert REQUESTED_PERMISSIONS["network_peers"] == "none"
+    assert REQUESTED_PERMISSIONS["filesystem"] == "cwd-pinned-only"
+
+
+def test_spawn_gate_refuses_without_spawning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool-flagged spawn is refused and the transport never starts."""
+    seen = _stub_run(monkeypatch, _answer())
+    model = MuseCLIModel(allowed_root=tmp_path)
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        model._run(["muse", "exec", "--json", "--dispatch", "peer", "prompt"])
+    assert seen == {}, "refused spawn must not reach the transport"
+
+
+def test_spawn_gate_passes_real_argv_and_free_text(tmp_path: Path) -> None:
+    """The real argv passes the gate; flag-like wording in text does not trip it."""
+    model = MuseCLIModel(allowed_root=tmp_path)
+    schema_file = tmp_path / "schema.json"
+    schema_file.write_text(json.dumps({"type": "object"}), encoding="utf-8")
+    enforce_spawn_policy(model._argv(str(schema_file), "delegate --tool use"))
+    enforce_spawn_policy(["muse", "exec", "--contributor-mode", "off", "prompt"])
+
+
+def test_complete_records_requested_and_observed_permissions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stubbed call records requested policy apart from observed effect."""
+    monkeypatch.setenv(PROBE_KEY, PROBE_VALUE)
+    _stub_run(monkeypatch, _answer())
+    model = MuseCLIModel(allowed_root=tmp_path)
+    completion = model.complete("make a plan", {"type": "object"})
+    invocation = completion.meta["invocation"]
+    requested = invocation["requested_permissions"]
+    observed = invocation["observed_permissions"]
+    assert requested["tools"] == "none"
+    assert requested["workspace_root"] == str(tmp_path)
+    assert observed["cwd"] == str(tmp_path)
+    assert "absolute host paths" in observed["filesystem_limit"]
+    assert requested != observed
+    assert PROBE_VALUE not in json.dumps(invocation)

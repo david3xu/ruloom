@@ -802,9 +802,13 @@ class _Runner:
         per-model entries when the completion provides them (a
         ``multiple:...`` observed name aggregates several reported
         identities). A mismatch never refuses; both sides are recorded.
-        Only key names are stored -- secret values never enter the
-        record -- and the event rides the write-through sink, so the
-        invocation is durable per call.
+        The same split covers permissions: ``requested_permissions``
+        names the policy asked for while ``observed_permissions`` names
+        the effective permissions the spawn provided, including the
+        confinement limit it does not provide. Only key names are
+        stored -- secret values never enter the record -- and the event
+        rides the write-through sink, so the invocation is durable per
+        call.
         """
         details: dict[str, Any] = {
             "role": role,
@@ -833,6 +837,12 @@ class _Runner:
                 "model": requested,
                 "returned_model": returned,
             }
+            requested_perms = invocation.get("requested_permissions")
+            if isinstance(requested_perms, Mapping):
+                record["requested_permissions"] = dict(requested_perms)
+            observed_perms = invocation.get("observed_permissions")
+            if isinstance(observed_perms, Mapping):
+                record["observed_permissions"] = dict(observed_perms)
             if models_copy is not None:
                 record["models"] = models_copy
             details["invocation"] = record

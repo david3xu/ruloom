@@ -132,40 +132,56 @@ environment (`PATH`, `HOME`, locale, timezone, and temp-dir keys only
 -- secrets, every `RULOOM_*` setting, and any MCP/tool-routing config
 are stripped before the child starts), and exactly the `muse exec`
 argv the adapter builds, which names no MCP servers, tool dispatch, or
-peer routing. Every call records its effective invocation -- argv,
-pinned cwd, inherited env key names (never values), contributor flag,
-the requested model, and the observed model the transport reported --
-to the adapter's `last_invocation` record and to a per-call
-`model_invocation` event in the run log (`engine/core/runner.py`), so
-the run record shows which restricted invocation acted. Requested vs
-observed stay separate: `Usage.model` and completion `meta["model"]`
-carry what the transport reported (`unknown` when it reported no
-usable name, a `multiple:...` aggregate when it reported several,
-with the normalised per-model entries kept in `meta["models"]` and
-summed into the usage totals), while `meta["requested_model"]` and the
-invocation record keep what was asked. A mismatch never refuses; both
-sides are recorded, and the local Glimmer adapter follows the same
+peer routing; a spawn gate (`enforce_spawn_policy`) refuses any
+MCP/tool/dispatch/peer/delegate flag before anything spawns. Every
+call records its effective invocation -- argv, pinned cwd, inherited
+env key names (never values), contributor flag, the requested model,
+and the observed model the transport reported -- to the adapter's
+`last_invocation` record and to a per-call `model_invocation` event in
+the run log (`engine/core/runner.py`), so the run record shows which
+restricted invocation acted. Requested vs observed stay separate:
+`Usage.model` and completion `meta["model"]` carry what the transport
+reported (`unknown` when it reported no usable name, a `multiple:...`
+aggregate when it reported several, with the normalised per-model
+entries kept in `meta["models"]` and summed into the usage totals),
+while `meta["requested_model"]` and the invocation record keep what
+was asked. The same split covers permissions: `requested_permissions`
+names the policy asked for (cwd pin, no tools, no peers, allowlist
+environment) while `observed_permissions` names the effective
+permissions the spawn provided. A mismatch never refuses; both sides
+are recorded, and the local Glimmer adapter follows the same
 unknown-when-silent convention. Secret values never enter the record.
 The default pins preserve the validated planner path unchanged;
 callers needing tighter confinement pass an explicit allowed root.
 
+The pinned directory is NOT filesystem confinement: a child naming an
+absolute host path outside the root can still reach it, and the CLI's
+own runtime tool behaviour is outside product control. What is proven
+is environment filtering, a pinned cwd, and a tool-free spawn -- not
+actual tool restriction -- so C04 stays open for genuinely
+restricted, tool-free containment (rule `Q-GOV-TOOL-CONTAINMENT`,
+planned).
+
 Denial is proven child-side, not only asserted on the pre-exec dict
 (`tests/models/test_child_capability.py`, rule
 `Q-GOV-CHILD-CAPABILITY`): a real fixture child spawned through the
-real adapter path -- restricted environment, pinned cwd, real spawn --
+real adapter path -- restricted environment, pinned cwd, gated spawn --
 reports no probe secret, no `RULOOM_*` key, and no MCP/tool-routing
-config in its own environment, with a positive control proving
-non-secret allowlisted keys still pass through, and relative writes
-landing inside the pinned root. One honest platform allowance: the
-live child may additionally report interpreter/platform-injected
-locale keys (`LC_CTYPE`, exported by the Python runtime under locale
-coercion, and `__CF_USER_TEXT_ENCODING`, injected by macOS
-CoreFoundation) that the adapter never sent; the probes name them
-explicitly and audit their values for secrets instead of pretending
-the child sees exactly the pre-exec dict. The fixture child is the
-local Python interpreter, never `muse exec`, so no live model call is
-made; probes run on ubuntu-latest CI and local macOS, and no Windows
-run is claimed.
+config in its own environment, including a grandchild peer the fixture
+child dispatches to, with a positive control proving non-secret
+allowlisted keys still pass through; tool/dispatch flags are refused
+before anything spawns (on fixture and real `muse exec` argv shapes,
+with a positive control that flag-like wording in free text never
+trips the gate); and relative writes land inside the pinned root. One
+honest platform allowance: the live child may additionally report
+interpreter/platform-injected locale keys (`LC_CTYPE`, exported by the
+Python runtime under locale coercion, and `__CF_USER_TEXT_ENCODING`,
+injected by macOS CoreFoundation) that the adapter never sent; the
+probes name them explicitly and audit their values for secrets instead
+of pretending the child sees exactly the pre-exec dict. The fixture
+child is the local Python interpreter, never `muse exec`, so no live
+model call is made; probes run on ubuntu-latest CI and local macOS,
+and no Windows run is claimed.
 
 ## Feature records
 
@@ -181,9 +197,11 @@ test paths, and the quality rules they satisfy:
 - `F-ENGINE-GENERATION-SPEC` (RP-07, rules `Q-ENGINE-SPEC`,
   `Q-ENGINE-EVIDENCE`).
 - `F-ENGINE-DURABLE-DISPATCH` (RP-09, rule `Q-ENGINE-DISPATCH`).
-- `F-ENGINE-RESTRICTED-INVOCATION` (CP-05, rule
-  `Q-GOV-NO-PEER-DISPATCH`): the restricted invocation above with its
-  recorded effective permissions.
+- `F-ENGINE-RESTRICTED-INVOCATION` (CP-05, rules
+  `Q-GOV-NO-PEER-DISPATCH` and `Q-GOV-CHILD-CAPABILITY`): the
+  restricted invocation above with its recorded requested vs observed
+  permissions (HP-05); the unproven remainder is planned as
+  `Q-GOV-TOOL-CONTAINMENT`.
 - `F-ENGINE-GOVERNANCE-CHECKS` (CP-05, rules `Q-STRUCT-FEATURE-MAP`,
   `Q-STRUCT-IMPORTS`, `Q-DOC-CLAIM-EVIDENCE`, `Q-GOV-SCOPED-WRITES`,
   `Q-GRAPH-AUTHORITY`, `Q-RELEASE-COMPLETE`).

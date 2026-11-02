@@ -399,11 +399,21 @@ environment, pinned cwd, real spawn; never `muse exec`, so no live
 model call) and the child reports no probe secret, no `RULOOM_*` key,
 and no MCP/tool-routing config, with a positive control proving
 non-secret allowlisted keys still pass through and relative writes
-landing inside the pinned root. One honest platform allowance is
-recorded in the probes and in `docs/engine/core/README.md`: the live
-child may additionally report interpreter/platform-injected locale
-keys (`LC_CTYPE`, `__CF_USER_TEXT_ENCODING`) that the adapter never
-sent, named explicitly and audited for secret values. G01 is closed on
+landing inside the pinned root. HP-05 narrows that claim to what is
+proven: the control is environment filtering plus a pinned cwd plus a
+spawn gate refusing MCP/tool/dispatch/peer/delegate flags (denial
+shown through the real child path, including a grandchild peer hop
+that inherits no secrets), with requested permissions recorded
+separately from observed effective permissions. The pinned directory
+is NOT filesystem confinement -- an absolute write outside the root
+still lands -- and the CLI's own runtime tool behaviour is outside
+product control, so C04 stays open for genuinely restricted,
+tool-free containment (rule `Q-GOV-TOOL-CONTAINMENT`, planned). One
+honest platform allowance is recorded in the probes and in
+`docs/engine/core/README.md`: the live child may additionally report
+interpreter/platform-injected locale keys (`LC_CTYPE`,
+`__CF_USER_TEXT_ENCODING`) that the adapter never sent, named
+explicitly and audited for secret values. G01 is closed on
 the repo-observable half: `tests/governance/test_branch_protection.py`
 proves CI exposes the `gate` job running pytest plus `force_pass.py`
 on push and pull_request, and the live ruleset receipt
@@ -453,7 +463,8 @@ unchanged.
 | `Q-GOV-NO-PEER-DISPATCH` | planned | Runtime-owned: task assignment and review routing happen in the Datacore coordinator. The product half (restricted invocation above) is enforced and recorded; a product test refusing a worker peer-dispatch would fabricate Runtime authority |
 | `Q-GOV-REVIEW-ISOLATION` | planned | Runtime-owned: verdicts arrive through the Runtime handoff and the product has no reviewer-identity channel, so a fake product checker would assert what the product cannot observe |
 | `Q-GOV-CURRENT-LEASE` | planned | Runtime-owned: task leases live in the coordinator. The engine dispatch leases in `engine/core/dispatch.py` (`Q-ENGINE-DISPATCH`) are the analogous local mechanism, stated as analogy rather than conflated proof |
-| `Q-GOV-CHILD-CAPABILITY` | enforced | `tests/models/test_child_capability.py` -- a real spawned fixture child reports no secret, no `RULOOM_*` key, and no MCP/tool-routing config, cwd pinned with writes contained, real argv naming no peer-dispatch flags (platform-injected locale keys named and audited) |
+| `Q-GOV-CHILD-CAPABILITY` | enforced | `tests/models/test_child_capability.py` -- a real spawned fixture child reports no secret, no `RULOOM_*` key, and no MCP/tool-routing config (including a grandchild peer hop), cwd pinned with writes contained, spawn gate refusing tool/dispatch flags, real argv naming no peer-dispatch flags, requested vs observed permissions recorded (platform-injected locale keys named and audited; absolute-path containment not claimed) |
+| `Q-GOV-TOOL-CONTAINMENT` | planned | Genuinely restricted, tool-free containment (C04 remainder): absolute host paths outside the allowed root unreachable, CLI runtime tool use bounded by an enforced mechanism -- no gate may claim it until the mechanism exists |
 | `Q-GOV-BRANCH-PROTECTION` | enforced | `tests/governance/test_branch_protection.py` -- CI exposes the `gate` job running pytest plus `force_pass.py` on push and pull_request; the recorded receipt binds the live ruleset shape, GitHub-side settings stay receipt evidence |
 | `Q-CODE-HYGIENE` | enforced | `tests/test_code_hygiene.py` -- the pinned ruff contract holds on the whole tree (`ruff check .` plus `ruff format --check .`, the same commands CI runs); a planted dirty file fails and a missing ruff fails closed, never skips |
 

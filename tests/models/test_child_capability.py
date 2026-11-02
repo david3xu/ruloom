@@ -1,4 +1,4 @@
-"""Child-side capability denial probes (re-audit C04).
+"""Child-side capability denial probes (re-audit C04, narrowed by HP-05).
 
 The parent-side restriction tests
 (:mod:`tests.models.test_meta_cli_restrictions`) assert on the
@@ -11,6 +11,16 @@ real child process is spawned through the real adapter path --
 Denial is therefore observed child-side, not merely asserted
 parent-side. No live model call is made: the fixture child is the
 local Python interpreter running a tiny probe, never ``muse exec``.
+
+Boundary stated honestly: what is proven here is environment
+filtering (no secret, no ``RULOOM_*`` key, no MCP/tool-routing config
+-- including across a peer-dispatch hop), a pinned working directory,
+and a spawn gate refusing tool/dispatch capability flags. The pinned
+directory is NOT filesystem confinement: a child naming an absolute
+host path outside the root can still reach it (audit probe
+``C04_fixture_child_absolute_write``), so absolute-path containment
+and the CLI's own runtime tool behaviour stay unclaimed and C04 stays
+open for actual tool restrictions.
 
 Platform scope is stated honestly: the fixture child is
 ``sys.executable`` with an inline probe, which runs wherever the suite
@@ -25,7 +35,10 @@ import os
 import sys
 from pathlib import Path
 
-from models.meta_cli import ALLOWED_ENV_KEYS, MuseCLIModel
+import pytest
+
+from models.base import ModelError
+from models.meta_cli import ALLOWED_ENV_KEYS, MuseCLIModel, enforce_spawn_policy
 
 PROBE_KEY = "RULOOM_PROBE_SECRET"
 PROBE_VALUE = "child-probe-secret-that-must-never-leak"
@@ -178,4 +191,111 @@ def test_real_run_records_secret_free_invocation(
     assert record["model"] == "muse-spark-1.3"
     assert set(record["env_keys"]) <= set(ALLOWED_ENV_KEYS)
     assert PROBE_KEY not in record["env_keys"]
+    assert PROBE_VALUE not in json.dumps(record)
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "--mcp",
+        "--MCP-config",
+        "--tool",
+        "--tools",
+        "--dispatch",
+        "--peer",
+        "--delegate",
+    ],
+)
+def test_spawn_gate_refuses_tool_dispatch_flags_before_spawn(
+    tmp_path: Path, flag: str
+) -> None:
+    """Tool/dispatch routing attempted through the real child path is denied."""
+    model = MuseCLIModel(allowed_root=tmp_path)
+    marker = tmp_path / "must-never-spawn.txt"
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        model._run(
+            [
+                sys.executable,
+                "-c",
+                f"import pathlib;pathlib.Path({str(marker)!r})."
+                "write_text('spawned', encoding='utf-8')",
+                flag,
+                "peer-target",
+            ]
+        )
+    assert not marker.is_file(), "refused spawn must not run the child"
+
+
+def test_spawn_gate_refuses_tool_flag_on_real_argv_shape(tmp_path: Path) -> None:
+    """The refusal holds on the real ``muse exec`` argv shape, not only fixtures."""
+    model = MuseCLIModel(allowed_root=tmp_path)
+    schema_file = tmp_path / "schema.json"
+    schema_file.write_text(json.dumps({"type": "object"}), encoding="utf-8")
+    argv = model._argv(str(schema_file), "make a plan") + ["--tool", "delegate"]
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        model._run(argv)
+
+
+def test_spawn_gate_leaves_real_argv_and_free_text_alone(tmp_path: Path) -> None:
+    """Positive control: the gate denies flags, not wording or the real argv."""
+    model = MuseCLIModel(allowed_root=tmp_path)
+    schema_file = tmp_path / "schema.json"
+    schema_file.write_text(json.dumps({"type": "object"}), encoding="utf-8")
+    argv = model._argv(str(schema_file), "delegate tools to a peer, please")
+    enforce_spawn_policy(argv)
+    proc = model._run(
+        [sys.executable, "-c", "import sys;sys.stdout.write('free-text-ok')"]
+        + argv[-1:]
+    )
+    assert proc.returncode == 0
+    assert "free-text-ok" in proc.stdout
+
+
+def test_peer_dispatch_hop_inherits_no_secrets(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A child dispatching work to a peer process carries no secrets with it."""
+    monkeypatch.setenv(PROBE_KEY, PROBE_VALUE)
+    monkeypatch.setenv("MCP_CONFIG", "peer-dispatch-channel")
+    monkeypatch.setenv("RULOOM_ROLE_PLANNER_MODEL", "sneaky-override")
+    model = MuseCLIModel(allowed_root=tmp_path)
+    grandchild_probe = (
+        "import json,os,subprocess,sys;"
+        "peer=subprocess.run([sys.executable,'-c',"
+        "'import json,os;print(json.dumps(dict(os.environ)))'],"
+        "capture_output=True,text=True);"
+        "sys.stdout.write(peer.stdout)"
+    )
+    proc = model._run([sys.executable, "-c", grandchild_probe])
+    assert proc.returncode == 0, f"fixture child failed: {proc.stderr[-500:]}"
+    peer_env = json.loads(proc.stdout)
+    assert PROBE_VALUE not in json.dumps(peer_env)
+    assert PROBE_KEY not in peer_env
+    assert "MCP_CONFIG" not in peer_env
+    assert not any(key.startswith("RULOOM_") for key in peer_env)
+    assert set(peer_env) <= set(ALLOWED_ENV_KEYS) | PLATFORM_INJECTED_KEYS
+
+
+def test_requested_vs_observed_permissions_recorded_separately(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """The invocation record keeps requested policy apart from observed effect."""
+    monkeypatch.setenv(PROBE_KEY, PROBE_VALUE)
+    allowed = tmp_path / "allowed-root"
+    allowed.mkdir()
+    model = MuseCLIModel(allowed_root=allowed)
+    _spawn_report(model)
+    record = model.last_invocation
+    requested = record["requested_permissions"]
+    observed = record["observed_permissions"]
+    assert requested["tools"] == "none"
+    assert requested["filesystem"] == "cwd-pinned-only"
+    assert requested["workspace_root"] == str(allowed)
+    assert observed["cwd"] == str(allowed)
+    assert observed["tools"] == "none-named-on-argv"
+    assert "absolute host paths" in observed["filesystem_limit"]
+    assert requested != observed
+    assert PROBE_KEY not in json.dumps(requested)
     assert PROBE_VALUE not in json.dumps(record)

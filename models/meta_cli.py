@@ -11,6 +11,15 @@ and parses the JSONL events on stdout: the structured answer (the
 event's text, which the CLI constrains to the schema) plus the ``run.usage``
 event's per-model token counts. A refusal, a nonzero exit, or a malformed
 answer raises :class:`ModelError`.
+
+Permission control, stated accurately: the adapter filters the child
+environment to an allowlist, pins the child working directory, and
+spawns a tool-free argv (no MCP, tool, dispatch, or peer flags are ever
+forwarded or named; the spawn gate refuses them). The pinned directory
+is NOT filesystem confinement: a child naming an absolute host path
+outside the root can still reach it. Requested permissions
+(:data:`REQUESTED_PERMISSIONS`) are recorded separately from the
+observed effective permissions on every call.
 """
 
 from __future__ import annotations
@@ -63,6 +72,87 @@ def _looks_secret(key: str) -> bool:
     """True when ``key`` smells like a credential carrier."""
     upper = str(key).upper()
     return any(hint in upper for hint in SECRET_HINTS)
+
+
+#: Requested permission policy for every child the adapter spawns.
+#: ``filesystem`` names a pinned working directory only -- relative
+#: child writes land in the pinned root, but absolute host paths
+#: outside the root are NOT contained by this boundary. ``tools`` and
+#: ``network_peers`` grant nothing: the adapter forwards no MCP, tool,
+#: dispatch, or peer routing and names no such flag. ``environment``
+#: is the allowlist minus secret-like keys.
+REQUESTED_PERMISSIONS: dict[str, str] = {
+    "filesystem": "cwd-pinned-only",
+    "tools": "none",
+    "network_peers": "none",
+    "environment": "allowlist-only",
+}
+
+#: Flag prefixes the spawn gate refuses. Only dash-leading argv parts
+#: are scanned, so free-text values (prompts, paths) can never trip it.
+#: ``--contributor-mode`` is the one explicit capability flag and is
+#: allowed; everything naming MCP, tool, dispatch, peer, or delegate
+#: routing is denied at spawn.
+DENIED_SPAWN_FLAG_PREFIXES = (
+    "--mcp",
+    "--tool",
+    "--dispatch",
+    "--peer",
+    "--delegate",
+)
+
+
+def requested_permissions(allowed_root: str | Path | None) -> dict[str, str]:
+    """Describe the permission policy requested for one child spawn."""
+    policy = dict(REQUESTED_PERMISSIONS)
+    if allowed_root is not None:
+        policy["workspace_root"] = str(Path(allowed_root))
+    else:
+        policy["workspace_root"] = "invoking-directory"
+    return policy
+
+
+def observed_permissions(cwd: str, env_keys: list[str]) -> dict[str, object]:
+    """Describe the effective permissions one spawn actually provided.
+
+    This is the observed side of the requested/observed split: the
+    pinned directory the child ran in, the environment key names it
+    inherited, and the tool-free outcome of the spawn gate -- plus the
+    confinement limit the boundary does not provide (absolute host
+    paths outside the root stay reachable).
+    """
+    return {
+        "filesystem": "cwd-pinned-only",
+        "filesystem_limit": "absolute host paths outside the root are not contained",
+        "tools": "none-named-on-argv",
+        "tools_limit": "the CLI's own runtime behaviour is outside product control",
+        "network_peers": "none-granted",
+        "environment": "allowlist-only",
+        "cwd": cwd,
+        "env_keys": sorted(env_keys),
+    }
+
+
+def enforce_spawn_policy(argv: list[str]) -> None:
+    """Refuse a child argv that requests tool/dispatch capability.
+
+    The adapter builds a tool-free argv by construction; this gate
+    makes that property ENFORCED for every caller of the spawn path:
+    any dash-leading part naming MCP, tool, dispatch, peer, or
+    delegate routing raises :class:`ModelError` before anything
+    spawns. Free-text parts (prompts, paths, values) are never
+    scanned, so legitimate wording cannot trip the gate.
+    """
+    for part in argv:
+        text = str(part)
+        if not text.startswith("-"):
+            continue
+        lowered = text.lower()
+        if lowered.startswith(DENIED_SPAWN_FLAG_PREFIXES):
+            raise ModelError(
+                f"child spawn refused: tool/dispatch capability "
+                f"{text!r} is outside the permission policy"
+            )
 
 
 def restricted_env(source: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -140,8 +230,11 @@ class MuseCLIModel:
 
     Records ``argv``, the pinned ``cwd``, the inherited environment
     *key names* (never values), the ``contributor`` flag, and the
-    requested/returned model identity. The run log stores this record
-    per model call; secret values never enter it.
+    requested/returned model identity, plus ``requested_permissions``
+    (the policy asked for) separately from ``observed_permissions``
+    (the effective permissions the spawn provided, including the
+    confinement limit it does not provide). The run log stores this
+    record per model call; secret values never enter it.
     """
 
     def _run(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
@@ -150,8 +243,12 @@ class MuseCLIModel:
         The child gets a pinned working directory, the allowlisted
         environment only, and exactly the argv built by :meth:`_argv` --
         no inherited MCP servers, tool dispatch, or peer routing, which
-        the argv never names. Transport failures raise ModelError.
+        the argv never names. The spawn gate refuses tool/dispatch
+        capability flags before anything spawns. Requested permissions
+        are recorded separately from the observed effective
+        permissions. Transport failures raise ModelError.
         """
+        enforce_spawn_policy(list(argv))
         env = restricted_env()
         cwd = resolve_cwd(self.allowed_root)
         self.last_invocation = {
@@ -160,6 +257,8 @@ class MuseCLIModel:
             "env_keys": sorted(env),
             "contributor": self.contributor,
             "model": self.model,
+            "requested_permissions": requested_permissions(self.allowed_root),
+            "observed_permissions": observed_permissions(cwd, sorted(env)),
         }
         try:
             return subprocess.run(
