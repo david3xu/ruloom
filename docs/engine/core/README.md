@@ -92,8 +92,8 @@ or a foreign authority is refused -- history is never rewritten and
 the fencing epoch never resets. Submit validates the
 declared request (supported fields only: profile, source,
 source-content and spec digest pins, spec overlay, row/attempt
-bounds; unknown fields, malformed pins/bounds, and conflicting row
-bounds refuse) and persists the bound request identity (profile,
+bounds; unknown fields, malformed pins/bounds, and conflicting
+row/attempt bounds refuse) and persists the bound request identity (profile,
 pinned source-content digest, pinned normalised spec digest) that
 publication later matches against the run, plus the canonical digest
 of the enforced request fields (identity with caller row/attempt

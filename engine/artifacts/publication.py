@@ -32,7 +32,10 @@ and the identity the run's own record delivers. Profile-name equality
 alone never suffices; a request that pins nothing shippable refuses.
 A declared row bound (``max_rows``, top-level or spec-carried) must
 also cover the run's executed bound: the shipped row count must
-satisfy the requested bound.
+satisfy the requested bound. A declared attempt bound
+(``max_attempts``, top-level or spec-carried) must cover the run's
+executed attempt bound: the run must never execute more attempts
+than requested.
 
 Single-snapshot publication: the run ZIP is read once into an
 immutable in-memory snapshot staged through a private temp file; the
@@ -84,6 +87,7 @@ from typing import Any
 from ..core.dispatch import (
     AuthorityDenied,
     DispatchStore,
+    effective_max_attempts,
     effective_max_rows,
 )
 from .consumer import ReleaseVerificationError, verify_release
@@ -517,6 +521,7 @@ def _resolve_acceptance(
             f"run {run_path.name!r} run record carries no spec digest: refusing"
         )
     max_rows: int | None = None
+    max_attempts: int | None = None
     run_spec = run_request.get("spec")
     if isinstance(run_spec, Mapping):
         limits = run_spec.get("limits")
@@ -528,6 +533,18 @@ def _resolve_acceptance(
                     "unusable row bound: refusing"
                 )
             max_rows = bound
+        if isinstance(limits, Mapping) and "max_attempts" in limits:
+            attempt_bound = limits.get("max_attempts")
+            if (
+                isinstance(attempt_bound, bool)
+                or not isinstance(attempt_bound, int)
+                or attempt_bound < 1
+            ):
+                raise PublicationError(
+                    f"run {run_path.name!r} run record carries an "
+                    "unusable attempt bound: refusing"
+                )
+            max_attempts = attempt_bound
     acceptance_bound = acceptance.get("request_identity")
     if not isinstance(acceptance_bound, Mapping):
         raise PublicationError(
@@ -541,6 +558,7 @@ def _resolve_acceptance(
         "source_sha256": source_sha,
         "spec_digest": spec_digest,
         "max_rows": max_rows,
+        "max_attempts": max_attempts,
         "request_identity": {
             "profile": acceptance_bound.get("profile"),
             "source_sha256": acceptance_bound.get("source_sha256"),
@@ -559,10 +577,12 @@ def _check_request_binding(
     run record delivers the measured values. All three must agree on
     profile, source-content digest, and normalised spec digest --
     profile-name equality alone never suffices. The coarse checks run
-    first (profile, source, row scope) so a refused bound names the
-    bound; the exact spec-digest identity runs last. A declared row
-    bound must also cover the run's executed bound, so the shipped row
-    count satisfies the requested bound.
+    first (profile, source, row and attempt scope) so a refused bound
+    names the bound; the exact spec-digest identity runs last. A
+    declared row bound must also cover the run's executed bound, so
+    the shipped row count satisfies the requested bound; a declared
+    attempt bound must cover the run's executed attempt bound, so the
+    run never executes more attempts than requested.
     """
     persisted = item.get("request_identity")
     if not isinstance(persisted, Mapping):
@@ -612,6 +632,22 @@ def _check_request_binding(
                 f"but the accepted run allows {delivered_rows}: "
                 "refusing (the shipped row count must satisfy the "
                 "requested bound)"
+            )
+    wanted_attempts = effective_max_attempts(
+        item.get("request") if isinstance(item.get("request"), Mapping) else {}
+    )
+    if wanted_attempts is not None:
+        delivered_attempts = acceptance.get("max_attempts")
+        if (
+            not isinstance(delivered_attempts, int)
+            or isinstance(delivered_attempts, bool)
+            or delivered_attempts > wanted_attempts
+        ):
+            raise PublicationError(
+                f"item {item_id!r} requests max_attempts {wanted_attempts}, "
+                f"but the accepted run allows {delivered_attempts}: "
+                "refusing (the run must not execute more attempts than "
+                "requested)"
             )
     wanted_spec = persisted.get("spec_digest")
     accepted_spec = bound.get("spec_digest")
