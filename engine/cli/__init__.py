@@ -103,6 +103,40 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="ROLE=URL",
         help="override a local role's base URL (repeatable)",
     )
+    run.add_argument(
+        "--role-adapter",
+        action="append",
+        default=[],
+        metavar="ROLE=ADAPTER",
+        help="explicit adapter override: meta_cli or glimmer_local (repeatable)",
+    )
+    run.add_argument(
+        "--model-policy",
+        choices=("hosted", "offline", "local-only"),
+        default="hosted",
+        help="model-call policy, including repair and critique",
+    )
+    prepare = sub.add_parser(
+        "prepare", help="draft supported settings for human review"
+    )
+    prepare.add_argument(
+        "source", help="source file, hashed locally but never sent to model"
+    )
+    prepare.add_argument("--profile", default=None)
+    prepare.add_argument(
+        "--request", required=True, help="short request; exclude private rows"
+    )
+    prepare.add_argument("--max-attempts", required=True, type=int)
+    prepare.add_argument(
+        "--out", required=True, help="new directory for draft and receipt"
+    )
+    prepare.add_argument(
+        "--model-policy", choices=("hosted", "local-only"), default="local-only"
+    )
+    prepare.add_argument("--role-model", action="append", default=[])
+    prepare.add_argument("--role-effort", action="append", default=[])
+    prepare.add_argument("--role-base-url", action="append", default=[])
+    prepare.add_argument("--role-adapter", action="append", default=[])
     return parser
 
 
@@ -142,6 +176,7 @@ SOURCE_DEFAULT = "default"
 
 #: Environment variable suffixes per role field (role name uppercased).
 ENV_SUFFIXES = {
+    "adapter": "ADAPTER",
     "model": "MODEL",
     "reasoning_effort": "EFFORT",
     "base_url": "BASE_URL",
@@ -166,6 +201,7 @@ def resolve_role_bindings(
     cli_models: Sequence[str] | None = None,
     cli_efforts: Sequence[str] | None = None,
     cli_base_urls: Sequence[str] | None = None,
+    cli_adapters: Sequence[str] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, str]]]:
     """Apply CLI > env > profile > default precedence to every role.
@@ -190,11 +226,19 @@ def resolve_role_bindings(
     for spec in cli_base_urls or []:
         role, value = parse_role_assignment(spec, "--role-base-url")
         cli_base_url_map[role] = value
+    cli_adapter_map = dict(
+        parse_role_assignment(value, "--role-adapter") for value in cli_adapters or []
+    )
 
     declared = manifest.models.get("roles", {})
     if not isinstance(declared, dict):
         declared = {}
-    for role in list(cli_model_map) + list(cli_effort_map) + list(cli_base_url_map):
+    for role in (
+        list(cli_model_map)
+        + list(cli_effort_map)
+        + list(cli_base_url_map)
+        + list(cli_adapter_map)
+    ):
         if role not in declared:
             raise ManifestError(
                 f"role override for unknown role {role!r}: the manifest "
@@ -206,6 +250,21 @@ def resolve_role_bindings(
         base = dict(binding) if isinstance(binding, Mapping) else {}
         adapter = base.get("adapter", "meta_cli")
         role_sources: dict[str, str] = {}
+        original_adapter = adapter
+        adapter_env = f"RULOOM_ROLE_{role.upper()}_ADAPTER"
+        if role in cli_adapter_map:
+            adapter = cli_adapter_map[role]
+            role_sources["adapter"] = SOURCE_CLI
+        elif adapter_env in environment:
+            adapter = environment[adapter_env]
+            role_sources["adapter"] = SOURCE_ENV
+        else:
+            role_sources["adapter"] = SOURCE_PROFILE
+        if adapter not in DEFAULT_MODEL_BY_ADAPTER:
+            raise ManifestError(f"unknown model adapter {adapter!r} for role {role!r}")
+        base["adapter"] = adapter
+        if adapter != original_adapter:
+            base["provider"] = "local" if adapter == "glimmer_local" else "meta-api"
 
         if role in cli_model_map:
             base["model"] = cli_model_map[role]
@@ -213,7 +272,11 @@ def resolve_role_bindings(
         elif f"RULOOM_ROLE_{role.upper()}_MODEL" in environment:
             base["model"] = environment[f"RULOOM_ROLE_{role.upper()}_MODEL"]
             role_sources["model"] = SOURCE_ENV
-        elif isinstance(binding, Mapping) and binding.get("model"):
+        elif (
+            adapter == original_adapter
+            and isinstance(binding, Mapping)
+            and binding.get("model")
+        ):
             role_sources["model"] = SOURCE_PROFILE
         else:
             base["model"] = DEFAULT_MODEL_BY_ADAPTER.get(adapter, "muse-spark-1.3")
@@ -288,6 +351,7 @@ def default_client(role: str, config: Mapping[str, Any]) -> StructuredModel:
         return GlimmerLocalModel(
             model=str(config.get("model", "muse-glimmer-30B")),
             base_url=str(config.get("base_url") or DEFAULT_BASE_URL),
+            local_only=config.get("local_only") is True,
         )
     if adapter != "meta_cli":
         raise ValueError(
@@ -309,6 +373,7 @@ def _refusal_request(args: Any) -> dict[str, Any]:
         "source": str(getattr(args, "source", "")),
         "max_attempts": getattr(args, "max_attempts", None),
         "out": str(getattr(args, "out", ".")),
+        "model_policy": getattr(args, "model_policy", "hosted"),
     }
 
 
@@ -342,6 +407,32 @@ def main(
     from ..core.spec import SpecError, load_spec_file
 
     args = build_parser().parse_args(list(argv) if argv is not None else None)
+    if args.command == "prepare":
+        from .request import prepare_request
+
+        try:
+            profile_id = resolve_profile(args.profile)
+            manifest = load_manifest(profiles_package.manifest_path(profile_id))
+            resolved, _sources = resolve_role_bindings(
+                manifest,
+                cli_models=args.role_model,
+                cli_efforts=args.role_effort,
+                cli_base_urls=args.role_base_url,
+                cli_adapters=args.role_adapter,
+            )
+            config = dict(resolved["planner"])
+            config["local_only"] = args.model_policy == "local-only"
+            return prepare_request(
+                args,
+                manifest,
+                config,
+                lambda: (
+                    model if model is not None else default_client("planner", config)
+                ),
+            )
+        except (ValueError, ManifestError, KeyError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
     if args.command == "run":
         if isinstance(args.max_attempts, bool) or args.max_attempts < 1:
             print(
@@ -351,6 +442,10 @@ def main(
             )
             return 1
         try:
+            if args.model_policy == "offline" and args.plan is None:
+                raise ValueError(
+                    "--model-policy offline requires --plan PATH; no model calls allowed"
+                )
             profile_id = resolve_profile(args.profile)
             manifest = load_manifest(profiles_package.manifest_path(profile_id))
             registry = load_registry(profile_id)
@@ -359,6 +454,7 @@ def main(
                 cli_models=args.role_model,
                 cli_efforts=args.role_effort,
                 cli_base_urls=args.role_base_url,
+                cli_adapters=args.role_adapter,
             )
         except (ValueError, ManifestError) as exc:
             try:
@@ -415,7 +511,7 @@ def main(
         def resolving_factory(role: str, config: Mapping[str, Any]) -> Any:
             if model is not None:
                 return model
-            return default_client(role, resolved[role])
+            return default_client(role, config)
 
         code, _outcome = execute(
             manifest,
@@ -430,6 +526,7 @@ def main(
             role_binding_sources=role_sources,
             spec=spec_overlay,
             fixed_plan=fixed_plan,
+            model_policy=args.model_policy,
         )
         return code
     return 1

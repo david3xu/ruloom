@@ -355,7 +355,11 @@ def test_profile_values_apply_without_overrides() -> None:
     resolved, sources = cli_module.resolve_role_bindings(_roles_manifest(), env={})
     assert resolved["planner"]["model"] == "profile-model"
     assert resolved["planner"]["reasoning_effort"] == "low"
-    assert sources["planner"] == {"model": "profile", "reasoning_effort": "profile"}
+    assert sources["planner"] == {
+        "adapter": "profile",
+        "model": "profile",
+        "reasoning_effort": "profile",
+    }
     assert sources["local_critic"]["base_url"] == "default"
     assert resolved["local_critic"]["base_url"].startswith("http")
 
@@ -384,7 +388,11 @@ def test_cli_beats_env_beats_profile() -> None:
     assert resolved["planner"]["model"] == "cli-model"
     assert resolved["planner"]["reasoning_effort"] == "high"
     assert resolved["local_critic"]["base_url"] == "http://cli:9999"
-    assert sources["planner"] == {"model": "cli", "reasoning_effort": "cli"}
+    assert sources["planner"] == {
+        "adapter": "profile",
+        "model": "cli",
+        "reasoning_effort": "cli",
+    }
     assert sources["local_critic"]["base_url"] == "cli"
 
 

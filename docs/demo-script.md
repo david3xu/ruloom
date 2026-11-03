@@ -4,41 +4,47 @@ Target: under 3 minutes, publicly viewable, recorded from a real terminal.
 Every number spoken comes from `docs/results.md` (measured, review-audited).
 Do not paraphrase a number from memory; read the table on screen.
 
+With hosted credits exhausted, use the **offline replay** below and show a
+genuine earlier `model_invocation` receipt beside it. Label the receipt as a
+previous Meta call and the running command as replay, not fresh inference.
+The current credit-free extension was implemented by Codex. Local planning
+and request interpretation await the owner's real evaluation; do not present
+them as demonstrated model performance yet.
+
 ## Storyboard
 
 | Time | On screen | Narration |
 |---|---|---|
-| 0:00–0:30 | `docs/results.md` per-hole table, baseline rows highlighted | "Ask a large model to write data directly and it fails the checks on three of four unseen drill holes — while using forty-seven times the tokens. This is Ruloom: the model plans, code generates, checks prove, a human accepts." |
+| 0:00–0:30 | `docs/results.md` per-hole table | "Ruloom turns a supported source into synthetic data with checked evidence. The model proposes settings, code generates the rows, and a human decides acceptance. These are dated benchmark results; the baseline varied across repeated runs." |
 | 0:30–1:00 | `README.md` Status and Layout sections | "Ruloom is a generic engine. A profile declares its workflow, its checks, and which model may do what. The engine enforces those declarations in code. Quality thresholds were calibrated real-against-real before any generator existed." |
-| 1:00–2:15 | Live terminal run (commands below) | Walk the stages as they print: intake hashes the source and reads its licence; only statistics reach the model; the model proposes seed and row count; seeded code generates; deterministic checks validate; the run stops and asks a human. Type `accept`. Show the release line and the data digest. Then replay the run's saved fixed plan with `--plan` and show the identical data digest: same plan, same seed, same data bytes. Say plainly: a fresh planner call is a new run and may propose a different plan, so repeating the live command never proves reproducibility; the release ZIP is not the comparator either (it carries per-run identity and log, so it differs per run by design). |
-| 2:15–2:45 | `docs/results.md` aggregate table | "On four held-out holes the pipeline passes four of four, reproducible four of four, in eighty-two seconds and one hundred thirty-five thousand tokens. The direct-LLM baseline passes one of four and is reproducible zero of four. On one hole, NCB0003, both pass — we say so in the report." |
+| 1:00–2:15 | Earlier genuine model receipt, then offline terminal replay | Show the recorded requested/reported model and its plan. Say "That was the earlier Meta call. This replay makes no model calls." Run the fixed plan under the offline policy: source identity, deterministic generation, checks, human review, and evidence report. Accept only after inspecting the actual checks. Compare the data digest with the earlier run, never ZIP hashes. The report shows replay origin and any unavailable reviews. |
+| 2:15–2:45 | `docs/results.md` aggregate and repeat tables | "The pipeline passed all four held-out cases. The direct-LLM baseline passed one in the primary run and three in the repeat. The token comparison used different output sizes, so it is not a matched-row cost benchmark." |
 | 2:45–3:00 | Run directory listing + `release.zip` contents | "Every release carries its own evidence: the plan, the seed, the validation report, and a hash-chained log. Synthetic data, woven from reality — backed by evidence." |
 
-## Live-run command
+## Fresh inference (deferred while credits are unavailable)
 
 ```bash
 cd ~/workspace/ruloom
 .venv/bin/ruloom run data/sources/PDD446-scalars.csv --max-attempts 3
 ```
 
-At `Decision [accept/modify/reject]:` type `accept`, then a short note such
-as `demo run`. Expected: verdict `pass`, artifact
-`55eb1c22e212cc61523548875af5e98b3c040aecdb7d9dc7ac59d7836f58d85f`,
-`release.zip` written. Note the run directory (`runs/<run-id>/`).
+Inspect the actual verdict before deciding. A fresh model may choose a
+different seed, so no fixed artifact digest or passing result is promised.
+Keep its run directory (`runs/<run-id>/`) and original model receipt.
 
 ## Reproducibility rerun (fixed-plan replay)
 
 A fresh planner call is a new run: it may propose a different plan, so
 repeating the live command never proves reproducibility. Deterministic
 generation is demonstrated by replaying the fixed plan saved above
-(`runs/<run-id>/plan.json`), with no planner call:
+(`runs/<run-id>/plan.json`), with all model calls disabled:
 
 ```bash
 .venv/bin/ruloom run data/sources/PDD446-scalars.csv --max-attempts 3 \
-  --plan runs/<run-id>/plan.json --out /tmp/ruloom-replay
+  --plan runs/<run-id>/plan.json --model-policy offline --out /tmp/ruloom-replay
 ```
 
-At the prompt type `accept` again. Then compare the data digests
+Inspect the actual checks before accepting. Then compare the data digests
 (identical), not the release ZIPs (per-run identity and log, so they
 differ by design):
 
@@ -46,12 +52,13 @@ differ by design):
 sha256sum runs/<run-id>/data.csv /tmp/ruloom-replay/runs/*/data.csv
 ```
 
-Optional, if the local critic is wanted on camera (server must be started
-first, model already on disk):
+Optional later local evaluation (not part of the present preparation;
+server must be started first, model already on disk):
 
 ```bash
 llama-server -m ~/models/muse-glimmer/Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf --port 8080 -c 32768
-.venv/bin/ruloom run data/sources/PDD446-scalars.csv --max-attempts 3 --local-critic
+.venv/bin/ruloom run data/sources/PDD446-scalars.csv --max-attempts 3 \
+  --model-policy local-only --role-adapter planner=glimmer_local --local-critic
 ```
 
 The local open-weight critic's note appears as `critic-note.json`. Say

@@ -31,6 +31,9 @@ declared strategies (or null when the manifest declares none).
 it; ``limits.max_attempts`` must equal the caller-supplied bound the
 loop executes under. ``rights.output_terms_intent`` is recorded
 verbatim as intent only; it never clears output by itself.
+
+Optional ``target_rows`` pins the exact plan row count within the row limit;
+``purpose`` records a user request as intent, never a verified quality claim.
 """
 
 from __future__ import annotations
@@ -61,6 +64,8 @@ SPEC_KEYS = (
     "strategy",
     "limits",
     "rights",
+    "target_rows",
+    "purpose",
 )
 
 
@@ -298,6 +303,21 @@ def normalize_spec(
             f"bound {max_attempts}"
         )
     merged["limits"] = {"max_rows": spec_max, "max_attempts": spec_attempts}
+
+    if "target_rows" in merged:
+        target = merged["target_rows"]
+        if (
+            not _is_int(target)
+            or target < 1
+            or (spec_max is not None and target > spec_max)
+        ):
+            raise _refuse(
+                "spec 'target_rows' must be a positive integer within max_rows"
+            )
+    if "purpose" in merged:
+        purpose = merged["purpose"]
+        if not isinstance(purpose, str) or not purpose.strip() or len(purpose) > 4000:
+            raise _refuse("spec 'purpose' must contain 1 to 4000 characters")
 
     raw_rights = merged.get("rights", {})
     if raw_rights is None:

@@ -238,10 +238,33 @@ must decode to a plan object, is validated against the same
 spec-supported bounds as a fresh proposal, and is stored with no
 planner call, so the same plan plus the same seed yields identical
 `data.csv` bytes. Only the initial plan is fixed; repair after a
-failed replay still uses the planner. Compare data digests across
+failed replay still uses the planner under the default policy. The explicit
+offline policy forbids every model call, including repair. Compare data digests across
 replays, never release ZIPs: the ZIP carries per-run identity and log
 bytes, so it differs per run by design.
 One user-facing `evidence-report.md` per run is rendered from stored
 records only and recomputed never; it ships in the run directory and,
 when the profile release block declares it, as an `engine-report`
 release member rendered at pack time.
+
+## Credit-free requests and model policy
+
+`engine/core/model_policy.py` checks the caller's policy before client creation
+and before each model call. Offline replay runs deterministic checks and
+retains failures without a repair call. Optional critic denial stays visible
+as an advisory failure; required review still blocks. Local-only requires a
+local adapter and a literal loopback endpoint. `models/local_transport.py`
+ignores proxies and refuses redirects; it cannot attest to a server's internals.
+
+`engine/cli/request.py` implements `prepare`: a model interprets the request
+against supported scalar settings, and complete schema validation rejects
+unsupported choices. It writes a new draft directory only. A human reviews
+the interpretation before using its spec and plan. Optional `target_rows`
+pins the exact row count for every stored plan, including repair; `purpose`
+records the user's request as intent, not a measured claim.
+
+The report displays successful runtime invocations, observed identities,
+replay origin, policy denials and advisory gaps from stored events. It never
+attributes replay to a new model call. See [the workflow](../../credit-free-product.md)
+for development attribution, operator commands and deferred real evaluation.
+Feature record: `F-ENGINE-CREDIT-FREE`.

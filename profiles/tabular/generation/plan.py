@@ -120,7 +120,11 @@ def validate_plan(
     return plan
 
 
-def build_prompt(profile: TabularProfile, allowed_strategies: Any = None) -> str:
+def build_prompt(
+    profile: TabularProfile,
+    allowed_strategies: Any = None,
+    target_rows: int | None = None,
+) -> str:
     """Build the planning prompt for a profile.
 
     The only source-derived content in the prompt is the profile's
@@ -149,6 +153,8 @@ def build_prompt(profile: TabularProfile, allowed_strategies: Any = None) -> str
             f'"strategy": must be one of {list(allowed_strategies)!r} '
             "naming the generation strategy. No other keys are accepted.\n"
         )
+    if target_rows is not None:
+        prompt += f"The user's exact row target overrides the source row count: n_rows must equal {target_rows}.\n"
     return (
         prompt
         + "Profile statistics (the only source-derived content):\n"
@@ -161,6 +167,7 @@ def propose(
     profile: TabularProfile,
     max_rows: int | None = None,
     allowed_strategies: Any = None,
+    target_rows: int | None = None,
 ) -> Any:
     """Ask ``model`` for a plan and validate it against :data:`PLAN_SCHEMA`.
 
@@ -179,7 +186,7 @@ def propose(
             f"profile must be a TabularProfile, got {type(profile).__name__}"
         )
     completion = model.complete(
-        build_prompt(profile, allowed_strategies),
+        build_prompt(profile, allowed_strategies, target_rows),
         provider_schema(allowed_strategies),
     )
     completion_data = validate_plan(
