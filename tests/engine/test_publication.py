@@ -5,12 +5,17 @@ here: the submit-to-download chain over a real engine run, idempotent
 re-publication, interrupted-publication recovery, cross-authority
 denial, and refusal of foreign, mismatched, or unverifiable bytes.
 The engine runs use the tabular profile with a replay double, so no
-case needs a live model.
+case needs a live model. The closing LP-01 case instead runs the
+HyLogger profile through the installed wheel with a replay double.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+import zipfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -2292,3 +2297,241 @@ def test_repair_refuses_quarantine_changed_after_copy(
         monkeypatch,
         via="repair",
     )
+
+
+#: LP-01 gate driver: installed-wheel HyLogger CLI run, human accept,
+#: dispatch submit/claim/success, publish, download, then verification
+#: of the delivered ZIP, its sidecar, the shipped report, the source
+#: binding, and the row count. The driver imports engine/models/profiles
+#: only from the install target (the repo root is never on sys.path),
+#: so this pins the shipped bytes, not a working-tree leak.
+_LP01_DRIVER = '''"""LP-01 gate driver (runs inside the installed wheel layout)."""
+import csv
+import io
+import json
+import sys
+import zipfile
+from pathlib import Path
+
+import engine
+import models
+import profiles
+from engine.artifacts.consumer import verify_release
+from engine.artifacts.hashing import sha256_bytes
+from engine.artifacts.publication import Publisher, download
+from engine.cli import main
+from engine.core.dispatch import DispatchStore
+from engine.core.manifest import load_manifest
+from engine.core.spec import normalize_spec
+from models.base import Completion, Usage
+from profiles.hylogger.analysis.calibration import Band, Thresholds
+
+print("ENGINE_FILE=" + str(Path(engine.__file__).resolve()))
+assert models is not None and profiles is not None
+
+work = Path.cwd()
+coverage = [
+    ("1", "A", "X"),
+    ("1", "B", ""),
+    ("1", "", "Y"),
+    ("1", "A", "Y"),
+    ("0", "", ""),
+    ("1", "B", "X"),
+    ("0", "", ""),
+    ("1", "A", "X"),
+]
+lines = ["StartDepth,Final_Mask,Grp1_sTSAS,Grp1_sjCLST"]
+for i, triple in enumerate(coverage):
+    lines.append(str(123.456789 + i * 0.0078) + "," + ",".join(triple))
+source_name = "TOY-hole-scalars.csv"
+source_path = work / source_name
+source_path.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+(work / "TOY-hole-source.json").write_text(
+    json.dumps(
+        {
+            "dataset_name": "TOY-hole",
+            "licence": "CC-BY-4.0",
+            "attribution": "Toy attribution for LP-01.",
+        }
+    ),
+    encoding="utf-8",
+)
+thresholds = Thresholds(
+    bands={
+        "spacing_median_m": Band("spacing_median_m", 0.005, 0.01),
+        "repeated_depth_fraction": Band("repeated_depth_fraction", 0.0, 0.2),
+        "valid_fraction": Band("valid_fraction", 0.5, 1.0),
+        "swir_answer_rate": Band("swir_answer_rate", 0.0, 1.0, vacuous=True),
+        "tir_answer_rate": Band("tir_answer_rate", 0.9, 1.0),
+        "repeated_valid_fraction": Band("repeated_valid_fraction", 0.0, 0.05),
+        "backward_steps": Band("backward_steps", 0, 0),
+    },
+    swir_vocabulary=frozenset(["A", "B"]),
+    tir_vocabulary=frozenset(["X", "Y"]),
+)
+(work / "thresholds.json").write_text(
+    json.dumps(thresholds.to_dict()) + "\\n", encoding="utf-8"
+)
+
+
+class FakeModel:
+    def complete(self, prompt, schema):
+        return Completion(
+            data={"seed": 8, "n_rows": 8},
+            usage=Usage(model="fake", input_tokens=10, output_tokens=5, calls=1),
+            meta={"model": "fake"},
+        )
+
+
+sys.stdin = io.StringIO("accept\\nLP-01 gate check.\\n")
+code = main(
+    [
+        "run",
+        str(source_path),
+        "--profile",
+        "hylogger",
+        "--max-attempts",
+        "1",
+        "--out",
+        str(work / "out"),
+    ],
+    model=FakeModel(),
+)
+print("RC=" + str(code))
+assert code == 0
+run_dirs = [
+    child
+    for child in (work / "out" / "runs").iterdir()
+    if (child / "run.json").is_file()
+]
+assert len(run_dirs) == 1
+run_dir = run_dirs[0]
+run_record = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+source_sha = sha256_bytes(source_path.read_bytes())
+assert run_record["source_sha256"] == source_sha
+manifest = load_manifest(
+    Path(profiles.__file__).resolve().parent / "hylogger" / "profile.json"
+)
+request = run_record["run"]["request"]
+_, spec_digest = normalize_spec(
+    None, manifest, source=source_path, max_attempts=int(request["max_attempts"])
+)
+store = DispatchStore(work / "out")
+item = store.submit(
+    authority="lp01-owner",
+    request={
+        "profile": "hylogger",
+        "source": source_name,
+        "max_attempts": 1,
+        "source_sha256": source_sha,
+        "spec_digest": spec_digest,
+    },
+    idempotency_key="lp01-gate-1",
+    max_retries=1,
+    now=2000000.0,
+)
+lease = store.claim(
+    item["item_id"], worker="lp01-worker", lease_seconds=600.0, now=2000000.0
+)["lease"]
+zip_sha = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
+item = store.report_success(
+    item["item_id"],
+    worker="lp01-worker",
+    token=lease["token"],
+    accepted_run={
+        "run_id": run_dir.name,
+        "artifact_sha256": run_record["artifact_sha256"],
+        "zip_sha256": zip_sha,
+    },
+    now=2000000.0,
+)
+assert item["status"] == "succeeded"
+publisher = Publisher(work / "out", work / "published")
+identity = publisher.publish(
+    item["item_id"], run_dir, authority="lp01-owner", now=2000000.0
+)
+consumer_dir = work / "consumer"
+consumer_dir.mkdir()
+fetched = download(Path(identity["dest"]), consumer_dir / "release.zip")
+reviewed = (run_dir / "release.sha256").read_text(encoding="utf-8").split()[0]
+assert fetched["zip_sha256"] == reviewed == identity["zip_sha256"]
+assert fetched["artifact_sha256"] == run_record["artifact_sha256"]
+attested = verify_release(consumer_dir / "release.zip")
+assert attested["zip_sha256"] == reviewed
+sidecars = sorted((work / "published").glob("*.sha256"))
+assert len(sidecars) == 1
+assert sidecars[0].read_text(encoding="utf-8").split()[0] == reviewed
+manifest_doc = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+with zipfile.ZipFile(consumer_dir / "release.zip") as archive:
+    rows = list(csv.reader(archive.read("data.csv").decode("utf-8").splitlines()))
+    shipped = json.loads(archive.read("validation-report.json").decode("utf-8"))
+assert len(rows) - 1 == 8
+assert rows[0][:2] == ["depth_m", "valid"]
+assert shipped["verdict"] == "pass"
+schema_hits = [
+    entry for entry in shipped["results"] if entry.get("name") == "csv_schema"
+]
+assert len(schema_hits) == 1
+assert schema_hits[0]["status"] == "pass"
+assert "csv_schema" in manifest_doc["acceptance"]["required_checks"]
+assert manifest_doc["acceptance"]["request_identity"]["profile"] == "hylogger"
+print("LP01_SMOKE_COMPLETE")
+'''
+
+
+def test_hylogger_installed_wheel_run_publishes_single_csv_schema(
+    tmp_path: Path,
+) -> None:
+    """LP-01: the installed wheel ships exactly one passing csv_schema.
+
+    Real HyLogger capabilities through the installed layout (the wheel
+    is built with the project's own backend and imported with the repo
+    root off ``sys.path``): CLI run with piped human accept, dispatch
+    submit/claim/success under the publishing authority, publish,
+    download, then verification of the delivered ZIP, the sidecar
+    checksum, the shipped report (verdict pass with ``csv_schema``
+    satisfied exactly once), the source binding, and the row count.
+    On the pre-fix tree publication refuses the shipped report, so this
+    test fails there and passes once the report carries the check.
+    """
+    from hatchling.build import build_wheel  # fail closed without the backend
+
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    previous_cwd = os.getcwd()
+    os.chdir(REPO_ROOT)
+    try:
+        build_wheel(str(dist))
+    finally:
+        os.chdir(previous_cwd)
+    wheels = sorted(dist.glob("*.whl"))
+    assert len(wheels) == 1
+    target = tmp_path / "install"
+    with zipfile.ZipFile(wheels[0]) as archive:
+        archive.extractall(target)
+    assert (target / "engine" / "cli" / "__init__.py").is_file()
+
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "driver_lp01.py").write_text(_LP01_DRIVER, encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(target)
+    env.pop("PYTHONSAFEPATH", None)
+    env["RULOOM_THRESHOLDS"] = str(work / "thresholds.json")
+    proc = subprocess.run(
+        [sys.executable, str(work / "driver_lp01.py")],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(work),
+        env=env,
+        timeout=300,
+    )
+    assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
+    assert "LP01_SMOKE_COMPLETE" in proc.stdout
+    engine_file = next(
+        line.split("=", 1)[1]
+        for line in proc.stdout.splitlines()
+        if line.startswith("ENGINE_FILE=")
+    )
+    assert Path(engine_file).is_relative_to(target)
