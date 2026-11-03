@@ -377,6 +377,15 @@ class RunContext:
         """Canonical SHA-256 of the normalised GenerationSpec."""
         return self._engine.spec_digest_value()
 
+    def fixed_plan(self) -> dict[str, Any] | None:
+        """The caller-supplied fixed plan for replay, if any.
+
+        Profiles read this in their planning step: when a fixed plan
+        is present, the capability validates and stores it instead of
+        requesting a new plan, so no planner call is made.
+        """
+        return self._engine.fixed_plan_record()
+
     def selected_plan(self) -> dict[str, Any]:
         """Immutable copy of the engine-selected attempt's plan.
 
@@ -605,6 +614,7 @@ class _Runner:
         role_binding_sources: Mapping[str, Mapping[str, str]] | None = None,
         spec: Mapping[str, Any] | None = None,
         spec_digest: str | None = None,
+        fixed_plan: Mapping[str, Any] | None = None,
     ) -> None:
         if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
             raise TypeError(f"max_attempts must be an integer, got {max_attempts!r}")
@@ -648,6 +658,9 @@ class _Runner:
                 spec_digest = sha256_canonical(spec)
         self._spec = spec
         self._spec_digest = spec_digest
+        self._fixed_plan: dict[str, Any] | None = (
+            copy.deepcopy(dict(fixed_plan)) if isinstance(fixed_plan, Mapping) else None
+        )
         self.manifest = manifest
         self.registry = dict(registry)
         self.source = source
@@ -736,6 +749,11 @@ class _Runner:
                 **({"local_critic": True} if local_critic else {}),
                 "spec": dict(self._spec),
                 "spec_digest": self._spec_digest,
+                **(
+                    {"fixed_plan": copy.deepcopy(dict(self._fixed_plan))}
+                    if self._fixed_plan is not None
+                    else {}
+                ),
             },
             limits=dict(manifest.limits),
         )
@@ -952,6 +970,12 @@ class _Runner:
     def spec_digest_value(self) -> str:
         """Canonical SHA-256 of the normalised GenerationSpec."""
         return str(self._spec_digest)
+
+    def fixed_plan_record(self) -> dict[str, Any] | None:
+        """Immutable copy of the caller-supplied fixed plan, if any."""
+        if self._fixed_plan is None:
+            return None
+        return copy.deepcopy(dict(self._fixed_plan))
 
     def _enforce_plan_bounds(self, plan: Mapping[str, Any]) -> None:
         """Refuse an over-limit plan before generation or checks run.
@@ -1894,6 +1918,7 @@ def execute(
     role_bindings: Mapping[str, Mapping[str, Any]] | None = None,
     role_binding_sources: Mapping[str, Mapping[str, str]] | None = None,
     spec: Mapping[str, Any] | None = None,
+    fixed_plan: Mapping[str, Any] | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """Execute a manifest graph; return (exit code, outcome summary).
 
@@ -1907,7 +1932,9 @@ def execute(
     is normalised against the manifest and the caller flags before
     anything else runs, and an unsupported request is refused with a
     durable terminal record before any model call and before any
-    generation.
+    generation. ``fixed_plan`` is an optional saved plan to replay: the
+    planning step validates and stores it instead of requesting a new
+    plan, so no planner call is made.
     """
     import sys as _sys
 
@@ -1982,6 +2009,7 @@ def execute(
             role_binding_sources=role_binding_sources,
             spec=normalized_spec,
             spec_digest=spec_digest,
+            fixed_plan=fixed_plan,
         )
     except (RunnerError, PermissionDenied) as exc:
         _say(f"[engine] composition refused: {exc}")

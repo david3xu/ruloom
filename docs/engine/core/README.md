@@ -233,6 +233,14 @@ generation, with a durable terminal `refused` run record
 `strategy` key validated against the run's strategy set, so the
 planner and repair can only propose values inside the spec-supported
 bounds; a plan omitting the key runs under the run's own strategy.
+A saved plan replays deterministically with `--plan PATH`: the file
+must decode to a plan object, is validated against the same
+spec-supported bounds as a fresh proposal, and is stored with no
+planner call, so the same plan plus the same seed yields identical
+`data.csv` bytes. Only the initial plan is fixed; repair after a
+failed replay still uses the planner. Compare data digests across
+replays, never release ZIPs: the ZIP carries per-run identity and log
+bytes, so it differs per run by design.
 One user-facing `evidence-report.md` per run is rendered from stored
 records only and recomputed never; it ships in the run directory and,
 when the profile release block declares it, as an `engine-report`
