@@ -415,6 +415,46 @@ def test_spawn_gate_still_refuses_real_options_in_option_slots(
         )
 
 
+def test_spawn_gate_refuses_trailing_denied_flag_and_inline_equals_swallow(
+    tmp_path: Path,
+) -> None:
+    """Evasion holes: a trailing denied flag is refused; --opt=value swallows nothing.
+
+    The prompt exemption fires only for the real ``--contributor-mode
+    <on|off>`` tail, so a denied flag in final position -- appended
+    after the prompt, bare, or trailing a mid-shape argv -- is scanned
+    as an option and refused. An inline ``--opt=value`` carries its
+    value after the ``=``, so a denied flag in the next element is
+    still refused rather than swallowed as the value.
+    """
+    model = MuseCLIModel(allowed_root=tmp_path)
+    schema_file = tmp_path / "schema.json"
+    schema_file.write_text(json.dumps({"type": "object"}), encoding="utf-8")
+    # Hole A: denied flag in final position is an option, not the prompt.
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        enforce_spawn_policy(model._argv(str(schema_file), "make a plan") + ["--tool"])
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        enforce_spawn_policy(["muse", "exec", "--tool"])
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        enforce_spawn_policy(
+            ["muse", "exec", "--json", "--contributor-mode", "on", "hi", "--tool"]
+        )
+    # Hole B: inline "=" does not consume the next element.
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        enforce_spawn_policy(
+            [
+                "muse",
+                "exec",
+                "--workspace=--tool",
+                "--tool",
+                "evil",
+                "--contributor-mode",
+                "on",
+                "hi",
+            ]
+        )
+
+
 def test_complete_records_requested_and_observed_permissions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
