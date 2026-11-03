@@ -1,0 +1,378 @@
+{
+  "date": "2026-11-04 Australia/Perth",
+  "code_commit": "6385c9eee337ef81a1322008280b80fe438c6779",
+  "execution_order": [
+    "claude-final PASS",
+    "muse-final PASS"
+  ],
+  "regression_suite": {
+    "passed": 756,
+    "skipped_source_dependent": 14
+  },
+  "gate": {
+    "pass_outcomes": 47,
+    "executed_rules": 43,
+    "planned_stubs": 4,
+    "failed": 0
+  },
+  "initial_findings": [
+    "Unsupported AGY settings were refused before inference and removed; no global settings were edited.",
+    "Claude initially interpreted demo purpose as an unsupported fitness guarantee; request wording was clarified while retaining refusal and unsupported-requirement enforcement."
+  ],
+  "trials": [
+    {
+      "provider_transport": "agy_cli",
+      "family": "claude",
+      "requested_model": "claude-opus-5-5-high",
+      "reported_model": "claude-opus-5-5-high",
+      "effort": "high",
+      "status": "pass",
+      "software_revision": "6385c9eee337ef81a1322008280b80fe438c6779",
+      "source_sha256": "ded22e4ddc0a2cfc103d519f391c48176fe37f7de383548e2aebcb6e95a931bf",
+      "request": "Create exactly 100 synthetic rows using fitted_gaussian_disclosed with seed 42 for a software demo. Keep the supported scalar output.",
+      "scope": "live model, invented scalar fixture only",
+      "operator_decisions": "automated engineering-test inputs; no owner/scientific approval",
+      "wall_seconds": 86.38,
+      "prepare": {
+        "usage": {
+          "cached_tokens": 0,
+          "calls": 1,
+          "input_tokens": 17894,
+          "model": "claude-opus-5-5-high",
+          "output_tokens": 376,
+          "reasoning_tokens": 0
+        },
+        "source_rows_sent": false,
+        "interpretation": {
+          "n_rows": 100,
+          "outputs": [
+            "scalar"
+          ],
+          "seed": 42,
+          "strategy": "fitted_gaussian_disclosed",
+          "summary": "Interpretation: generate exactly 100 synthetic rows with the fitted_gaussian_disclosed strategy, using random seed 42. Output stays as the supported scalar CSV. The rows are meant for a software demo. That is only context and doesn't imply any guarantee about quality, privacy, fitness for purpose or licensing, and the user didn't ask for one. The source file is supplied and bound locally by the tool. No new fields, custom distributions, images, privacy guarantees or licensing guarantees were requested, so nothing is listed as unsupported. This draft can't establish data quality or rights.",
+          "unsupported": []
+        },
+        "tools_used": [
+          "finish"
+        ],
+        "observed_permission_mode": "always-proceed",
+        "confinement": "not-established"
+      },
+      "stages": {
+        "prepare": {
+          "exit_code": 0,
+          "wall_seconds": 44.23,
+          "model_invocations": []
+        },
+        "offline-first": {
+          "exit_code": 0,
+          "wall_seconds": 0.025,
+          "rows": 100,
+          "data_sha256": "60580d83515a66c7959471ddd85c429a45511f3cf24b6b265c931b222e070643",
+          "checks": [
+            {
+              "band_position": null,
+              "detail": "100 rows",
+              "name": "has_rows",
+              "status": "pass"
+            },
+            {
+              "band_position": null,
+              "detail": "columns ['id', 'value', 'label']",
+              "name": "schema_columns",
+              "status": "pass"
+            },
+            {
+              "band_position": null,
+              "detail": "100 rows as planned",
+              "name": "row_count",
+              "status": "pass"
+            },
+            {
+              "band_position": 0.19263030315789445,
+              "detail": "relative drift 0.048158 <= 0.25",
+              "name": "mean_value",
+              "status": "pass"
+            }
+          ],
+          "consumer_verified": true,
+          "release_sha256": "350403d690cb7db77d4dbe89b71fa37a197d956bbc7a34051e1ad328cf61f5a5",
+          "model_invocations": []
+        },
+        "offline-replay": {
+          "exit_code": 0,
+          "wall_seconds": 0.013,
+          "rows": 100,
+          "data_sha256": "60580d83515a66c7959471ddd85c429a45511f3cf24b6b265c931b222e070643",
+          "checks": [
+            {
+              "band_position": null,
+              "detail": "100 rows",
+              "name": "has_rows",
+              "status": "pass"
+            },
+            {
+              "band_position": null,
+              "detail": "columns ['id', 'value', 'label']",
+              "name": "schema_columns",
+              "status": "pass"
+            },
+            {
+              "band_position": null,
+              "detail": "100 rows as planned",
+              "name": "row_count",
+              "status": "pass"
+            },
+            {
+              "band_position": 0.19263030315789445,
+              "detail": "relative drift 0.048158 <= 0.25",
+              "name": "mean_value",
+              "status": "pass"
+            }
+          ],
+          "consumer_verified": true,
+          "release_sha256": "18d2fddfeba1dcfb487fb7f71ee6746c65dd8ef8eddc9911697784c35616dda1",
+          "model_invocations": []
+        },
+        "live-planner": {
+          "exit_code": 0,
+          "wall_seconds": 42.095,
+          "rows": 100,
+          "data_sha256": "60580d83515a66c7959471ddd85c429a45511f3cf24b6b265c931b222e070643",
+          "checks": [
+            {
+              "band_position": null,
+              "detail": "100 rows",
+              "name": "has_rows",
+              "status": "pass"
+            },
+            {
+              "band_position": null,
+              "detail": "columns ['id', 'value', 'label']",
+              "name": "schema_columns",
+              "status": "pass"
+            },
+            {
+              "band_position": null,
+              "detail": "100 rows as planned",
+              "name": "row_count",
+              "status": "pass"
+            },
+            {
+              "band_position": 0.19263030315789445,
+              "detail": "relative drift 0.048158 <= 0.25",
+              "name": "mean_value",
+              "status": "pass"
+            }
+          ],
+          "consumer_verified": true,
+          "release_sha256": "6d4cdfd712e66b4510d50f54f6f6e85c7fcd20909ff4694d8a6d5a0ffdd0e3b9",
+          "model_invocations": [
+            {
+              "requested_model": "claude-opus-5-5-high",
+              "reported_model": "claude-opus-5-5-high",
+              "effort": "high",
+              "usage": {
+                "cached_tokens": 0,
+                "calls": 1,
+                "input_tokens": 17548,
+                "model": "claude-opus-5-5-high",
+                "output_tokens": 146,
+                "reasoning_tokens": 0
+              },
+              "tools_used": [
+                "finish"
+              ],
+              "confinement": "not-established"
+            }
+          ]
+        },
+        "decline": {
+          "exit_code": 2,
+          "wall_seconds": 0.008,
+          "model_invocations": []
+        }
+      }
+    },
+    {
+      "provider_transport": "meta_cli",
+      "family": "meta",
+      "requested_model": "muse-spark-1.3",
+      "reported_model": "muse-spark-1.3",
+      "effort": "high",
+      "status": "pass",
+      "software_revision": "6385c9eee337ef81a1322008280b80fe438c6779",
+      "source_sha256": "ded22e4ddc0a2cfc103d519f391c48176fe37f7de383548e2aebcb6e95a931bf",
+      "request": "Create exactly 100 synthetic rows using fitted_gaussian_disclosed with seed 42 for a software demo. Keep the supported scalar output.",
+      "scope": "live model, invented scalar fixture only",
+      "operator_decisions": "automated engineering-test inputs; no owner/scientific approval",
+      "wall_seconds": 65.979,
+      "prepare": {
+        "usage": {
+          "cached_tokens": 0,
+          "calls": 1,
+          "input_tokens": 30996,
+          "model": "muse-spark-1.3",
+          "output_tokens": 452,
+          "reasoning_tokens": 367
+        },
+        "source_rows_sent": false,
+        "interpretation": {
+          "n_rows": 100,
+          "outputs": [
+            "scalar"
+          ],
+          "seed": 42,
+          "strategy": "fitted_gaussian_disclosed",
+          "summary": "Interpreted as 100 synthetic rows using strategy fitted_gaussian_disclosed with seed 42, scalar CSV output. Intended use is a software demo, treated as context only with no privacy, quality, fitness, or licensing guarantee requested.",
+          "unsupported": []
+        },
+        "tools_used": null,
+        "observed_permission_mode": null,
+        "confinement": "not-established"
+      },
+      "stages": {
+        "prepare": {
+          "exit_code": 0,
+          "wall_seconds": 33.628,
+          "model_invocations": []
+        },
+        "offline-first": {
+          "exit_code": 0,
+          "wall_seconds": 0.026,
+          "rows": 100,
+          "data_sha256": "60580d83515a66c7959471ddd85c429a45511f3cf24b6b265c931b222e070643",
+          "checks": [
+            {
+              "band_position": null,
+              "detail": "100 rows",
+              "name": "has_rows",
+              "status": "pass"
+            },
+            {
+              "band_position": null,
+              "detail": "columns ['id', 'value', 'label']",
+              "name": "schema_columns",
+              "status": "pass"
+            },
+            {
+              "band_position": null,
+              "detail": "100 rows as planned",
+              "name": "row_count",
+              "status": "pass"
+            },
+            {
+              "band_position": 0.19263030315789445,
+              "detail": "relative drift 0.048158 <= 0.25",
+              "name": "mean_value",
+              "status": "pass"
+            }
+          ],
+          "consumer_verified": true,
+          "release_sha256": "2adc4813ebf534bbf3221027d25265556430120d2280646cfcbd46a44a9eb010",
+          "model_invocations": []
+        },
+        "offline-replay": {
+          "exit_code": 0,
+          "wall_seconds": 0.013,
+          "rows": 100,
+          "data_sha256": "60580d83515a66c7959471ddd85c429a45511f3cf24b6b265c931b222e070643",
+          "checks": [
+            {
+              "band_position": null,
+              "detail": "100 rows",
+              "name": "has_rows",
+              "status": "pass"
+            },
+            {
+              "band_position": null,
+              "detail": "columns ['id', 'value', 'label']",
+              "name": "schema_columns",
+              "status": "pass"
+            },
+            {
+              "band_position": null,
+              "detail": "100 rows as planned",
+              "name": "row_count",
+              "status": "pass"
+            },
+            {
+              "band_position": 0.19263030315789445,
+              "detail": "relative drift 0.048158 <= 0.25",
+              "name": "mean_value",
+              "status": "pass"
+            }
+          ],
+          "consumer_verified": true,
+          "release_sha256": "0832a2fe6edb7859e8c22708ccf067ba47c00f545a3c03f74d4cc268ffaa7652",
+          "model_invocations": []
+        },
+        "live-planner": {
+          "exit_code": 0,
+          "wall_seconds": 32.294,
+          "rows": 100,
+          "data_sha256": "60580d83515a66c7959471ddd85c429a45511f3cf24b6b265c931b222e070643",
+          "checks": [
+            {
+              "band_position": null,
+              "detail": "100 rows",
+              "name": "has_rows",
+              "status": "pass"
+            },
+            {
+              "band_position": null,
+              "detail": "columns ['id', 'value', 'label']",
+              "name": "schema_columns",
+              "status": "pass"
+            },
+            {
+              "band_position": null,
+              "detail": "100 rows as planned",
+              "name": "row_count",
+              "status": "pass"
+            },
+            {
+              "band_position": 0.19263030315789445,
+              "detail": "relative drift 0.048158 <= 0.25",
+              "name": "mean_value",
+              "status": "pass"
+            }
+          ],
+          "consumer_verified": true,
+          "release_sha256": "287faf3a762042e766efcbadaf6874160dddae071bd1cd9546131c90a5c7536e",
+          "model_invocations": [
+            {
+              "requested_model": "muse-spark-1.3",
+              "reported_model": "muse-spark-1.3",
+              "effort": "high",
+              "usage": {
+                "cached_tokens": 0,
+                "calls": 1,
+                "input_tokens": 30855,
+                "model": "muse-spark-1.3",
+                "output_tokens": 319,
+                "reasoning_tokens": 291
+              },
+              "tools_used": null,
+              "confinement": "not-established"
+            }
+          ]
+        },
+        "decline": {
+          "exit_code": 2,
+          "wall_seconds": 0.009,
+          "model_invocations": []
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "One invented scalar case, not an independent provider benchmark.",
+    "No scientific, privacy, real-data or image-quality conclusion.",
+    "AGY model identity is CLI-reported, not independently attested backend weights.",
+    "Only finish tool events were observed for AGY; exposed tools mean no tool confinement is established.",
+    "Engineering accept/reject inputs were automated, not owner approval.",
+    "Raw run logs and bundles remain machine-local outside the repository."
+  ]
+}
