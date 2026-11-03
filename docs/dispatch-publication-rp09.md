@@ -138,7 +138,14 @@ persisted acceptance record before any byte is copied:
   without copying again (including the ZIP-already-matches path, and
   via plain publication when the bytes already match), so a crash at
   any write phase (intent, quarantine, copy, sidecar, final record)
-  resumes from the persisted intent with exactly one entry.
+  resumes from the persisted intent with exactly one entry. A
+  persisted intent authorises only its recorded observed bytes plus
+  the accepted replacement (JP-01, audit C01): a retry that finds new
+  bytes planted mid-repair (after the quarantine move) refuses
+  without mutation -- the new arrival stays at the destination, the
+  earlier quarantine stays intact, and the pending intent and history
+  are unchanged, resuming to exactly one entry once the new bytes are
+  separately set aside.
 - Publication never overwrites destination bytes it cannot attribute
   to its own record: unattributed foreign bytes refuse loudly, and one
   item ships exactly one release. Publication item ids take the same

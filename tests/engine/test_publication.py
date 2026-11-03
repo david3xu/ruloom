@@ -1172,6 +1172,86 @@ def test_repair_persists_intent_before_copy_and_resumes(
     assert list((base / "published").glob("*.tmp.*")) == []
 
 
+def test_repair_new_arrival_refuses_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """JP-01 C01: a retry after new bytes arrive mid-repair refuses.
+
+    The persisted intent authorises only its recorded observed bytes
+    plus the accepted replacement: after the quarantine move, a new
+    arrival at the destination is a third digest, so the retry
+    refuses without mutating anything -- the new bytes stay at the
+    destination, the earlier quarantine stays intact, and the pending
+    intent and repair history are unchanged. Once the new arrival is
+    separately set aside, the original intent still resumes to a
+    single entry.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path, foreign=b"stray copy A"
+    )
+    found_digest = sha256_bytes(b"stray copy A")
+
+    def boom(dest_dir: Path, dest_name: str, payload: bytes) -> Path:
+        raise RuntimeError("injected copy failure")
+
+    monkeypatch.setattr(publication, "_stage_and_commit", boom)
+    with pytest.raises(RuntimeError, match="injected copy failure"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after stray copy",
+            now=T0 + 10.0,
+        )
+    monkeypatch.undo()
+    assert not dest.exists()
+    preserved = dest.parent / f"{dest.name}.replaced.{found_digest}"
+    assert preserved.read_bytes() == b"stray copy A"
+
+    dest.write_bytes(b"unrelated new arrival")
+    with pytest.raises(PublicationError, match="already in progress"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="retry after new arrival",
+            now=T0 + 20.0,
+        )
+    assert dest.read_bytes() == b"unrelated new arrival"
+    assert preserved.read_bytes() == b"stray copy A"
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "complete"
+    assert record.get("repairs", []) == []
+    pending = record.get("pending_repair")
+    assert isinstance(pending, dict)
+    assert pending["authority"] == "team-a"
+    assert pending["reason"] == "restore after stray copy"
+    assert pending["found"] == found_digest
+    assert pending["restored"] == first["zip_sha256"]
+    assert pending["preserved"] == preserved.name
+    assert pending["at"] == T0 + 10.0
+    assert list((base / "published").glob("*.tmp.*")) == []
+
+    dest.unlink()
+    identity = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="retry after new arrival set aside",
+        now=T0 + 30.0,
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert dest.read_bytes() == shipped
+    assert preserved.read_bytes() == b"stray copy A"
+    record = publisher.get(item["item_id"])
+    assert record is not None and "pending_repair" not in record
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    assert repairs[0]["found"] == found_digest
+    assert repairs[0]["restored"] == first["zip_sha256"]
+
+
 def test_repair_crash_during_preserve_resumes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

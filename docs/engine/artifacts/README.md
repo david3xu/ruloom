@@ -147,7 +147,11 @@ bytes go) before mutating, preserves any replaced bytes beside the
 destination under a digest-derived name, and finalises the intent
 into the record idempotently (a retry after the copy finalises
 without copying again; plain publication finalises a pending intent
-left by an interrupted repair). Verify and copy operate on one captured
+left by an interrupted repair). A persisted intent authorises only
+its recorded observed bytes plus the accepted replacement (JP-01):
+a retry that finds new bytes planted mid-repair refuses without
+mutation, leaving the new arrival, the earlier quarantine, and the
+pending intent untouched. Verify and copy operate on one captured
 immutable byte snapshot: the run file is never re-read for shippable
 bytes, a post-acceptance change refuses at the stability guard, and
 the snapshot, destination, and persisted accepted digests must agree
