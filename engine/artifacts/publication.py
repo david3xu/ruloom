@@ -67,7 +67,11 @@ replaced bytes go) before moving any byte, then restores the recorded
 bytes, preserves any replaced bytes beside the destination under a
 digest-derived name, and finalises the intent into a repairs entry
 idempotently (a retry after the copy finalises without copying
-again). Publication never
+again). Finalisation verifies the whole bundle before the pending
+intent clears: the detached checksum must carry exactly the accepted
+digest (a matching ZIP skips the copy but never skips unfinished
+outputs), and a named quarantine must still hold the recorded found
+bytes. Publication never
 overwrites destination bytes it cannot attribute to its own record:
 foreign bytes refuse loudly instead.
 
@@ -1352,7 +1356,46 @@ class Publisher:
         (authority, reason, time, found state), so a retry after the
         copy appends exactly one entry for that intent and clears it;
         a later call with no pending intent is a no-op elsewhere.
+
+        Finalisation verifies the whole delivery bundle before the
+        pending operation is cleared: the detached checksum file must
+        carry exactly the accepted digest (a missing or wrong sidecar
+        is rewritten -- a matching ZIP skips the copy but never skips
+        unfinished outputs), and any quarantine the intent names must
+        still hold the recorded found bytes (preserved evidence the
+        repair promised can never be recomputed, so a missing or
+        diverged quarantine refuses instead of finalising a false
+        preservation claim).
         """
+        dest_name = str(prior.get("dest_name"))
+        expected = f"{snapshot_digest}  {dest_name}\n".encode()
+        sidecar = self.dest_dir / f"{dest_name}.sha256"
+        try:
+            sidecar_current = sidecar.read_bytes()
+        except OSError:
+            sidecar_current = None
+        if sidecar_current != expected:
+            _atomic_write_bytes(sidecar, expected)
+        preserved = intent.get("preserved")
+        if preserved is not None:
+            quarantine = self.dest_dir / str(preserved)
+            try:
+                inside = quarantine.resolve().parent == self.dest_dir.resolve()
+            except OSError:
+                inside = False
+            try:
+                intact = quarantine.is_file() and sha256_bytes(
+                    quarantine.read_bytes()
+                ) == intent.get("found")
+            except OSError:
+                intact = False
+            if not inside or not intact:
+                raise PublicationError(
+                    f"item {clean_id!r} names preserved bytes "
+                    f"{str(preserved)!r} that no longer attest the recorded "
+                    "found bytes: refusing to finalise (investigate before "
+                    "clearing the pending repair)"
+                )
         record = {
             "item_id": clean_id,
             "authority": prior.get("authority"),
