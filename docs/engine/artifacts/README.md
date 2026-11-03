@@ -156,7 +156,11 @@ before the pending operation clears (JP-02): the detached checksum
 must carry exactly the accepted digest -- a matching ZIP skips the
 copy but never skips unfinished outputs -- and any quarantine the
 intent names must still hold the recorded found bytes, otherwise
-finalisation refuses. Verify and copy operate on one captured
+finalisation refuses. The matching-ZIP/no-pending fast paths verify
+the sidecar too (KP-01): plain publication refuses a missing or
+wrong checksum with an actionable repair message, while authorised
+repair restores the exact sidecar without recopying the ZIP and
+records the checksum-only intent. Verify and copy operate on one captured
 immutable byte snapshot: the run file is never re-read for shippable
 bytes, a post-acceptance change refuses at the stability guard, and
 the snapshot, destination, and persisted accepted digests must agree

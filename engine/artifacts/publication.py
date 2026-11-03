@@ -57,14 +57,20 @@ again) or a destination whose bytes hash to the source (adopt it and
 mark complete). An in-progress record alone never establishes
 ownership of other bytes: only a matching content digest adopts an
 existing destination, in every phase. Re-publishing a complete record whose destination
-still matches is a no-op returning the same identity. Once the record
-is complete the destination must keep attesting the recorded bytes:
+still matches -- the ZIP and its detached checksum both attesting
+the recorded bytes -- is a no-op returning the same identity. A
+complete bundle whose ZIP still matches but whose detached checksum
+is missing or wrong refuses plain re-publication: only the
+authorised ``repair`` operation restores it, without recopying the
+ZIP, recording the checksum-only intent in the repair history. Once
+the record is complete the destination must keep attesting the recorded bytes:
 a missing, corrupt, or foreign destination refuses re-publication
 instead of being silently re-copied -- recovery goes through the
 authorised ``repair`` operation, which persists the identified
 intent (who, when, why, what was found, what will be restored, where
 replaced bytes go) before moving any byte, then restores the recorded
-bytes, preserves any replaced bytes beside the destination under a
+bytes (a checksum-only repair restores just the sidecar when the ZIP
+already matches), preserves any replaced bytes beside the destination under a
 digest-derived name, and finalises the intent into a repairs entry
 idempotently (a retry after the copy finalises without copying
 again). Finalisation verifies the whole bundle before the pending
@@ -226,6 +232,45 @@ def _quarantine_replaced(dest: Path, preserved_path: Path, *, found: str) -> Non
         dest.rename(preserved_path)
 
 
+#: Observed states for a checksum-only repair: the destination ZIP
+#: still holds the accepted bytes while its detached checksum is
+#: missing (sidecar absent) or present-but-wrong. A checksum-only
+#: intent carries no quarantine (``preserved`` is None): the ZIP is
+#: never moved, only the sidecar is rewritten.
+CHECKSUM_ABSENT = "checksum-absent"
+CHECKSUM_MISMATCH = "checksum-mismatch"
+
+
+def _expected_checksum_bytes(snapshot_digest: str, dest_name: str) -> bytes:
+    """The exact detached-checksum content for accepted bytes."""
+    return f"{snapshot_digest}  {dest_name}\n".encode()
+
+
+def _sidecar_matches(dest_dir: Path, dest_name: str, snapshot_digest: str) -> bool:
+    """True when the detached checksum carries exactly the accepted digest.
+
+    Shared by the matching-ZIP fast paths and the repair finaliser,
+    so no early return can report a complete verification while
+    leaving the checksum invalid.
+    """
+    try:
+        current = (dest_dir / f"{dest_name}.sha256").read_bytes()
+    except OSError:
+        return False
+    return current == _expected_checksum_bytes(snapshot_digest, dest_name)
+
+
+def _checksum_found_state(dest_dir: Path, dest_name: str) -> str:
+    """Classify a damaged detached checksum: missing or present-but-wrong.
+
+    Call only after :func:`_sidecar_matches` is False, so a present
+    sidecar here is known to carry the wrong content.
+    """
+    if (dest_dir / f"{dest_name}.sha256").is_file():
+        return CHECKSUM_MISMATCH
+    return CHECKSUM_ABSENT
+
+
 def _check_pending_repair(
     clean_id: str,
     dest_dir: Path,
@@ -276,7 +321,7 @@ def _check_pending_repair(
             "refusing (one item ships one release)"
         )
     preserved = intent.get("preserved")
-    if found == "absent":
+    if found == "absent" or found in (CHECKSUM_ABSENT, CHECKSUM_MISMATCH):
         if preserved is not None:
             raise PublicationError(
                 f"item {clean_id!r} carries a malformed pending repair: refusing"
@@ -316,9 +361,14 @@ def _pending_resumes(
     orphan the already-quarantined bytes. A persisted intent
     authorises only its recorded observed bytes plus the accepted
     replacement; an existing quarantine never establishes ownership of
-    the current destination.
+    the current destination. A checksum-only intent resumes only while
+    the destination still holds the accepted bytes: the ZIP was never
+    moved, so any divergence is a new arrival the intent never
+    authorised.
     """
     found = pending.get("found")
+    if found in (CHECKSUM_ABSENT, CHECKSUM_MISMATCH):
+        return current == snapshot_digest
     if current is not None and current != found and current != snapshot_digest:
         return False
     preserved = pending.get("preserved")
@@ -1037,6 +1087,13 @@ class Publisher:
         ):
             pending_raw = prior.get("pending_repair")
             if pending_raw is None:
+                if not _sidecar_matches(self.dest_dir, dest_name, snapshot_digest):
+                    raise PublicationError(
+                        f"item {clean_id!r} is complete but its detached "
+                        f"checksum {dest_name + '.sha256'!r} no longer carries "
+                        "the recorded digest: refusing (recover with the "
+                        "authorised repair operation, never by re-publishing)"
+                    )
                 return {
                     "item_id": clean_id,
                     "dest": str(dest),
@@ -1165,7 +1222,10 @@ class Publisher:
         of dropping them, and finalises the intent into the record
         idempotently. A destination that still matches with no
         pending intent needs no repair and returns the same identity
-        without recording anything; a matching destination with a
+        without recording anything -- unless its detached checksum no
+        longer carries the recorded digest, in which case the repair
+        restores just the sidecar, without recopying the ZIP, and
+        records the checksum-only intent; a matching destination with a
         pending intent finalises that intent instead of copying again.
         """
         at = _resolve_now(now)
@@ -1260,13 +1320,36 @@ class Publisher:
         current = sha256_bytes(dest.read_bytes()) if dest.is_file() else None
         if current == snapshot_digest:
             if pending is None:
-                return {
-                    "item_id": clean_id,
-                    "dest": str(dest),
-                    "zip_sha256": snapshot_digest,
-                    "artifact_sha256": identity["artifact_sha256"],
-                    "members": list(identity["members"]),
+                if _sidecar_matches(self.dest_dir, dest_name, snapshot_digest):
+                    return {
+                        "item_id": clean_id,
+                        "dest": str(dest),
+                        "zip_sha256": snapshot_digest,
+                        "artifact_sha256": identity["artifact_sha256"],
+                        "members": list(identity["members"]),
+                    }
+                intent = {
+                    "at": at,
+                    "authority": authority,
+                    "reason": reason,
+                    "found": _checksum_found_state(self.dest_dir, dest_name),
+                    "restored": snapshot_digest,
+                    "preserved": None,
                 }
+                _atomic_write_json(
+                    record_path,
+                    {**prior, "updated_at": at, "pending_repair": intent},
+                )
+                return self._finalise_repair(
+                    record_path,
+                    prior,
+                    clean_id,
+                    previous,
+                    intent,
+                    identity,
+                    snapshot_digest,
+                    now=at,
+                )
             return self._finalise_repair(
                 record_path,
                 prior,
@@ -1365,10 +1448,11 @@ class Publisher:
         still hold the recorded found bytes (preserved evidence the
         repair promised can never be recomputed, so a missing or
         diverged quarantine refuses instead of finalising a false
-        preservation claim).
+        preservation claim). A checksum-only intent names no
+        quarantine, so only the sidecar is restored.
         """
         dest_name = str(prior.get("dest_name"))
-        expected = f"{snapshot_digest}  {dest_name}\n".encode()
+        expected = _expected_checksum_bytes(snapshot_digest, dest_name)
         sidecar = self.dest_dir / f"{dest_name}.sha256"
         try:
             sidecar_current = sidecar.read_bytes()
