@@ -67,10 +67,10 @@ fidelity failures: `repeated_depths_masked_out` on 20LCDD003, DDG007,
 HD012. `swir_answer_rate` was skipped on both arms for all four holes:
 the calibrated band is the vacuous `[0.0, 1.0]`, so synthetic SWIR
 missingness is unvalidated on either arm (the skip sits in the fidelity
-group; skips do not fail the product verdict). Baseline check counts
-differ from pipeline counts by one constraint check: the harness
-prepends a `csv_schema` check to baseline reports (the product's own
-validate step does not emit one); group outcomes are unaffected.
+group; skips do not fail the product verdict). Baseline and
+pipeline reports both carry the `csv_schema` check first: the
+product's own validate step records it in `run_checks`, and the
+harness mirrors that same step; group outcomes are unaffected.
 Pipeline artifact sha256 per hole: 20LCDD003 `89ad39198c28…`, DDG007
 `7332003fc6fd…`, HD012 `20dc5978a637…`, NCB0003 `ec5d0cd17382…` (full
 hashes in the per-hole JSON).

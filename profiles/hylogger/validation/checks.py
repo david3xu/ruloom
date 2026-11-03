@@ -247,6 +247,12 @@ def run_checks(
     report = CheckReport(artifact_name=artifact_name, artifact_sha256=sha)
     add = report.results.append
 
+    # The schema check rides with the report itself, so the shipped
+    # validation report and the engine-bound check results agree on
+    # exactly one passing ``csv_schema``: successful parsing is the
+    # schema evidence, and both readers consume this same list.
+    add(CheckResult("csv_schema", PASS, f"{len(samples)} rows, header ok"))
+
     if not samples:
         add(CheckResult("has_rows", FAIL, "empty artifact"))
         return report
@@ -798,14 +804,12 @@ def check_artifact_csv(
             artifact_sha256=sha,
             results=[CheckResult("csv_schema", FAIL, str(exc))],
         )
-    report = run_checks(
+    # ``run_checks`` already records the passing ``csv_schema`` first,
+    # so the parsed artifact carries it exactly once here as well.
+    return run_checks(
         samples,
         thresholds,
         source_samples=source_samples,
         artifact_name=artifact_name,
         artifact_sha256=sha,
     )
-    report.results.insert(
-        0, CheckResult("csv_schema", PASS, f"{len(samples)} rows, header ok")
-    )
-    return report

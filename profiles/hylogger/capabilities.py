@@ -384,24 +384,11 @@ def validate(ctx: Any) -> None:
         artifact_sha256=artifact.sha256,
     )
     ctx.set_report(report)
-    catalog = _catalog(ctx)
-    schema_entry = catalog.get("csv_schema", {})
-    schema_threshold = schema_entry.get("threshold", {"source": "literal"})
-    items = [
-        {
-            "check_id": "csv_schema",
-            "kind": schema_entry.get("kind", "constraint"),
-            "status": "pass",
-            "measured": f"{len(samples)} rows, header ok",
-            "threshold": schema_threshold,
-            "threshold_source": schema_threshold.get("source", "literal")
-            if isinstance(schema_threshold, dict)
-            else "literal",
-            "detail": f"{len(samples)} rows, header ok",
-        }
-    ]
-    items.extend(_items(ctx, report))
-    ctx.record_checks(items)
+    # The shipped report and the engine-bound checks read the same
+    # result list, so the passing ``csv_schema`` recorded by
+    # ``run_checks`` is stored exactly once on each side (a second
+    # entry here would read as duplicated coverage and refuse).
+    ctx.record_checks(_items(ctx, report))
 
 
 def repair(ctx: Any) -> None:

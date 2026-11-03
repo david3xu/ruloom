@@ -158,7 +158,12 @@ persisted acceptance record before any byte is copied:
   repair message, recording nothing, while authorised repair persists
   a checksum-only intent (`checksum-absent`/`checksum-mismatch`, no
   quarantine), restores the exact sidecar content without recopying
-  the ZIP, and finalises to exactly one history entry.
+  the ZIP, and finalises to exactly one history entry. HyLogger runs
+  ship exactly one passing `csv_schema` (LP-01): `run_checks` records
+  the schema check first in the validation report, and the validate
+  step stores that same list for both the shipped report and the
+  engine-bound checks -- so publication coverage passes while the
+  internal evidence still reads exactly once, never duplicated.
 - Publication never overwrites destination bytes it cannot attribute
   to its own record: unattributed foreign bytes refuse loudly, and one
   item ships exactly one release. Publication item ids take the same
@@ -225,7 +230,7 @@ Control cases (committed tests, no sleeps — clocks are injected):
   on retry (HP-01 A01): same key with a changed `max_rows`, a changed
   attempt bound, or a changed/added spec overlay refuses with history
   and fencing kept.
-- `tests/engine/test_publication.py` (53 tests): publish/download
+- `tests/engine/test_publication.py` (54 tests): publish/download
   round trip with hash equality to the reviewed `release.sha256`,
   idempotent re-publish, interrupted-copy resume to identical bytes,
   interrupted-mark adoption, in-progress foreign-destination refusal
@@ -243,7 +248,11 @@ Control cases (committed tests, no sleeps — clocks are injected):
   quarantine refuses finalisation via repair retry, via plain
   publication, and inside a single repair call -- keeping the pending
   intent with no entry -- and recovers to one original entry once the
-  preserved bytes are restored with no ZIP recopy,
+  preserved bytes are restored with no ZIP recopy, plus schema-once
+  publication (LP-01): the installed-wheel HyLogger CLI run publishes
+  with exactly one passing `csv_schema` in the shipped report
+  (accept -> publish -> download with sidecar, report, source, and
+  row-count verification),
   foreign-authority denial, unsucceeded /
   wrong-run / changed-bytes refusal, missing and bit-flipped release
   refusal, foreign-destination refusal, one-item-one-release, download

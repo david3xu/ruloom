@@ -307,17 +307,15 @@ def score_samples(
 ) -> CheckReport:
     """Run the product checks over samples (mirrors the validate step)."""
     sha = artifact_sha256 or sha256_bytes(to_csv_bytes(list(samples)))
-    report = run_checks(
+    # ``run_checks`` records the passing ``csv_schema`` first, exactly
+    # as the validate step stores it: no second entry is added here.
+    return run_checks(
         list(samples),
         thresholds,
         source_samples=list(source_samples),
         artifact_name=artifact_name,
         artifact_sha256=sha,
     )
-    report.results.insert(
-        0, CheckResult("csv_schema", "pass", f"{len(samples)} rows, header ok")
-    )
-    return report
 
 
 def _save_baseline_invocation(

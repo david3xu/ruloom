@@ -164,7 +164,12 @@ with no ZIP recopy. The matching-ZIP/no-pending fast paths verify
 the sidecar too (KP-01): plain publication refuses a missing or
 wrong checksum with an actionable repair message, while authorised
 repair restores the exact sidecar without recopying the ZIP and
-records the checksum-only intent. Verify and copy operate on one captured
+records the checksum-only intent. HyLogger runs ship exactly one
+passing `csv_schema` (LP-01): the schema check is recorded first in
+the validation report, and the validate step stores that same list
+for both the shipped report and the engine-bound checks, so
+publication coverage passes with the internal evidence reading
+exactly once. Verify and copy operate on one captured
 immutable byte snapshot: the run file is never re-read for shippable
 bytes, a post-acceptance change refuses at the stability guard, and
 the snapshot, destination, and persisted accepted digests must agree
