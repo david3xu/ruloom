@@ -10,7 +10,7 @@ Do not paraphrase a number from memory; read the table on screen.
 |---|---|---|
 | 0:00–0:30 | `docs/results.md` per-hole table, baseline rows highlighted | "Ask a large model to write data directly and it fails the checks on three of four unseen drill holes — while using forty-seven times the tokens. This is Ruloom: the model plans, code generates, checks prove, a human accepts." |
 | 0:30–1:00 | `README.md` Status and Layout sections | "Ruloom is a generic engine. A profile declares its workflow, its checks, and which model may do what. The engine enforces those declarations in code. Quality thresholds were calibrated real-against-real before any generator existed." |
-| 1:00–2:15 | Live terminal run (command below) | Walk the stages as they print: intake hashes the source and reads its licence; only statistics reach the model; the model proposes seed and row count; seeded code generates; deterministic checks validate; the run stops and asks a human. Type `accept`. Show the release line and the artifact hash. Then run the same command again and show the identical artifact hash: same plan, same seed, same bytes. |
+| 1:00–2:15 | Live terminal run (commands below) | Walk the stages as they print: intake hashes the source and reads its licence; only statistics reach the model; the model proposes seed and row count; seeded code generates; deterministic checks validate; the run stops and asks a human. Type `accept`. Show the release line and the data digest. Then replay the run's saved fixed plan with `--plan` and show the identical data digest: same plan, same seed, same data bytes. Say plainly: a fresh planner call is a new run and may propose a different plan, so repeating the live command never proves reproducibility; the release ZIP is not the comparator either (it carries per-run identity and log, so it differs per run by design). |
 | 2:15–2:45 | `docs/results.md` aggregate table | "On four held-out holes the pipeline passes four of four, reproducible four of four, in eighty-two seconds and one hundred thirty-five thousand tokens. The direct-LLM baseline passes one of four and is reproducible zero of four. On one hole, NCB0003, both pass — we say so in the report." |
 | 2:45–3:00 | Run directory listing + `release.zip` contents | "Every release carries its own evidence: the plan, the seed, the validation report, and a hash-chained log. Synthetic data, woven from reality — backed by evidence." |
 
@@ -24,7 +24,27 @@ cd ~/workspace/ruloom
 At `Decision [accept/modify/reject]:` type `accept`, then a short note such
 as `demo run`. Expected: verdict `pass`, artifact
 `55eb1c22e212cc61523548875af5e98b3c040aecdb7d9dc7ac59d7836f58d85f`,
-`release.zip` written. Run it a second time to show the identical hash.
+`release.zip` written. Note the run directory (`runs/<run-id>/`).
+
+## Reproducibility rerun (fixed-plan replay)
+
+A fresh planner call is a new run: it may propose a different plan, so
+repeating the live command never proves reproducibility. Deterministic
+generation is demonstrated by replaying the fixed plan saved above
+(`runs/<run-id>/plan.json`), with no planner call:
+
+```bash
+.venv/bin/ruloom run data/sources/PDD446-scalars.csv --max-attempts 3 \
+  --plan runs/<run-id>/plan.json --out /tmp/ruloom-replay
+```
+
+At the prompt type `accept` again. Then compare the data digests
+(identical), not the release ZIPs (per-run identity and log, so they
+differ by design):
+
+```bash
+sha256sum runs/<run-id>/data.csv /tmp/ruloom-replay/runs/*/data.csv
+```
 
 Optional, if the local critic is wanted on camera (server must be started
 first, model already on disk):

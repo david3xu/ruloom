@@ -36,7 +36,10 @@ def build_parser() -> argparse.ArgumentParser:
     (default off, so the default run is unchanged). ``--spec PATH``
     overlays a GenerationSpec JSON file on the flag-implied defaults;
     without it the flags alone define the spec, so existing invocations
-    behave exactly as before.
+    behave exactly as before. ``--plan PATH`` replays a saved plan JSON
+    file (a ``plan.json`` from an earlier run) instead of requesting a
+    new plan: the saved seed and row count are validated against the run
+    spec and reused, with no planner call.
     """
     parser = argparse.ArgumentParser(prog="ruloom")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -73,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--spec",
         default=None,
         help="path to a GenerationSpec JSON file overriding defaults",
+    )
+    run.add_argument(
+        "--plan",
+        default=None,
+        help="path to a saved plan JSON file to replay (no planner call)",
     )
     run.add_argument(
         "--role-model",
@@ -304,6 +312,27 @@ def _refusal_request(args: Any) -> dict[str, Any]:
     }
 
 
+def _load_plan_file(path: str) -> dict[str, Any]:
+    """Read a saved plan file (must decode to a JSON object)."""
+    import json as _json
+
+    raw_path = Path(path)
+    try:
+        payload = _json.loads(raw_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"plan file not found: {path}") from exc
+    except _json.JSONDecodeError as exc:
+        raise ValueError(f"plan file {path} is not valid JSON: {exc}") from exc
+    except OSError as exc:
+        raise ValueError(f"cannot read plan file {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"plan file {path} must decode to an object, "
+            f"got {type(payload).__name__}: refusing (no run)"
+        )
+    return dict(payload)
+
+
 def main(
     argv: Sequence[str] | None = None,
     model: StructuredModel | None = None,
@@ -363,6 +392,26 @@ def main(
                 print(f"error: {exc}", file=sys.stderr)
                 return 1
 
+        fixed_plan: Mapping[str, Any] | None = None
+        if args.plan is not None:
+            try:
+                fixed_plan = _load_plan_file(args.plan)
+            except ValueError as exc:
+                try:
+                    record_refusal(
+                        Path(args.out),
+                        profile_ref=profile_id,
+                        request={
+                            **_refusal_request(args),
+                            "plan_file": str(args.plan),
+                        },
+                        error=str(exc),
+                    )
+                except OSError:
+                    pass
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+
         def resolving_factory(role: str, config: Mapping[str, Any]) -> Any:
             if model is not None:
                 return model
@@ -380,6 +429,7 @@ def main(
             role_bindings=resolved,
             role_binding_sources=role_sources,
             spec=spec_overlay,
+            fixed_plan=fixed_plan,
         )
         return code
     return 1

@@ -197,7 +197,11 @@ row/attempt limits, rights intent), recorded with its digest in the
 run record and every attempt receipt. The flags above already imply
 the default spec; `--spec spec.json` overlays a spec file on those
 defaults, and unsupported requests are refused before any model call
-with a durable terminal record. The run also ships a user-facing
+with a durable terminal record. A saved `plan.json` replays with
+`--plan plan.json` (no planner call): the same plan plus the same seed
+yields identical `data.csv` bytes. Compare data digests across replays,
+never release ZIPs (per-run identity, so they differ by design).
+The run also ships a user-facing
 `evidence-report.md` rendered from stored records only.
 
 ```bash

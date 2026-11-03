@@ -307,9 +307,32 @@ def plan(ctx: Any) -> None:
 
     The proposal must stay inside the spec-supported bounded schema:
     the row bound and the strategy set come from the run spec, and an
-    out-of-spec proposal is refused before any generation runs.
+    out-of-spec proposal is refused before any generation runs. When
+    the caller supplied a fixed plan for replay (``--plan``), that
+    saved plan is validated against the same bounds and stored with
+    no planner call; repair after a failed replay still uses the
+    planner.
     """
     profile = ctx.profile()
+    fixed = ctx.fixed_plan() if callable(getattr(ctx, "fixed_plan", None)) else None
+    if fixed is not None:
+        try:
+            replayed = validate_plan(
+                dict(fixed),
+                max_rows=_spec_max_rows(ctx),
+                allowed_strategies=_allowed_strategies(ctx),
+            )
+        except Exception as exc:  # noqa: BLE001 -- logged, then reported
+            ctx.event("plan", "error", {"error": f"{type(exc).__name__}: {exc}"})
+            ctx.say(f"[plan] error: {exc}")
+            raise RuntimeError(f"plan failed: {exc}") from exc
+        ctx.set_plan(dict(replayed))
+        ctx.event("plan", "ok", {"plan": dict(replayed), "replay": True})
+        ctx.say(
+            f"[plan] replay seed={replayed['seed']} "
+            f"n_rows={replayed['n_rows']} (fixed plan, no planner call)"
+        )
+        return
     try:
         completion = propose(
             ctx.model("planner"),
