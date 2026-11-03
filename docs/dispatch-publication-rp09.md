@@ -145,7 +145,14 @@ persisted acceptance record before any byte is copied:
   without mutation -- the new arrival stays at the destination, the
   earlier quarantine stays intact, and the pending intent and history
   are unchanged, resuming to exactly one entry once the new bytes are
-  separately set aside.
+  separately set aside. Finalisation verifies the whole bundle before
+  the pending operation clears (JP-02, audit C02): the detached
+  checksum must carry exactly the accepted digest -- a matching ZIP
+  skips the copy but never skips unfinished outputs, so a missing or
+  wrong sidecar is rewritten to the exact accepted content -- and any
+  quarantine the intent names must still hold the recorded found
+  bytes, otherwise finalisation refuses instead of recording a false
+  preservation.
 - Publication never overwrites destination bytes it cannot attribute
   to its own record: unattributed foreign bytes refuse loudly, and one
   item ships exactly one release. Publication item ids take the same
@@ -212,14 +219,18 @@ Control cases (committed tests, no sleeps — clocks are injected):
   on retry (HP-01 A01): same key with a changed `max_rows`, a changed
   attempt bound, or a changed/added spec overlay refuses with history
   and fencing kept.
-- `tests/engine/test_publication.py` (39 tests): publish/download
+- `tests/engine/test_publication.py` (43 tests): publish/download
   round trip with hash equality to the reviewed `release.sha256`,
   idempotent re-publish, interrupted-copy resume to identical bytes,
   interrupted-mark adoption, in-progress foreign-destination refusal
   with bytes preserved and record staying in-progress (IP-02 B02),
   durable repair authorisation with intent persisted before mutation
   and idempotent finalise after restore at every write phase
-  (IP-03 B03),
+  (IP-03 B03), plus new-arrival refusal without mutation (JP-01 C01)
+  and checksum finalisation restoring a missing or wrong sidecar to
+  the exact accepted content before clearing the pending repair, via
+  repair retry and via plain publication with no ZIP recopy (JP-02
+  C02),
   foreign-authority denial, unsucceeded /
   wrong-run / changed-bytes refusal, missing and bit-flipped release
   refusal, foreign-destination refusal, one-item-one-release, download

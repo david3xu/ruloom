@@ -1364,6 +1364,172 @@ def test_repair_crash_at_sidecar_finalises_without_recopy(
     assert repairs[0]["restored"] == first["zip_sha256"]
 
 
+def _repair_with_checksum_only_fault(
+    publisher: Publisher,
+    run_dir: Path,
+    item: dict,
+    dest: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """JP-02 C02: lose ZIP + checksum, then fault only the checksum write.
+
+    Deleting both the destination and its sidecar before repairing
+    leaves the repair no old checksum to inherit: the injected fault
+    lands exactly at the checksum write after the ZIP is restored.
+    """
+    sidecar = dest.parent / f"{dest.name}.sha256"
+    dest.unlink()
+    sidecar.unlink()
+    real_write = publication._atomic_write_bytes
+
+    def boom(path: Path, payload: bytes) -> Path:
+        if path.name.endswith(".sha256"):
+            raise RuntimeError("injected checksum-only failure")
+        return real_write(path, payload)
+
+    monkeypatch.setattr(publication, "_atomic_write_bytes", boom)
+    with pytest.raises(RuntimeError, match="injected checksum-only failure"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after loss",
+            now=T0 + 10.0,
+        )
+    assert dest.is_file()
+    assert not sidecar.exists()
+    record = publisher.get(item["item_id"])
+    assert record is not None and isinstance(record.get("pending_repair"), dict)
+    assert record.get("repairs", []) == []
+    monkeypatch.undo()
+
+
+def _counting_no_recopy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, int]:
+    """Count ZIP commits; JP-02 retries must never recopy the ZIP."""
+    copies = {"n": 0}
+    real_stage = publication._stage_and_commit
+
+    def counting(dest_dir: Path, dest_name: str, payload: bytes) -> Path:
+        copies["n"] += 1
+        return real_stage(dest_dir, dest_name, payload)
+
+    monkeypatch.setattr(publication, "_stage_and_commit", counting)
+    return copies
+
+
+def test_repair_restores_missing_checksum_before_finalising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """JP-02 C02: a repair retry restores a lost checksum, not a bare pass.
+
+    The checksum write is the only fault: the ZIP is already
+    restored when the retry runs, so the retry must rewrite the
+    detached checksum with the exact accepted content before
+    clearing the pending repair -- never record success while the
+    verification bundle is still incomplete. No ZIP recopy, exactly
+    one entry carrying the original authorisation.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+    _repair_with_checksum_only_fault(publisher, run_dir, item, dest, monkeypatch)
+    copies = _counting_no_recopy(monkeypatch)
+
+    identity = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="restore after loss",
+        now=T0 + 20.0,
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert dest.read_bytes() == shipped
+    assert copies["n"] == 0
+    sidecar = dest.parent / f"{dest.name}.sha256"
+    assert sidecar.read_bytes() == f"{first['zip_sha256']}  {dest.name}\n".encode()
+    record = publisher.get(item["item_id"])
+    assert record is not None and "pending_repair" not in record
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    assert repairs[0]["authority"] == "team-a"
+    assert repairs[0]["reason"] == "restore after loss"
+    assert repairs[0]["at"] == T0 + 10.0
+    assert repairs[0]["restored"] == first["zip_sha256"]
+
+
+def test_repair_corrects_wrong_checksum_before_finalising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """JP-02 C02: a repair retry rewrites an incorrect checksum.
+
+    A sidecar carrying the wrong digest must not survive
+    finalisation: the retry corrects it to the exact accepted
+    content, records exactly one entry, and never recopies the ZIP.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+    _repair_with_checksum_only_fault(publisher, run_dir, item, dest, monkeypatch)
+    sidecar = dest.parent / f"{dest.name}.sha256"
+    sidecar.write_bytes(b"0" * 64 + f"  {dest.name}\n".encode())
+    copies = _counting_no_recopy(monkeypatch)
+
+    identity = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="restore after loss",
+        now=T0 + 20.0,
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert dest.read_bytes() == shipped
+    assert copies["n"] == 0
+    assert sidecar.read_bytes() == f"{first['zip_sha256']}  {dest.name}\n".encode()
+    record = publisher.get(item["item_id"])
+    assert record is not None and "pending_repair" not in record
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    assert repairs[0]["at"] == T0 + 10.0
+    assert repairs[0]["restored"] == first["zip_sha256"]
+
+
+def test_publish_restores_missing_checksum_for_pending_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """JP-02 C02: plain publication finalises a pending repair completely.
+
+    A matching ZIP skips the copy but must not skip unfinished
+    outputs: plain publish over a pending repair with a missing
+    checksum restores the exact sidecar content before clearing the
+    intent, with exactly one entry and no ZIP recopy.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+    _repair_with_checksum_only_fault(publisher, run_dir, item, dest, monkeypatch)
+    copies = _counting_no_recopy(monkeypatch)
+
+    identity = publisher.publish(
+        item["item_id"], run_dir, authority="team-a", now=T0 + 20.0
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert dest.read_bytes() == shipped
+    assert copies["n"] == 0
+    sidecar = dest.parent / f"{dest.name}.sha256"
+    assert sidecar.read_bytes() == f"{first['zip_sha256']}  {dest.name}\n".encode()
+    record = publisher.get(item["item_id"])
+    assert record is not None and "pending_repair" not in record
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    assert repairs[0]["reason"] == "restore after loss"
+    assert repairs[0]["restored"] == first["zip_sha256"]
+
+
 def test_repair_crash_at_final_record_is_idempotent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -151,7 +151,12 @@ left by an interrupted repair). A persisted intent authorises only
 its recorded observed bytes plus the accepted replacement (JP-01):
 a retry that finds new bytes planted mid-repair refuses without
 mutation, leaving the new arrival, the earlier quarantine, and the
-pending intent untouched. Verify and copy operate on one captured
+pending intent untouched. Finalisation verifies the whole bundle
+before the pending operation clears (JP-02): the detached checksum
+must carry exactly the accepted digest -- a matching ZIP skips the
+copy but never skips unfinished outputs -- and any quarantine the
+intent names must still hold the recorded found bytes, otherwise
+finalisation refuses. Verify and copy operate on one captured
 immutable byte snapshot: the run file is never re-read for shippable
 bytes, a post-acceptance change refuses at the stability guard, and
 the snapshot, destination, and persisted accepted digests must agree
