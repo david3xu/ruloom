@@ -152,7 +152,13 @@ persisted acceptance record before any byte is copied:
   wrong sidecar is rewritten to the exact accepted content -- and any
   quarantine the intent names must still hold the recorded found
   bytes, otherwise finalisation refuses instead of recording a false
-  preservation.
+  preservation. The matching-ZIP/no-pending fast paths verify the
+  sidecar too (KP-01, audit D01): plain publication of a complete
+  bundle whose checksum is missing or wrong refuses with an actionable
+  repair message, recording nothing, while authorised repair persists
+  a checksum-only intent (`checksum-absent`/`checksum-mismatch`, no
+  quarantine), restores the exact sidecar content without recopying
+  the ZIP, and finalises to exactly one history entry.
 - Publication never overwrites destination bytes it cannot attribute
   to its own record: unattributed foreign bytes refuse loudly, and one
   item ships exactly one release. Publication item ids take the same
@@ -219,7 +225,7 @@ Control cases (committed tests, no sleeps — clocks are injected):
   on retry (HP-01 A01): same key with a changed `max_rows`, a changed
   attempt bound, or a changed/added spec overlay refuses with history
   and fencing kept.
-- `tests/engine/test_publication.py` (43 tests): publish/download
+- `tests/engine/test_publication.py` (47 tests): publish/download
   round trip with hash equality to the reviewed `release.sha256`,
   idempotent re-publish, interrupted-copy resume to identical bytes,
   interrupted-mark adoption, in-progress foreign-destination refusal
@@ -230,7 +236,9 @@ Control cases (committed tests, no sleeps — clocks are injected):
   and checksum finalisation restoring a missing or wrong sidecar to
   the exact accepted content before clearing the pending repair, via
   repair retry and via plain publication with no ZIP recopy (JP-02
-  C02),
+  C02), plus checksum-only recovery with no pending intent (KP-01
+  D01): plain publication refuses a missing or wrong sidecar while
+  authorised repair restores the exact content with no ZIP recopy,
   foreign-authority denial, unsucceeded /
   wrong-run / changed-bytes refusal, missing and bit-flipped release
   refusal, foreign-destination refusal, one-item-one-release, download

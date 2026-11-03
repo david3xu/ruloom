@@ -1734,3 +1734,147 @@ def test_publish_finalises_interrupted_repair(
     repairs = record.get("repairs")
     assert isinstance(repairs, list) and len(repairs) == 1
     assert repairs[0]["reason"] == "restore after stray copy"
+
+
+def _published_complete(base: Path, tmp_path: Path) -> tuple:
+    """Publish once with no pending intent; return the complete bundle.
+
+    Returns ``(run_dir, outcome, item, publisher, dest, shipped, first)``
+    where ``shipped`` is the attested ZIP bytes and ``first`` the
+    publish identity. Shared setup for the KP-01 checksum-only tests:
+    the destination ZIP matches and no repair is pending, so only the
+    detached checksum is damaged afterwards.
+    """
+    run_dir, outcome = _accepted_run(base, _write_source(tmp_path))
+    _, item = _succeeded_item(base, run_dir, outcome)
+    publisher = _publisher(base)
+    first = publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0)
+    dest = base / "published" / f"{item['item_id']}.zip"
+    return run_dir, outcome, item, publisher, dest, dest.read_bytes(), first
+
+
+def test_publish_refuses_missing_checksum_without_pending(tmp_path: Path) -> None:
+    """KP-01 D01: plain publish refuses a lost checksum, never a bare pass.
+
+    A completed publication whose ZIP still matches but whose detached
+    checksum is gone must refuse with an actionable repair message --
+    never report complete verification while leaving the bundle
+    unverifiable. The ZIP, the missing sidecar, and the record stay
+    exactly as found: no history is recorded by a refusal.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, _ = _published_complete(base, tmp_path)
+    sidecar = dest.parent / f"{dest.name}.sha256"
+    sidecar.unlink()
+    with pytest.raises(PublicationError, match="authorised repair operation"):
+        publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0 + 10.0)
+    assert dest.read_bytes() == shipped
+    assert not sidecar.exists()
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "complete"
+    assert record.get("repairs", []) == []
+    assert "pending_repair" not in record
+
+
+def test_publish_refuses_wrong_checksum_without_pending(tmp_path: Path) -> None:
+    """KP-01 D01: plain publish refuses a wrong checksum, never a bare pass.
+
+    A sidecar carrying a foreign digest is the same unverifiable
+    bundle as a missing one: publish refuses, leaves the wrong
+    content and the record untouched, and names the repair path.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, _ = _published_complete(base, tmp_path)
+    sidecar = dest.parent / f"{dest.name}.sha256"
+    wrong = b"0" * 64 + f"  {dest.name}\n".encode()
+    sidecar.write_bytes(wrong)
+    with pytest.raises(PublicationError, match="authorised repair operation"):
+        publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0 + 10.0)
+    assert dest.read_bytes() == shipped
+    assert sidecar.read_bytes() == wrong
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "complete"
+    assert record.get("repairs", []) == []
+    assert "pending_repair" not in record
+
+
+def test_repair_restores_missing_checksum_without_recopy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KP-01 D01: authorised repair restores a lost checksum, no ZIP recopy.
+
+    The ZIP already holds the accepted bytes, so the repair persists
+    a checksum-only intent, rewrites the exact sidecar content, and
+    finalises to exactly one history entry carrying the original
+    authorisation -- without recopying the ZIP.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_complete(
+        base, tmp_path
+    )
+    sidecar = dest.parent / f"{dest.name}.sha256"
+    sidecar.unlink()
+    copies = _counting_no_recopy(monkeypatch)
+    identity = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="restore detached checksum",
+        now=T0 + 10.0,
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert dest.read_bytes() == shipped
+    assert copies["n"] == 0
+    assert sidecar.read_bytes() == f"{first['zip_sha256']}  {dest.name}\n".encode()
+    record = publisher.get(item["item_id"])
+    assert record is not None and "pending_repair" not in record
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    entry = repairs[0]
+    assert entry["at"] == T0 + 10.0
+    assert entry["authority"] == "team-a"
+    assert entry["reason"] == "restore detached checksum"
+    assert entry["found"] == "checksum-absent"
+    assert entry["restored"] == first["zip_sha256"]
+    assert entry["preserved"] is None
+
+
+def test_repair_restores_wrong_checksum_without_recopy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KP-01 D01: authorised repair corrects a wrong checksum, no ZIP recopy.
+
+    Same bundle as the missing case, but the sidecar carries a
+    foreign digest: the repair still restores the exact accepted
+    content with no ZIP recopy, recording ``checksum-mismatch`` so
+    the history distinguishes a wrong sidecar from an absent one.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_complete(
+        base, tmp_path
+    )
+    sidecar = dest.parent / f"{dest.name}.sha256"
+    sidecar.write_bytes(b"0" * 64 + f"  {dest.name}\n".encode())
+    copies = _counting_no_recopy(monkeypatch)
+    identity = publisher.repair(
+        item["item_id"],
+        run_dir,
+        authority="team-a",
+        reason="restore detached checksum",
+        now=T0 + 10.0,
+    )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert dest.read_bytes() == shipped
+    assert copies["n"] == 0
+    assert sidecar.read_bytes() == f"{first['zip_sha256']}  {dest.name}\n".encode()
+    record = publisher.get(item["item_id"])
+    assert record is not None and "pending_repair" not in record
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    entry = repairs[0]
+    assert entry["at"] == T0 + 10.0
+    assert entry["authority"] == "team-a"
+    assert entry["reason"] == "restore detached checksum"
+    assert entry["found"] == "checksum-mismatch"
+    assert entry["restored"] == first["zip_sha256"]
+    assert entry["preserved"] is None
