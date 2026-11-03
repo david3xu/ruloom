@@ -69,6 +69,9 @@ def test_request_creates_source_pinned_draft_without_sending_rows(tmp_path):
     assert receipt["observed_model"] == "fixture-only"
     assert "private-canary" not in model.prompt
     assert "source.csv" not in model.prompt
+    assert "An intended use such as a demo is context" in model.prompt
+    assert "only flag such a guarantee" in model.prompt
+    assert "bound locally by the tool" in model.prompt
     assert not list(draft.rglob("data.csv"))
 
 
