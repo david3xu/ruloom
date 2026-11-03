@@ -224,10 +224,11 @@ validation verdict pass, artifact `55eb1c22e212…`, release ZIP
 (CP-02 repaired TIR sequence generation and versioned the golden bytes
 deliberately; pre-repair values were artifact `be9e26d7e664…`, release
 `46c7c07110c5…` — see `docs/quality/scorecard-cp02-addendum.md`.)
-Test suite: 621 passed (observed 2026-11-02 at `c35b063`;
+Test suite: 696 passed (observed 2026-11-03 at `88e8c6e`;
 reproduce with `.venv/bin/python -m pytest -q -p no:cacheprovider`).
-Force-pass gate (`scripts/force_pass.py`): 41 PASS, 0 FAIL, exit 0
-(same date and revision; reproduce with
+Force-pass gate (`scripts/force_pass.py`): 43 PASS, 0 FAIL, exit 0
+(39 enforced: 12 FP + 27 Q executed; 4 planned Q stubs reported,
+not executed; same date and revision; reproduce with
 `.venv/bin/python scripts/force_pass.py`). The engine is generic: profiles declare their
 step/loop/gate graphs and permissions, and the same engine code runs
 the HyLogger profile and the common tabular profile
