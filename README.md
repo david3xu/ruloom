@@ -141,9 +141,23 @@ for both receipts with usage.
 Each profile manifest binds named roles to models under `models.roles`
 (`planner`, `critic`, `local_critic` for HyLogger; `planner` for the
 tabular profile). A role binding names its `adapter` (`meta_cli` for
-the hosted `muse exec` adapter, `glimmer_local` for the local
-OpenAI-compatible server) plus the model id, reasoning effort, and —
+the hosted `muse exec` adapter, `agy_cli` for AGY model families,
+`glimmer_local` for the local OpenAI-compatible server) plus the model id, reasoning effort, and —
 for local roles — the base URL.
+
+AGY family selection is explicit and never falls back to Muse:
+
+```sh
+ruloom run SOURCE.csv --profile tabular --max-attempts 2 \
+  --role-adapter planner=agy_cli --role-family planner=claude \
+  --role-model planner=claude-opus-5-5-high --role-effort planner=high
+```
+
+The same role settings work on `prepare` with `--model-policy hosted`.
+Family defaults cover Claude, Gemini and GPT aliases; check `agy models`
+for availability on your account. `meta_cli` selects the Meta family via
+Muse. See [model workflow](docs/model-families.md) for configuration,
+identity evidence and the limits of AGY tool permissions.
 
 Three guardrails from the engine design are enforced as behaviour, not
 prose:
@@ -327,7 +341,7 @@ decisions are recorded in `docs/decisions.md`.
 | `profiles/hylogger/` | The first domain profile: `profile.json` (manifest: capabilities, permissions, checks, graph), `thresholds.json`, `capabilities.py` (manifest step implementations); features in `intake/` (`reader.py`), `analysis/` (`statistics.py`, `calibration.py`), `generation/` (`generate.py`, `plan.py`, `repair.py`), `validation/` (`checks.py`, `dataset.py`, `critique.py` — advisory text critique over the validation report plus profile statistics, bound to the `local_critic` role) |
 | `profiles/hylogger/imaging/` | The HyLogger image extension (optional `--images DIR` branch after validate, before the human gate): `codec.py` (stdlib PNG encode/decode), `intake.py` (image hashing/attribution), `statistics.py` (code-only histograms/texture/strips), `generate.py` (seeded synthetic PNGs), `scene.py` (schematic-only shared scene record driving table + image views, R03), `checks.py` (deterministic image checks incl. ordered strip and scene alignment, R03), `critic.py` (advisory vision note over synthetic renders only) |
 | `profiles/tabular/` | The second profile (common CSV proof): same root wiring (`profile.json`, `thresholds.json`, `capabilities.py`); features in `intake/` (`reader.py`), `analysis/` (`statistics.py`, `calibration.py`), `generation/` (`generate.py`, `plan.py`), `validation/` (`checks.py`, `dataset.py`) |
-| `models/` | Model adapters — the only code that talks to a model (`base.py`, `meta_cli.py`, `glimmer.py` — local OpenAI-compatible text adapter; role bindings select it with `"adapter": "glimmer_local"`) |
+| `models/` | Model adapters — the only code that talks to a model (`base.py`, `meta_cli.py`, `agy_cli.py`, `selection.py`, `glimmer.py` — local OpenAI-compatible text adapter; role bindings select it with `"adapter": "glimmer_local"`) |
 | `catalogue/features/engine/` | Feature records for the persistence and reviewed-release slice: one JSON file per feature (stable id, owner, code/doc/test paths, required rules, status) |
 | `docs/engine/core/` | Engine-core contracts (`README.md` states the run/attempt persistence contract) |
 | `docs/engine/artifacts/` | Engine-artifacts contracts (`README.md` states the freeze/manifest/atomic/consumer release contract) |

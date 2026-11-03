@@ -893,6 +893,11 @@ class _Runner:
                 "model": requested,
                 "returned_model": returned,
             }
+            for key in ("model_family", "effort", "tools_used"):
+                if key in invocation:
+                    record[key] = _copy(invocation[key])
+            if isinstance(meta, Mapping) and meta.get("identity_evidence"):
+                record["identity_evidence"] = str(meta["identity_evidence"])
             requested_perms = invocation.get("requested_permissions")
             if isinstance(requested_perms, Mapping):
                 record["requested_permissions"] = dict(requested_perms)
@@ -2131,6 +2136,7 @@ def execute(
                     "adapter": config.get("adapter", "meta_cli"),
                     "model": config.get("model"),
                     "reasoning_effort": config.get("reasoning_effort"),
+                    **({"family": config["family"]} if "family" in config else {}),
                     **(
                         {"base_url": config.get("base_url")}
                         if config.get("adapter") == "glimmer_local"

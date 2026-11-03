@@ -108,7 +108,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="ROLE=ADAPTER",
-        help="explicit adapter override: meta_cli or glimmer_local (repeatable)",
+        help="explicit adapter: meta_cli, agy_cli or glimmer_local (repeatable)",
+    )
+    run.add_argument(
+        "--role-family",
+        action="append",
+        default=[],
+        metavar="ROLE=FAMILY",
+        help="explicit family: claude, gemini or gpt via agy_cli; meta via Muse/local",
     )
     run.add_argument(
         "--model-policy",
@@ -137,6 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--role-effort", action="append", default=[])
     prepare.add_argument("--role-base-url", action="append", default=[])
     prepare.add_argument("--role-adapter", action="append", default=[])
+    prepare.add_argument("--role-family", action="append", default=[])
     return parser
 
 
@@ -162,6 +170,7 @@ def load_registry(profile_id: str) -> Mapping[str, Any]:
 DEFAULT_MODEL_BY_ADAPTER = {
     "meta_cli": "muse-spark-1.3",
     "glimmer_local": "muse-glimmer-30B",
+    "agy_cli": "claude-opus-5-5-high",
 }
 DEFAULT_EFFORT = "max"
 
@@ -202,6 +211,7 @@ def resolve_role_bindings(
     cli_efforts: Sequence[str] | None = None,
     cli_base_urls: Sequence[str] | None = None,
     cli_adapters: Sequence[str] | None = None,
+    cli_families: Sequence[str] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, str]]]:
     """Apply CLI > env > profile > default precedence to every role.
@@ -230,6 +240,9 @@ def resolve_role_bindings(
         parse_role_assignment(value, "--role-adapter") for value in cli_adapters or []
     )
 
+    cli_family_map = dict(
+        parse_role_assignment(value, "--role-family") for value in cli_families or []
+    )
     declared = manifest.models.get("roles", {})
     if not isinstance(declared, dict):
         declared = {}
@@ -238,6 +251,7 @@ def resolve_role_bindings(
         + list(cli_effort_map)
         + list(cli_base_url_map)
         + list(cli_adapter_map)
+        + list(cli_family_map)
     ):
         if role not in declared:
             raise ManifestError(
@@ -264,7 +278,11 @@ def resolve_role_bindings(
             raise ManifestError(f"unknown model adapter {adapter!r} for role {role!r}")
         base["adapter"] = adapter
         if adapter != original_adapter:
-            base["provider"] = "local" if adapter == "glimmer_local" else "meta-api"
+            base["provider"] = {
+                "glimmer_local": "local",
+                "meta_cli": "meta-api",
+                "agy_cli": "agy",
+            }[adapter]
 
         if role in cli_model_map:
             base["model"] = cli_model_map[role]
@@ -288,10 +306,16 @@ def resolve_role_bindings(
         elif f"RULOOM_ROLE_{role.upper()}_EFFORT" in environment:
             base["reasoning_effort"] = environment[f"RULOOM_ROLE_{role.upper()}_EFFORT"]
             role_sources["reasoning_effort"] = SOURCE_ENV
-        elif isinstance(binding, Mapping) and binding.get("reasoning_effort"):
+        elif (
+            adapter == original_adapter
+            and isinstance(binding, Mapping)
+            and binding.get("reasoning_effort")
+        ):
             role_sources["reasoning_effort"] = SOURCE_PROFILE
         else:
-            base["reasoning_effort"] = DEFAULT_EFFORT
+            base["reasoning_effort"] = (
+                "high" if adapter == "agy_cli" else DEFAULT_EFFORT
+            )
             role_sources["reasoning_effort"] = SOURCE_DEFAULT
 
         if adapter == "glimmer_local":
@@ -308,6 +332,42 @@ def resolve_role_bindings(
 
                 base["base_url"] = DEFAULT_BASE_URL
                 role_sources["base_url"] = SOURCE_DEFAULT
+
+        family_env = f"RULOOM_ROLE_{role.upper()}_FAMILY"
+        family = cli_family_map.get(role, environment.get(family_env))
+        if family is None and adapter == original_adapter:
+            family = base.get("family")
+        if family is not None or adapter == "agy_cli":
+            from models.selection import (
+                family_default,
+                model_family,
+                validate_selection,
+            )
+
+            if (
+                family is not None
+                and role not in cli_model_map
+                and f"RULOOM_ROLE_{role.upper()}_MODEL" not in environment
+            ):
+                if adapter == "agy_cli" and (
+                    adapter != original_adapter or not binding.get("model")
+                ):
+                    base["model"] = family_default(
+                        adapter, family, base["reasoning_effort"]
+                    )
+            base["family"] = family or model_family(adapter, base["model"])
+            role_sources["family"] = (
+                SOURCE_CLI
+                if role in cli_family_map
+                else SOURCE_ENV
+                if family_env in environment
+                else SOURCE_PROFILE
+                if family
+                else "inferred"
+            )
+            validate_selection(
+                adapter, base["model"], base["family"], base["reasoning_effort"]
+            )
 
         requires = base.get("requires", {})
         if (
@@ -329,12 +389,28 @@ def default_client(role: str, config: Mapping[str, Any]) -> StructuredModel:
 
     Each role binding declares its adapter: ``meta_cli`` (the hosted
     ``muse exec`` adapter, the default for existing roles) or
-    ``glimmer_local`` (the local OpenAI-compatible server). An unknown
+    ``glimmer_local`` (the local OpenAI-compatible server), or ``agy_cli``
+    (AGY with an explicit model family). An unknown
     adapter name fails loudly, as does an open-weight requirement bound
     to the hosted adapter (fail-closed: the refusal happens here, before
     any model call, even for programmatically built configs).
     """
     adapter = config.get("adapter", "meta_cli")
+    if adapter == "agy_cli" or config.get("family") is not None:
+        from models.selection import model_family, validate_selection
+
+        selected_model = str(
+            config.get("model", DEFAULT_MODEL_BY_ADAPTER.get(adapter, ""))
+        )
+        selected_effort = str(
+            config.get(
+                "reasoning_effort", "high" if adapter == "agy_cli" else DEFAULT_EFFORT
+            )
+        )
+        selected_family = str(
+            config.get("family") or model_family(adapter, selected_model)
+        )
+        validate_selection(adapter, selected_model, selected_family, selected_effort)
     requires = config.get("requires", {})
     if (
         isinstance(requires, Mapping)
@@ -353,10 +429,17 @@ def default_client(role: str, config: Mapping[str, Any]) -> StructuredModel:
             base_url=str(config.get("base_url") or DEFAULT_BASE_URL),
             local_only=config.get("local_only") is True,
         )
+    if adapter == "agy_cli":
+        from models.agy_cli import AgyCLIModel
+
+        return AgyCLIModel(
+            model=str(config.get("model", "claude-opus-5-5-high")),
+            effort=str(config.get("reasoning_effort", "high")),
+        )
     if adapter != "meta_cli":
         raise ValueError(
             f"unknown model adapter {adapter!r} for role {role!r} "
-            "(expected 'meta_cli' or 'glimmer_local')"
+            "(expected 'meta_cli', 'agy_cli' or 'glimmer_local')"
         )
     from models.meta_cli import MuseCLIModel
 
@@ -419,6 +502,7 @@ def main(
                 cli_efforts=args.role_effort,
                 cli_base_urls=args.role_base_url,
                 cli_adapters=args.role_adapter,
+                cli_families=args.role_family,
             )
             config = dict(resolved["planner"])
             config["local_only"] = args.model_policy == "local-only"
@@ -455,6 +539,7 @@ def main(
                 cli_efforts=args.role_effort,
                 cli_base_urls=args.role_base_url,
                 cli_adapters=args.role_adapter,
+                cli_families=args.role_family,
             )
         except (ValueError, ManifestError) as exc:
             try:
