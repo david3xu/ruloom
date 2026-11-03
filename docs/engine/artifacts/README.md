@@ -156,7 +156,11 @@ before the pending operation clears (JP-02): the detached checksum
 must carry exactly the accepted digest -- a matching ZIP skips the
 copy but never skips unfinished outputs -- and any quarantine the
 intent names must still hold the recorded found bytes, otherwise
-finalisation refuses. The matching-ZIP/no-pending fast paths verify
+finalisation refuses (KP-02): a deleted or diverged quarantine
+refuses via repair retry, via plain publication, and inside a single
+repair call -- keeping the pending intent with no entry -- and
+recovers to one original entry once the preserved bytes are restored,
+with no ZIP recopy. The matching-ZIP/no-pending fast paths verify
 the sidecar too (KP-01): plain publication refuses a missing or
 wrong checksum with an actionable repair message, while authorised
 repair restores the exact sidecar without recopying the ZIP and
