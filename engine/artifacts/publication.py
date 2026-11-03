@@ -196,15 +196,26 @@ def _quarantine_replaced(dest: Path, preserved_path: Path, *, found: str) -> Non
 
     When the quarantine already holds the found bytes (a retry after
     the move, or an earlier repair of identical bytes), the duplicate
-    destination is unlinked instead of being renamed over them. The
-    quarantine is re-checked here so a swap under the gate refuses
-    instead of dropping bytes.
+    destination is unlinked instead of being renamed over them -- but
+    only after re-checking that the destination still holds exactly
+    the authorised found bytes. A new arrival planted mid-repair holds
+    a third digest the intent never authorised, so the helper refuses
+    instead of unlinking it. The quarantine is re-checked here so a
+    swap under the gate refuses instead of dropping bytes.
     """
     if preserved_path.is_file():
         if sha256_bytes(preserved_path.read_bytes()) != found:
             raise PublicationError(
                 f"repair quarantine {preserved_path.name!r} holds "
                 "unexpected bytes: refusing"
+            )
+        if not dest.is_file():
+            return
+        if sha256_bytes(dest.read_bytes()) != found:
+            raise PublicationError(
+                f"destination {dest.name!r} holds bytes the pending "
+                "repair never authorised: refusing (a new arrival "
+                "needs its own preserving decision)"
             )
         dest.unlink()
     else:
@@ -288,17 +299,24 @@ def _pending_resumes(
     pending: Mapping[str, Any],
     dest_dir: Path,
     current: str | None,
+    snapshot_digest: str,
 ) -> bool:
     """Decide whether a pending intent still describes this destination.
 
-    True when the destination still holds the found bytes (nothing
-    mutated yet, so the intent may be refreshed) or when the quarantine
-    already holds them (the move happened, so the retry must resume
-    from the intent instead of re-observing). Any third state -- new
-    bytes planted mid-repair -- is not a resume and must refuse rather
-    than orphan the already-quarantined bytes.
+    True when the destination is absent (the move happened, so the
+    retry resumes from the intent instead of re-observing), still holds
+    the authorised found bytes (nothing mutated yet, so the intent may
+    be refreshed), or already holds the accepted bytes (the restore
+    landed, so the retry finalises). Any third state -- new bytes
+    planted mid-repair -- is not a resume and must refuse rather than
+    orphan the already-quarantined bytes. A persisted intent
+    authorises only its recorded observed bytes plus the accepted
+    replacement; an existing quarantine never establishes ownership of
+    the current destination.
     """
     found = pending.get("found")
+    if current is not None and current != found and current != snapshot_digest:
+        return False
     preserved = pending.get("preserved")
     if isinstance(preserved, str) and found != "absent":
         try:
@@ -1256,7 +1274,7 @@ class Publisher:
                 now=at,
             )
         if pending is not None:
-            if not _pending_resumes(pending, self.dest_dir, current):
+            if not _pending_resumes(pending, self.dest_dir, current, snapshot_digest):
                 raise PublicationError(
                     f"item {clean_id!r} has a repair already in progress "
                     "for different bytes: refusing (finish or investigate "
