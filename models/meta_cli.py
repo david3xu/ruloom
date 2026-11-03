@@ -155,16 +155,23 @@ def observed_permissions(cwd: str, env_keys: list[str]) -> dict[str, object]:
 def _is_muse_exec_shape(argv: list[str]) -> bool:
     """True when ``argv`` has the ``muse exec`` shape we build.
 
-    Either the subcommand reads ``exec`` or the argv carries the
-    ``--contributor-mode`` marker :meth:`MuseCLIModel._argv` always
-    emits. Only then does the final argv element hold the prompt, so
-    only then is it exempt from the option scan. Anything else (fixture
-    probes, hand-built transports) is scanned strictly.
+    :meth:`MuseCLIModel._argv` always ends with the
+    ``--contributor-mode <on|off> <prompt>`` tail, so only an argv
+    with the ``exec`` subcommand AND that exact tail is trusted to
+    hold the prompt in its final element. Only then is the final
+    element exempt from the option scan. Anything else -- a bare
+    ``["muse", "exec", "--tool"]``, a real argv with a capability
+    option appended after the prompt, or any hand-built transport --
+    is scanned strictly, so a trailing denied flag can never hide in
+    the prompt slot.
     """
     texts = [str(part) for part in argv]
-    if len(texts) >= 2 and texts[1] == "exec":
-        return True
-    return any(text.lower() == "--contributor-mode" for text in texts)
+    if len(texts) < 4 or texts[1] != "exec":
+        return False
+    return texts[-3].lower() == "--contributor-mode" and texts[-2].lower() in (
+        "on",
+        "off",
+    )
 
 
 def enforce_spawn_policy(argv: list[str]) -> None:
@@ -183,10 +190,13 @@ def enforce_spawn_policy(argv: list[str]) -> None:
       (``--effort``, ``--model``, ``--output-schema``, ``--image``,
       ``--workspace``, ``--contributor-mode``) is never scanned, so a
       flag-like path or value cannot trip the gate;
-    * the prompt -- the final element of a ``muse exec`` shaped argv --
-      is never scanned, so a literal prompt beginning ``--tool`` (or any
-      other denied-looking wording) passes while real capability
-      options appended around it are still refused.
+    * the prompt -- the final element of a ``muse exec`` shaped argv,
+      recognised only by the real ``--contributor-mode <on|off>``
+      tail :meth:`MuseCLIModel._argv` always emits -- is never
+      scanned, so a literal prompt beginning ``--tool`` (or any other
+      denied-looking wording) passes while real capability options
+      appended around it, including a trailing denied flag, are still
+      refused;
 
     Single-dash spellings (``-tool``) are not refused: no supported
     ``muse exec`` flag has that shape, so the gate leaves that noted
@@ -210,7 +220,11 @@ def enforce_spawn_policy(argv: list[str]) -> None:
                 f"child spawn refused: tool/dispatch capability "
                 f"{text!r} is outside the permission policy"
             )
-        if lowered in _SPAWN_SINGLE_VALUE_OPTIONS:
+        if lowered in _SPAWN_SINGLE_VALUE_OPTIONS and "=" not in text:
+            # A bare "--opt" consumes the next element as its value.
+            # An inline "--opt=value" already carries its value after
+            # the "=", so the next element stays in its own slot and a
+            # denied flag there is still refused.
             expect_value = True
 
 
