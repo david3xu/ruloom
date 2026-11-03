@@ -1878,3 +1878,417 @@ def test_repair_restores_wrong_checksum_without_recopy(
     assert entry["found"] == "checksum-mismatch"
     assert entry["restored"] == first["zip_sha256"]
     assert entry["preserved"] is None
+
+
+def _repair_interrupted_after_copy(
+    publisher: Publisher,
+    run_dir: Path,
+    item: dict,
+    dest: Path,
+    shipped: bytes,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, str]:
+    """Crash a repair at the final record write; return (preserved, found).
+
+    The ZIP is already restored and the quarantine is intact when the
+    injected fault lands, so the pending intent stays durable with no
+    repairs entry yet. Shared setup for the KP-02 quarantine-refusal
+    tests: the restored bytes let a retry or a plain publication
+    reach finalisation, where the damaged quarantine must refuse.
+    """
+    real_write_json = publication._atomic_write_json
+    calls = {"n": 0}
+
+    def boom(path: Path, record: object) -> Path:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("injected final-record failure")
+        return real_write_json(path, record)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(publication, "_atomic_write_json", boom)
+    with pytest.raises(RuntimeError, match="injected final-record failure"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after stray copy",
+            now=T0 + 10.0,
+        )
+    monkeypatch.undo()
+    assert dest.read_bytes() == shipped
+    record = publisher.get(item["item_id"])
+    assert record is not None and isinstance(record.get("pending_repair"), dict)
+    assert record.get("repairs", []) == []
+    pending = record["pending_repair"]
+    assert pending["reason"] == "restore after stray copy"
+    assert pending["at"] == T0 + 10.0
+    return dest.parent / str(pending["preserved"]), str(pending["found"])
+
+
+def _damage_quarantine(preserved: Path, *, state: str) -> bytes:
+    """Delete or corrupt a quarantine; return its intact bytes for restore."""
+    saved = preserved.read_bytes()
+    if state == "deleted":
+        preserved.unlink()
+    else:
+        assert state == "changed"
+        preserved.write_bytes(b"tampered quarantine bytes")
+    return saved
+
+
+def _assert_refusal_kept_pending(
+    publisher: Publisher,
+    item: dict,
+    dest: Path,
+    shipped: bytes,
+    preserved: Path,
+    first: dict,
+    found: str,
+) -> None:
+    """A quarantine refusal records nothing: bytes, intent, history intact."""
+    assert dest.read_bytes() == shipped
+    record = publisher.get(item["item_id"])
+    assert record is not None and record["status"] == "complete"
+    assert record.get("repairs", []) == []
+    pending = record.get("pending_repair")
+    assert isinstance(pending, dict)
+    assert pending["authority"] == "team-a"
+    assert pending["reason"] == "restore after stray copy"
+    assert pending["at"] == T0 + 10.0
+    assert pending["found"] == found
+    assert pending["restored"] == first["zip_sha256"]
+    assert pending["preserved"] == preserved.name
+
+
+def _recover_quarantine_and_assert_single_entry(
+    publisher: Publisher,
+    run_dir: Path,
+    item: dict,
+    dest: Path,
+    preserved: Path,
+    saved: bytes,
+    shipped: bytes,
+    first: dict,
+    found: str,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    via: str,
+) -> None:
+    """Restore the preserved bytes and recover to one original entry.
+
+    Recovery reuses the same route that refused (``via`` is
+    ``"repair"`` or ``"publish"``): the restored evidence lets
+    finalisation clear the pending intent into exactly one entry
+    carrying the original authorisation, without recopying the ZIP.
+    """
+    preserved.write_bytes(saved)
+    copies = _counting_no_recopy(monkeypatch)
+    if via == "publish":
+        identity = publisher.publish(
+            item["item_id"], run_dir, authority="team-a", now=T0 + 30.0
+        )
+    else:
+        assert via == "repair"
+        identity = publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="retry after evidence restored",
+            now=T0 + 30.0,
+        )
+    assert identity["zip_sha256"] == first["zip_sha256"]
+    assert dest.read_bytes() == shipped
+    assert copies["n"] == 0
+    assert preserved.read_bytes() == saved
+    record = publisher.get(item["item_id"])
+    assert record is not None and "pending_repair" not in record
+    repairs = record.get("repairs")
+    assert isinstance(repairs, list) and len(repairs) == 1
+    assert repairs[0]["authority"] == "team-a"
+    assert repairs[0]["reason"] == "restore after stray copy"
+    assert repairs[0]["at"] == T0 + 10.0
+    assert repairs[0]["found"] == found
+    assert repairs[0]["restored"] == first["zip_sha256"]
+    assert repairs[0]["preserved"] == preserved.name
+
+
+def test_repair_retry_refuses_deleted_quarantine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KP-02: a repair retry refuses when the quarantine is gone.
+
+    The ZIP is already restored with the intent still pending when
+    the preserved evidence is deleted, so the retry reaches
+    finalisation -- which must refuse rather than record a false
+    preservation claim. The pending intent and empty history
+    survive; restoring the preserved bytes recovers to exactly one
+    entry with the original authorisation and no ZIP recopy.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+    preserved, found = _repair_interrupted_after_copy(
+        publisher, run_dir, item, dest, shipped, monkeypatch
+    )
+    saved = _damage_quarantine(preserved, state="deleted")
+    with pytest.raises(PublicationError, match="no longer attest"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="retry after evidence loss",
+            now=T0 + 20.0,
+        )
+    assert not preserved.exists()
+    _assert_refusal_kept_pending(
+        publisher, item, dest, shipped, preserved, first, found
+    )
+    _recover_quarantine_and_assert_single_entry(
+        publisher,
+        run_dir,
+        item,
+        dest,
+        preserved,
+        saved,
+        shipped,
+        first,
+        found,
+        monkeypatch,
+        via="repair",
+    )
+
+
+def test_repair_retry_refuses_changed_quarantine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KP-02: a repair retry refuses when the quarantine bytes changed.
+
+    Same restored-ZIP route as the deleted case, but the preserved
+    file now carries foreign bytes: finalisation must still refuse
+    the false preservation claim, keep the pending intent with an
+    empty history, and recover to one original entry once the true
+    preserved bytes are restored, with no ZIP recopy.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+    preserved, found = _repair_interrupted_after_copy(
+        publisher, run_dir, item, dest, shipped, monkeypatch
+    )
+    saved = _damage_quarantine(preserved, state="changed")
+    with pytest.raises(PublicationError, match="no longer attest"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="retry after evidence loss",
+            now=T0 + 20.0,
+        )
+    assert preserved.read_bytes() == b"tampered quarantine bytes"
+    _assert_refusal_kept_pending(
+        publisher, item, dest, shipped, preserved, first, found
+    )
+    _recover_quarantine_and_assert_single_entry(
+        publisher,
+        run_dir,
+        item,
+        dest,
+        preserved,
+        saved,
+        shipped,
+        first,
+        found,
+        monkeypatch,
+        via="repair",
+    )
+
+
+def test_publish_refuses_deleted_quarantine_for_pending_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KP-02: plain publication refuses when the quarantine is gone.
+
+    A matching ZIP with a pending repair finalises through the same
+    shared routine as a retry, so a deleted quarantine must refuse
+    there too -- keeping the pending intent and an empty history --
+    and recover to one original entry once the preserved bytes are
+    restored, with no ZIP recopy.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+    preserved, found = _repair_interrupted_after_copy(
+        publisher, run_dir, item, dest, shipped, monkeypatch
+    )
+    saved = _damage_quarantine(preserved, state="deleted")
+    with pytest.raises(PublicationError, match="no longer attest"):
+        publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0 + 20.0)
+    assert not preserved.exists()
+    _assert_refusal_kept_pending(
+        publisher, item, dest, shipped, preserved, first, found
+    )
+    _recover_quarantine_and_assert_single_entry(
+        publisher,
+        run_dir,
+        item,
+        dest,
+        preserved,
+        saved,
+        shipped,
+        first,
+        found,
+        monkeypatch,
+        via="publish",
+    )
+
+
+def test_publish_refuses_changed_quarantine_for_pending_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KP-02: plain publication refuses when the quarantine bytes changed.
+
+    Same pending-repair finalisation as the deleted case, but the
+    preserved file carries foreign bytes: plain publish must still
+    refuse the false claim, keep the pending intent with an empty
+    history, and recover to one original entry once the true
+    preserved bytes are restored, with no ZIP recopy.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+    preserved, found = _repair_interrupted_after_copy(
+        publisher, run_dir, item, dest, shipped, monkeypatch
+    )
+    saved = _damage_quarantine(preserved, state="changed")
+    with pytest.raises(PublicationError, match="no longer attest"):
+        publisher.publish(item["item_id"], run_dir, authority="team-a", now=T0 + 20.0)
+    assert preserved.read_bytes() == b"tampered quarantine bytes"
+    _assert_refusal_kept_pending(
+        publisher, item, dest, shipped, preserved, first, found
+    )
+    _recover_quarantine_and_assert_single_entry(
+        publisher,
+        run_dir,
+        item,
+        dest,
+        preserved,
+        saved,
+        shipped,
+        first,
+        found,
+        monkeypatch,
+        via="publish",
+    )
+
+
+def test_repair_refuses_quarantine_deleted_after_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KP-02: an uninterrupted repair refuses a quarantine lost at copy.
+
+    The preserved evidence is deleted immediately after the ZIP is
+    restored inside a single repair call, so finalisation must
+    refuse within that same call -- keeping the pending intent and
+    an empty history -- and a retry recovers to one original entry
+    once the preserved bytes are restored, with no ZIP recopy.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+    found = sha256_bytes(b"not our bundle")
+    preserved = dest.parent / f"{dest.name}.replaced.{found}"
+    real_stage = publication._stage_and_commit
+
+    def damaging(dest_dir: Path, dest_name: str, payload: bytes) -> Path:
+        committed = real_stage(dest_dir, dest_name, payload)
+        preserved.unlink()
+        return committed
+
+    monkeypatch.setattr(publication, "_stage_and_commit", damaging)
+    with pytest.raises(PublicationError, match="no longer attest"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after stray copy",
+            now=T0 + 10.0,
+        )
+    monkeypatch.undo()
+    assert not preserved.exists()
+    saved = b"not our bundle"
+    _assert_refusal_kept_pending(
+        publisher, item, dest, shipped, preserved, first, found
+    )
+    _recover_quarantine_and_assert_single_entry(
+        publisher,
+        run_dir,
+        item,
+        dest,
+        preserved,
+        saved,
+        shipped,
+        first,
+        found,
+        monkeypatch,
+        via="repair",
+    )
+
+
+def test_repair_refuses_quarantine_changed_after_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KP-02: an uninterrupted repair refuses a quarantine swapped at copy.
+
+    Same single-call route as the deleted case, but the preserved
+    file is overwritten with foreign bytes right after the ZIP is
+    restored: finalisation must still refuse the false claim, keep
+    the pending intent with an empty history, and recover to one
+    original entry once the true preserved bytes are restored, with
+    no ZIP recopy.
+    """
+    base = tmp_path / "out"
+    run_dir, _, item, publisher, dest, shipped, first = _published_then_diverged(
+        base, tmp_path
+    )
+    found = sha256_bytes(b"not our bundle")
+    preserved = dest.parent / f"{dest.name}.replaced.{found}"
+    real_stage = publication._stage_and_commit
+
+    def damaging(dest_dir: Path, dest_name: str, payload: bytes) -> Path:
+        committed = real_stage(dest_dir, dest_name, payload)
+        preserved.write_bytes(b"tampered quarantine bytes")
+        return committed
+
+    monkeypatch.setattr(publication, "_stage_and_commit", damaging)
+    with pytest.raises(PublicationError, match="no longer attest"):
+        publisher.repair(
+            item["item_id"],
+            run_dir,
+            authority="team-a",
+            reason="restore after stray copy",
+            now=T0 + 10.0,
+        )
+    monkeypatch.undo()
+    assert preserved.read_bytes() == b"tampered quarantine bytes"
+    saved = b"not our bundle"
+    _assert_refusal_kept_pending(
+        publisher, item, dest, shipped, preserved, first, found
+    )
+    _recover_quarantine_and_assert_single_entry(
+        publisher,
+        run_dir,
+        item,
+        dest,
+        preserved,
+        saved,
+        shipped,
+        first,
+        found,
+        monkeypatch,
+        via="repair",
+    )

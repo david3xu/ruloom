@@ -225,7 +225,7 @@ Control cases (committed tests, no sleeps — clocks are injected):
   on retry (HP-01 A01): same key with a changed `max_rows`, a changed
   attempt bound, or a changed/added spec overlay refuses with history
   and fencing kept.
-- `tests/engine/test_publication.py` (47 tests): publish/download
+- `tests/engine/test_publication.py` (53 tests): publish/download
   round trip with hash equality to the reviewed `release.sha256`,
   idempotent re-publish, interrupted-copy resume to identical bytes,
   interrupted-mark adoption, in-progress foreign-destination refusal
@@ -239,6 +239,11 @@ Control cases (committed tests, no sleeps — clocks are injected):
   C02), plus checksum-only recovery with no pending intent (KP-01
   D01): plain publication refuses a missing or wrong sidecar while
   authorised repair restores the exact content with no ZIP recopy,
+  plus quarantine-refusal negatives (KP-02): a deleted or diverged
+  quarantine refuses finalisation via repair retry, via plain
+  publication, and inside a single repair call -- keeping the pending
+  intent with no entry -- and recovers to one original entry once the
+  preserved bytes are restored with no ZIP recopy,
   foreign-authority denial, unsucceeded /
   wrong-run / changed-bytes refusal, missing and bit-flipped release
   refusal, foreign-destination refusal, one-item-one-release, download
