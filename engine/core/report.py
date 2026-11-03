@@ -68,6 +68,12 @@ def render_evidence_report(evidence: Mapping[str, Any]) -> str:
     lines.append("")
 
     lines += ["## Requested outputs and strategy", ""]
+    if spec.get("purpose"):
+        lines.append(
+            f"Purpose (user supplied, not a verified claim): {_short(spec['purpose'], 4000)}"
+        )
+    if spec.get("target_rows") is not None:
+        lines.append(f"Exact row target: {spec['target_rows']}")
     lines.append(f"Outputs: {_short(spec.get('outputs'))}")
     lines.append(f"Strategy: {_short(spec.get('strategy'))}")
     lines.append(f"Row bound: {_short((spec.get('limits') or {}).get('max_rows'))}")
@@ -99,10 +105,49 @@ def render_evidence_report(evidence: Mapping[str, Any]) -> str:
         f"Selected attempt: {attempt_no if attempt_no is not None else 'none'}"
     )
     lines.append(f"Seed: {_short(plan.get('seed'))}")
-    lines.append(f"Rows: {_short(plan.get('n_rows'))}")
+    lines.append(f"Planned rows (not a new measurement): {_short(plan.get('n_rows'))}")
     lines.append(f"Strategy: {_short(plan.get('strategy', spec.get('strategy')))}")
     if isinstance(refs, Mapping) and refs.get("attempt"):
         lines.append(f"Attempt record: {refs.get('attempt')}")
+    lines.append("")
+
+    lines += ["## Runtime contribution", ""]
+    lines.append(f"Model policy: {get('model_policy', 'not recorded')}")
+    lines.append(f"Initial plan origin: {get('plan_origin', 'not recorded')}")
+    calls = get("model_invocations") or []
+    if calls:
+        lines += [
+            "| role | adapter | requested model | reported model |",
+            "|---|---|---|---|",
+        ]
+        for call in calls:
+            invocation = call.get("invocation", call)
+            lines.append(
+                f"| {_short(call.get('role'))} | {_short(call.get('adapter'))} "
+                f"| {_short(invocation.get('model', 'unknown'))} "
+                f"| {_short(invocation.get('returned_model', 'unknown'))} |"
+            )
+    else:
+        lines.append("No successful model invocations recorded for this run.")
+    for denial in get("model_denials") or []:
+        lines.append(
+            f"- Refused model role {_short(denial.get('role'))}: {_short(denial.get('error'))}"
+        )
+    for failure in get("model_failures") or []:
+        lines.append(
+            f"- Failed model call for {_short(failure.get('role'))}: {_short(failure.get('error'))}"
+        )
+    for advisory in get("advisories") or []:
+        lines.append(f"- Advisory record (not acceptance): {_short(advisory, 500)}")
+    lines.append(
+        "Seeded code generates data; checks determine eligibility; a human decides acceptance."
+    )
+    lines.append(
+        "Runtime identities are server reports, not proof of development authorship or model weights."
+    )
+    lines.append(
+        "Model records: run.jsonl. Development authorship is tracked separately in Git."
+    )
     lines.append("")
 
     lines += ["## Checks", ""]

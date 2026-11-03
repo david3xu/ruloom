@@ -158,6 +158,7 @@ class _BudgetedClient:
         self._role = role
 
     def _check_budget(self) -> None:
+        self._runner.check_model_policy(self._role)
         budget = self._runner.model_budget
         if budget is not None and self._runner.model_tokens >= budget:
             raise BudgetExceeded(
@@ -166,23 +167,36 @@ class _BudgetedClient:
                 "call before making it"
             )
 
-    def complete(self, prompt: str, schema: Mapping[str, Any]) -> Any:
+    def _complete(
+        self, method: str, prompt: str, schema: Mapping[str, Any], *args: Any
+    ) -> Any:
         self._check_budget()
-        completion = self._client.complete(prompt, schema)
+        self._runner.log.append("model_call_started", "started", {"role": self._role})
+        try:
+            completion = getattr(self._client, method)(prompt, schema, *args)
+        except Exception as exc:
+            self._runner.log.append(
+                "model_call_failed",
+                "error",
+                {
+                    "role": self._role,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "returned_model": "unknown",
+                },
+            )
+            raise
         self._runner.record_model_usage(completion.usage)
         self._runner.note_model_call(completion.usage)
         self._runner.note_model_invocation(self._role, self._client, completion)
         return completion
 
+    def complete(self, prompt: str, schema: Mapping[str, Any]) -> Any:
+        return self._complete("complete", prompt, schema)
+
     def complete_with_image(
         self, prompt: str, schema: Mapping[str, Any], image_path: Any
     ) -> Any:
-        self._check_budget()
-        completion = self._client.complete_with_image(prompt, schema, image_path)
-        self._runner.record_model_usage(completion.usage)
-        self._runner.note_model_call(completion.usage)
-        self._runner.note_model_invocation(self._role, self._client, completion)
-        return completion
+        return self._complete("complete_with_image", prompt, schema, image_path)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.__dict__["_client"], name)
@@ -615,6 +629,7 @@ class _Runner:
         spec: Mapping[str, Any] | None = None,
         spec_digest: str | None = None,
         fixed_plan: Mapping[str, Any] | None = None,
+        model_policy: str = "hosted",
     ) -> None:
         if isinstance(max_attempts, bool) or not isinstance(max_attempts, int):
             raise TypeError(f"max_attempts must be an integer, got {max_attempts!r}")
@@ -657,6 +672,10 @@ class _Runner:
 
                 spec_digest = sha256_canonical(spec)
         self._spec = spec
+        from .model_policy import validate_policy
+
+        validate_policy(model_policy)
+        self.model_policy = model_policy
         self._spec_digest = spec_digest
         self._fixed_plan: dict[str, Any] | None = (
             copy.deepcopy(dict(fixed_plan)) if isinstance(fixed_plan, Mapping) else None
@@ -749,6 +768,7 @@ class _Runner:
                 **({"local_critic": True} if local_critic else {}),
                 "spec": dict(self._spec),
                 "spec_digest": self._spec_digest,
+                "model_policy": self.model_policy,
                 **(
                     {"fixed_plan": copy.deepcopy(dict(self._fixed_plan))}
                     if self._fixed_plan is not None
@@ -848,6 +868,7 @@ class _Runner:
         details: dict[str, Any] = {
             "role": role,
             "client": type(client).__name__,
+            "adapter": self.role_bindings.get(role, {}).get("adapter", HOSTED_ADAPTER),
         }
         meta = getattr(completion, "meta", None)
         meta_models: Any = meta.get("models") if isinstance(meta, Mapping) else None
@@ -903,7 +924,9 @@ class _Runner:
             details["returned_model"] = observed
             if models_copy is not None:
                 details["models"] = models_copy
-        self.log.append("model_invocation", "ok", details)
+        self.log.append(
+            "model_invocation", "ok", details, usage=getattr(completion, "usage", None)
+        )
 
     @staticmethod
     def _observed_name(*candidates: Any, default: str = "unknown") -> str:
@@ -1013,6 +1036,13 @@ class _Runner:
     def store_plan(self, plan: dict[str, Any]) -> None:
         """Store a generation plan as the current plan."""
         self._enforce_plan_bounds(plan)
+        target = self._spec.get("target_rows")
+        if target is not None and (
+            type(plan.get("n_rows")) is not int or plan.get("n_rows") != target
+        ):
+            raise RunnerError(
+                f"plan rows {plan.get('n_rows')} differ from requested target_rows {target}"
+            )
         self._plan = copy.deepcopy(dict(plan))
 
     def reference_stats_record(self) -> dict[str, Any]:
@@ -1392,6 +1422,26 @@ class _Runner:
             "source": copy.deepcopy(dict(self._source_meta)),
             "attempt_no": attempt_no,
             "plan": plan,
+            "model_policy": self.model_policy,
+            "plan_origin": "saved-plan replay"
+            if self._fixed_plan is not None
+            else "model proposal",
+            "model_invocations": [
+                copy.deepcopy(event["details"])
+                for event in self.log.events
+                if event["stage"] == "model_invocation"
+            ],
+            "model_denials": [
+                copy.deepcopy(event["details"])
+                for event in self.log.events
+                if event["stage"] == "model_policy_denied"
+            ],
+            "model_failures": [
+                copy.deepcopy(event["details"])
+                for event in self.log.events
+                if event["stage"] == "model_call_failed"
+            ],
+            "advisories": copy.deepcopy(self.advisories),
             "check_results": check_results,
             "manifest_checks": [dict(entry) for entry in self.manifest.checks],
             "conditions": dict(conditions),
@@ -1619,8 +1669,27 @@ class _Runner:
         """The engine-selected best attempt, once a loop has decided."""
         return self._best
 
+    def check_model_policy(self, role: str) -> None:
+        from .model_policy import ModelPolicyError, enforce_model_policy
+
+        config = self.role_bindings.get(role, {})
+        try:
+            enforce_model_policy(self.model_policy, config)
+        except ModelPolicyError as exc:
+            self.log.append(
+                "model_policy_denied",
+                "refused",
+                {
+                    "role": role,
+                    "policy": self.model_policy,
+                    "error": str(exc),
+                },
+            )
+            raise
+
     def model_for(self, role: str) -> Any:
         """Resolve a model role to a client, enforcing availability."""
+        self.check_model_policy(role)
         if role in self._models:
             return self._models[role]
         if role not in self.role_bindings:
@@ -1630,7 +1699,13 @@ class _Runner:
             raise PermissionDenied(
                 f"model role {role!r} is disabled: treated as missing"
             )
-        client = self.model_factory(role, dict(config))
+        client = self.model_factory(
+            role,
+            {
+                **config,
+                "local_only": self.model_policy == "local-only",
+            },
+        )
         guarded = _BudgetedClient(client, self, role)
         self._models[role] = guarded
         return guarded
@@ -1848,6 +1923,17 @@ class _Runner:
                     self.say(f"[{stage}] no improvement across two attempts: stopping")
                     break
                 previous_failed = len(failed)
+                repair_role = self.manifest.capabilities[on_fail].get("calls_model")
+                if repair_role:
+                    from .model_policy import ModelPolicyError
+
+                    try:
+                        self.check_model_policy(str(repair_role))
+                    except ModelPolicyError as exc:
+                        self.say(
+                            f"[{stage}] repair unavailable: {exc}; failing checks retained"
+                        )
+                        break
                 self.run_capability(on_fail)
         finally:
             self._in_loop = False
@@ -1919,6 +2005,7 @@ def execute(
     role_binding_sources: Mapping[str, Mapping[str, str]] | None = None,
     spec: Mapping[str, Any] | None = None,
     fixed_plan: Mapping[str, Any] | None = None,
+    model_policy: str = "hosted",
 ) -> tuple[int, dict[str, Any]]:
     """Execute a manifest graph; return (exit code, outcome summary).
 
@@ -1956,10 +2043,12 @@ def execute(
             raise EOFError(f"no input for prompt: {prompt!r}")
         return line.rstrip("\n")
 
+    from .model_policy import ModelPolicyError, validate_policy
     from .spec import SpecError
     from .spec import normalize_spec as _normalize
 
     try:
+        validate_policy(model_policy)
         normalized_spec, spec_digest = _normalize(
             spec,
             manifest,
@@ -1967,7 +2056,7 @@ def execute(
             max_attempts=max_attempts,
             images_dir=images_dir,
         )
-    except SpecError as exc:
+    except (SpecError, ModelPolicyError) as exc:
         refused_dir = record_refusal(
             Path(out),
             profile_ref=manifest.id,
@@ -1977,6 +2066,7 @@ def execute(
                 "out": str(out),
                 **({"images_dir": str(images_dir)} if images_dir is not None else {}),
                 "spec": dict(spec) if isinstance(spec, Mapping) else spec,
+                "model_policy": model_policy,
             },
             error=str(exc),
         )
@@ -2010,6 +2100,7 @@ def execute(
             spec=normalized_spec,
             spec_digest=spec_digest,
             fixed_plan=fixed_plan,
+            model_policy=model_policy,
         )
     except (RunnerError, PermissionDenied) as exc:
         _say(f"[engine] composition refused: {exc}")

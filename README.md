@@ -175,8 +175,8 @@ prose:
   existing field changed meaning and pass/fail semantics are untouched.
 
 Role fields resolve **CLI > env > profile > engine default**: repeatable
-`--role-model ROLE=MODEL` (plus `--role-effort` and `--role-base-url`)
-beat `RULOOM_ROLE_<ROLE>_MODEL` / `_EFFORT` / `_BASE_URL` (role
+`--role-model ROLE=MODEL` (plus `--role-adapter`, `--role-effort` and `--role-base-url`)
+beat `RULOOM_ROLE_<ROLE>_MODEL` / `_ADAPTER` / `_EFFORT` / `_BASE_URL` (role
 uppercased, e.g. `RULOOM_ROLE_PLANNER_MODEL`), which beat the manifest
 binding, which beats the adapter default (`muse-spark-1.3` /
 `muse-glimmer-30B`, effort `max`, local base URL
@@ -204,6 +204,55 @@ never release ZIPs (per-run identity, so they differ by design).
 The run also ships a user-facing
 `evidence-report.md` rendered from stored records only.
 
+## Work without hosted credits
+
+Replay a reviewed plan with **all model calls disabled**, including repair:
+
+```bash
+ruloom run --profile tabular SOURCE.csv --max-attempts 2 \
+  --plan saved/plan.json --model-policy offline --out replay
+```
+
+Checks and the human gate still apply. A failing check cannot trigger paid
+repair or become a pass. Optional critics blocked by the policy are recorded
+as unavailable; a required model stage fails. Plain `--plan` alone still
+permits later model calls under the default `hosted` policy.
+
+For local text planning, start your trusted Glimmer server separately, then:
+
+```bash
+ruloom run --profile tabular SOURCE.csv --max-attempts 2 \
+  --model-policy local-only --role-adapter planner=glimmer_local --out local-run
+```
+
+This uses a literal loopback endpoint and has no hosted fallback. Proxy
+settings and redirects are refused by this transport. The policy controls
+Ruloom's adapters, not what a separately operated server does internally.
+The local adapter is text only; it does not replace the vision critic.
+
+To draft settings from a short request before generation:
+
+```bash
+ruloom prepare --profile tabular SOURCE.csv --max-attempts 2 \
+  --request "Create 100 synthetic rows using the supported source-fitted strategy." \
+  --role-adapter planner=glimmer_local --out request-draft
+```
+
+`prepare` defaults to `local-only`. It sends the request and supported settings
+to the model, and hashes source bytes locally to pin the draft. Source rows
+are never sent by the preparation command. Review `request-draft/request.json`,
+`spec.json` and `plan.json` for a faithful interpretation, then run the reviewed
+spec and plan with `run --spec ... --plan ... --model-policy offline`. Draft
+success is not data-quality approval. Unsupported requirements refuse the
+draft. This first request interface supports scalar output; existing image
+workflows remain available through `run` with explicit source inputs.
+
+The evidence report shows the exact row target when supplied, planned rows,
+stored check results, initial plan origin, actual successful model calls and
+unavailable reviews. It does not manufacture a measured row count from the
+plan. Development attribution and deferred real evaluation are documented in
+[the product workflow](docs/credit-free-product.md).
+
 ```bash
 .venv/bin/ruloom run --profile tabular <source>.csv --max-attempts 2 \
   --spec docs/spec-example.json
@@ -224,11 +273,12 @@ validation verdict pass, artifact `55eb1c22e212…`, release ZIP
 (CP-02 repaired TIR sequence generation and versioned the golden bytes
 deliberately; pre-repair values were artifact `be9e26d7e664…`, release
 `46c7c07110c5…` — see `docs/quality/scorecard-cp02-addendum.md`.)
-Test suite: 696 passed (observed 2026-11-03 at `88e8c6e`;
-reproduce with `.venv/bin/python -m pytest -q -p no:cacheprovider`).
-Force-pass gate (`scripts/force_pass.py`): 43 PASS, 0 FAIL, exit 0
-(39 enforced: 12 FP + 27 Q executed; 4 planned Q stubs reported,
-not executed; same date and revision; reproduce with
+Credit-free preparation checks: 730 passed, 14 source-dependent tests skipped
+(observed 2026-11-03 on `codex/credit-free-product`; real data and live model
+evaluation deferred; reproduce with `.venv/bin/python -m pytest -q`).
+Force-pass gate (`scripts/force_pass.py`): 46 PASS, 0 FAIL, exit 0
+(42 enforced: 12 FP + 30 Q executed; 4 planned Q stubs reported,
+not executed; same branch and date; reproduce with
 `.venv/bin/python scripts/force_pass.py`). The engine is generic: profiles declare their
 step/loop/gate graphs and permissions, and the same engine code runs
 the HyLogger profile and the common tabular profile

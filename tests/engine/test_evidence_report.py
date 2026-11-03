@@ -155,6 +155,41 @@ def test_report_without_decision_or_frozen() -> None:
     assert "no frozen snapshot" in text
 
 
+def test_runtime_contribution_does_not_mistake_replay_for_inference() -> None:
+    bundle = _evidence()
+    bundle.update(
+        model_policy="offline", plan_origin="saved-plan replay", model_invocations=[]
+    )
+    text = render_evidence_report(bundle)
+    assert "Model policy: offline" in text
+    assert "Initial plan origin: saved-plan replay" in text
+    assert "No successful model invocations recorded" in text
+    assert "Planned rows (not a new measurement)" in text
+
+
+def test_runtime_contribution_shows_actual_model_and_unavailable_review() -> None:
+    bundle = _evidence()
+    bundle.update(
+        model_policy="local-only",
+        plan_origin="model proposal",
+        model_invocations=[
+            {
+                "role": "planner",
+                "adapter": "glimmer_local",
+                "model": "requested",
+                "returned_model": "reported",
+            }
+        ],
+        model_denials=[{"role": "critic", "error": "hosted call refused"}],
+        advisories=[{"status": "advisory-failed", "error": "critic unavailable"}],
+    )
+    text = render_evidence_report(bundle)
+    assert "| planner | glimmer_local | requested | reported |" in text
+    assert "hosted call refused" in text
+    assert "critic unavailable" in text
+    assert "Runtime identities are server reports" in text
+
+
 def test_report_needs_no_model_or_check_modules() -> None:
     """The renderer imports neither model adapters nor check code."""
     import engine.core.report as report_module

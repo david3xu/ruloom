@@ -122,6 +122,7 @@ def _supported_options(ctx: Any) -> dict[str, Any]:
     return {
         "strategies": [strategy] if strategy is not None else [],
         "max_rows": _spec_max_rows(ctx),
+        "target_rows": spec.get("target_rows"),
         "outputs": list(spec.get("outputs", ["scalar"])),
     }
 
@@ -294,6 +295,7 @@ def plan(ctx: Any) -> None:
             profile,
             max_rows=_spec_max_rows(ctx),
             allowed_strategies=_allowed_strategies(ctx),
+            target_rows=ctx.spec_record().get("target_rows"),
         )
     except Exception as exc:  # noqa: BLE001 -- logged, then reported
         ctx.event("plan", "error", {"error": f"{type(exc).__name__}: {exc}"})

@@ -13,9 +13,8 @@ no API key. The ``model`` name configured here is sent to the server, but
 the adapter RECORDS the model id the server returns (``Usage.model`` and
 ``meta["model"]``), so run evidence always names what actually answered.
 
-Text only. The Glimmer image weights (``mmproj``) are not present on the
-provisioned machine, so this adapter never attaches images; the HyLogger
-vision critic seat stays with the Spark multimodal adapter from Loop 8.
+Text only: this adapter never attaches images. The vision critic remains
+with the hosted multimodal adapter; no local-vision implementation is claimed.
 """
 
 from __future__ import annotations
@@ -28,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .base import UNKNOWN_MODEL, Completion, ModelError, Usage
+from .local_transport import local_opener, require_loopback_url
 
 #: Default base URL of the local ``llama-server`` instance.
 DEFAULT_BASE_URL = "http://127.0.0.1:8080"
@@ -118,6 +118,7 @@ class GlimmerLocalModel:
     base_url: str = DEFAULT_BASE_URL
     timeout_s: float = 1200.0
     extra_headers: Mapping[str, str] = field(default_factory=dict)
+    local_only: bool = False
 
     def endpoint(self) -> str:
         """The chat-completions URL this adapter POSTs to."""
@@ -125,6 +126,11 @@ class GlimmerLocalModel:
 
     def _post(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         """POST ``payload`` and return the decoded response object."""
+        if self.local_only:
+            try:
+                require_loopback_url(self.base_url)
+            except ValueError as exc:
+                raise ModelError(str(exc)) from exc
         body = json.dumps(dict(payload)).encode("utf-8")
         request = urllib.request.Request(
             self.endpoint(),
@@ -136,7 +142,11 @@ class GlimmerLocalModel:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+            if self.local_only:
+                open_request = local_opener().open
+            else:
+                open_request = urllib.request.urlopen
+            with open_request(request, timeout=self.timeout_s) as response:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = ""
