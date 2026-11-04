@@ -138,3 +138,12 @@ review and audit each slice, require green CI and branch protection, then merge
 to main regularly. An earlier slice is a foundation, not a ready full workflow.
 No separate generation/release engine, benchmark-specific source/row hardcoding,
 automatic seed search or arbitrary contract overrides are permitted.
+
+## Profile foundation status and remaining runtime integration
+
+The profile foundation (`profiles/hylogger/cases.json` and `profiles/hylogger/validation/cases.py`) establishes admitted evidence provenance, strict canonical contracts, deterministic source suitability, bounded source aggregate references, and recipient utility verification without shipping raw source rows.
+
+Subsequent slices complete runtime integration:
+1. Engine execution: binding compiled case contracts and utility checks into `engine.core.runner.execute` and the existing capability graph validation step.
+2. Acceptance and release: embedding the case contract and aggregate reference into release packages and enforcing recipient recomputation in `verify_release`.
+3. AI role orchestration: coordinator preparation and advisory reviewer steps under strict schema and offline replay policy.

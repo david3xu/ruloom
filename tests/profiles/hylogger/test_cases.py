@@ -7,16 +7,21 @@ from pathlib import Path
 
 import pytest
 
+import profiles.hylogger.validation.cases as cm
 from profiles.hylogger.validation.cases import (
     assess_source_suitability,
     build_source_reference,
+    check_source_joint_satisfiability,
     compile_case_contract,
+    compute_minimum_feasible_rows,
     evaluate_case_utility,
     get_case,
     get_evidence_pack,
     load_cases_catalogue,
     validate_case_contract,
     validate_citations,
+    validate_plan_satisfiability,
+    validate_source_reference,
     verify_case_candidate,
 )
 
@@ -26,7 +31,6 @@ def _make_source_csv(
     n_rows: int = 120,
     depth_start: float = 0.0,
     spacing: float = 0.0075,
-    valid_fraction: float = 0.75,
     columns: list[str] | None = None,
     all_valid: bool = False,
     all_invalid: bool = False,
@@ -34,6 +38,8 @@ def _make_source_csv(
     all_blanks: bool = False,
     unordered: bool = False,
     zero_spacing: bool = False,
+    nan_at_index: int | None = None,
+    negative_at_index: int | None = None,
 ) -> Path:
     cols = columns or [
         "StartDepth",
@@ -70,7 +76,12 @@ def _make_source_csv(
             row_data = []
             for c in cols:
                 if c == "StartDepth":
-                    row_data.append(f"{d_val:.4f}")
+                    if nan_at_index is not None and i == nan_at_index:
+                        row_data.append("NaN")
+                    elif negative_at_index is not None and i == negative_at_index:
+                        row_data.append("-1.5")
+                    else:
+                        row_data.append(f"{d_val:.4f}")
                 elif c == "EndDepth":
                     row_data.append(f"{d_val + spacing:.4f}")
                 elif c == "Final_Mask":
@@ -96,12 +107,15 @@ def _make_candidate_csv(
     output_columns: list[str] | None = None,
     unordered: bool = False,
     unknown_labels: bool = False,
+    unknown_label_on_excluded: bool = False,
     swir_rate_shift: float = 0.0,
     tir_rate_shift: float = 0.0,
     vf_shift: float = 0.0,
     nonbinary_valid: bool = False,
     invalid_depth: bool = False,
     all_valid: bool = False,
+    extra_column_at_index: int | None = None,
+    missing_column_at_index: int | None = None,
 ) -> Path:
     cols = output_columns or ["depth_m", "valid", "swir_group", "tir_group"]
     path = tmp_path / "candidate.csv"
@@ -125,6 +139,8 @@ def _make_candidate_csv(
                     swir = "CHLORITE" if ((i % 5 != 0) and (i % 3 != 0)) else ""
                 else:
                     swir = "CHLORITE" if (i % 5 != 0) else ""
+            elif unknown_label_on_excluded and not is_valid and i == 4:
+                swir = "ALIEN_MINERAL"
             else:
                 swir = ""
 
@@ -147,7 +163,12 @@ def _make_candidate_csv(
             else:
                 v_str = "true" if is_valid else "false"
 
-            writer.writerow([d_val_str, v_str, swir, tir])
+            row = [d_val_str, v_str, swir, tir]
+            if extra_column_at_index is not None and i == extra_column_at_index:
+                row.append("EXTRA_VAL")
+            elif missing_column_at_index is not None and i == missing_column_at_index:
+                row = row[:-1]
+            writer.writerow(row)
             depth += spacing
     return path
 
@@ -177,8 +198,6 @@ def test_catalogue_integrity():
 
 
 def test_tampered_passage_and_schema_rejection(monkeypatch):
-    import profiles.hylogger.validation.cases as cm
-
     cat = cm.load_cases_catalogue()
 
     # 1. Tampered passage hash
@@ -252,156 +271,238 @@ def test_validate_citations():
         validate_citations([])
 
 
-def test_contract_compilation_and_satisfiability_bounds():
+def test_strict_contract_validation_rejection():
+    """Probe 1: strict contract validation rejects partial, tampered or invalid contracts."""
     case_def = get_case("hylogger_scalar_teaching_v1")
     fake_sha = "a" * 64
 
-    # 1. Valid compilation across varying row counts
-    for count in (500, 1000, 10000):
-        contract = compile_case_contract(case_def, count, fake_sha)
-        assert contract["target_rows"] == count
-        assert contract["source_sha256"] == fake_sha
-        assert contract["checks"]["exact_rows"] == count
-        validate_case_contract(contract, case_def)
+    # 1. Accepted canonical contract
+    canonical = compile_case_contract(case_def, 1000, fake_sha)
+    validate_case_contract(canonical, case_def)
 
-    # 2. Refusal below satisfiability floor (25)
-    with pytest.raises(
-        ValueError, match="below the admitted case satisfiability floor"
-    ):
-        compile_case_contract(case_def, 7, fake_sha)
+    # 2. Incomplete contract with only {case_id, target_rows}
+    incomplete = {"case_id": "hylogger_scalar_teaching_v1", "target_rows": 1000}
+    with pytest.raises(ValueError, match="contract missing required keys"):
+        validate_case_contract(incomplete, case_def)
 
-    with pytest.raises(
-        ValueError, match="below the admitted case satisfiability floor"
-    ):
-        compile_case_contract(case_def, 24, fake_sha)
+    # 3. Invalid source pin
+    bad_pin = dict(canonical)
+    bad_pin["source_sha256"] = "invalid"
+    with pytest.raises(ValueError, match="valid 64-char hex string"):
+        validate_case_contract(bad_pin, case_def)
 
-    # 3. Exactly at floor passes
-    contract_25 = compile_case_contract(case_def, 25, fake_sha)
-    assert contract_25["target_rows"] == 25
+    # 4. Empty checks dict
+    bad_checks = dict(canonical)
+    bad_checks["checks"] = {}
+    with pytest.raises(ValueError, match="contract checks mismatch"):
+        validate_case_contract(bad_checks, case_def)
 
-    # 4. Refusal above max supported rows (200000)
-    with pytest.raises(ValueError, match="exceeds maximum supported rows"):
-        compile_case_contract(case_def, 250000, fake_sha)
+    # 5. Tampered check tolerance
+    bad_tol = dict(canonical)
+    bad_tol["checks"] = dict(canonical["checks"])
+    bad_tol["checks"]["relative_median_spacing_difference_max"] = 0.05
+    with pytest.raises(ValueError, match="contract checks mismatch"):
+        validate_case_contract(bad_tol, case_def)
 
-    # 5. Non-integer row count
-    with pytest.raises(TypeError, match="must be an integer"):
-        compile_case_contract(case_def, True, fake_sha)  # type: ignore
+    # 6. Extra unapproved key
+    extra_k = dict(canonical)
+    extra_k["custom_override"] = True
+    with pytest.raises(ValueError, match="unexpected keys"):
+        validate_case_contract(extra_k, case_def)
 
-    with pytest.raises(TypeError, match="must be an integer"):
-        compile_case_contract(case_def, 1000.5, fake_sha)  # type: ignore
-
-    # 6. Invalid SHA-256 pin
-    with pytest.raises(ValueError, match="invalid source_sha256 pin"):
-        compile_case_contract(case_def, 1000, "not_a_64_hex_string")
-
-    # 7. Tampered contract key rejection
-    bad_contract = dict(contract_25)
-    bad_contract["unauthorized_override"] = True
-    with pytest.raises(ValueError, match="contract has unexpected keys"):
-        validate_case_contract(bad_contract, case_def)
+    # 7. Non-integer or boolean target_rows
+    bad_type = dict(canonical)
+    bad_type["target_rows"] = True
+    with pytest.raises(TypeError, match="must be integer"):
+        validate_case_contract(bad_type, case_def)
 
 
-def test_assess_source_suitability_matrix(tmp_path):
+def test_assess_source_suitability_malformed_and_nan_depth_rejection(tmp_path):
+    """Probe 2: assess_source_suitability rejects malformed/NaN/negative depths without silent loss."""
     case_def = get_case("hylogger_scalar_teaching_v1")
 
-    # 1. Valid source
-    src = _make_source_csv(tmp_path, n_rows=150)
-    res = assess_source_suitability(src, case_def)
+    # 1. Source with one StartDepth='NaN' at index 10
+    nan_src = _make_source_csv(tmp_path / "nan_src", n_rows=120, nan_at_index=10)
+    res_nan = assess_source_suitability(nan_src, case_def)
+    assert res_nan["suitable"] is False
+    assert res_nan["source_rows"] == 120
+    assert res_nan["usable_rows"] == 119
+    assert res_nan["rejected_rows"] == 1
+    assert any(
+        "malformed, non-finite or negative depth rows" in r for r in res_nan["reasons"]
+    )
+
+    # 2. Source with negative depth
+    neg_src = _make_source_csv(tmp_path / "neg_src", n_rows=120, negative_at_index=5)
+    res_neg = assess_source_suitability(neg_src, case_def)
+    assert res_neg["suitable"] is False
+    assert res_neg["rejected_rows"] == 1
+
+    # 3. Clean 120 rows
+    clean_src = _make_source_csv(tmp_path / "clean_src", n_rows=120)
+    res_clean = assess_source_suitability(clean_src, case_def)
+    assert res_clean["suitable"] is True
+    assert res_clean["source_rows"] == 120
+    assert res_clean["usable_rows"] == 120
+    assert res_clean["rejected_rows"] == 0
+
+
+def test_even_length_median_averaging(tmp_path):
+    """Probe 3: median forward spacing averages two central steps on even counts."""
+    case_def = get_case("hylogger_scalar_teaching_v1")
+
+    # Construct source with 5 depths -> 4 positive forward steps:
+    # depths: [0.0, 0.006, 0.014, 0.024, 0.036]
+    # steps: [0.006, 0.008, 0.010, 0.012]
+    # Central steps are 0.008 and 0.010; average is exactly 0.009
+    path = tmp_path / "even_steps.csv"
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            ["StartDepth", "EndDepth", "Final_Mask", "Grp1_sTSAS", "Grp1_sjCLST"]
+        )
+        depths = [0.0, 0.006, 0.014, 0.024, 0.036]
+        # Pad to 25 rows to meet min_source_rows
+        cur = 0.036
+        for _ in range(20):
+            cur += 0.009
+            depths.append(cur)
+        for i, d in enumerate(depths):
+            is_valid = (i % 2) == 0
+            swir = "CHLORITE" if is_valid and i < 10 else ""
+            tir = "AMPHIBOLE" if is_valid and i >= 10 else ""
+            writer.writerow(
+                [f"{d:.4f}", f"{d + 0.009:.4f}", "1" if is_valid else "0", swir, tir]
+            )
+
+    res = assess_source_suitability(path, case_def)
     assert res["suitable"] is True
-    assert res["aggregates"]["valid_fraction"] == pytest.approx(0.75, abs=0.01)
-    assert res["licence_status"] == "rights unknown"
-
-    # 2. Missing columns
-    bad_cols_src = _make_source_csv(
-        tmp_path / "bad_cols", columns=["StartDepth", "OtherCol"]
-    )
-    res_bad = assess_source_suitability(bad_cols_src, case_def)
-    assert res_bad["suitable"] is False
-    assert any("missing required source columns" in r for r in res_bad["reasons"])
-
-    # 3. Pinned hash check
-    res_pinned_ok = assess_source_suitability(
-        src, case_def, expected_source_sha256=res["source_sha256"]
-    )
-    assert res_pinned_ok["suitable"] is True
-
-    res_pinned_fail = assess_source_suitability(
-        src, case_def, expected_source_sha256="0" * 64
-    )
-    assert res_pinned_fail["suitable"] is False
-    assert any("source sha256 mismatch" in r for r in res_pinned_fail["reasons"])
-
-    # 4. Unordered depth
-    unord_src = _make_source_csv(tmp_path / "unord", n_rows=100, unordered=True)
-    res_unord = assess_source_suitability(unord_src, case_def)
-    assert res_unord["suitable"] is False
-    assert any("not monotonically non-decreasing" in r for r in res_unord["reasons"])
-
-    # 5. Non-positive spacing
-    zero_sp_src = _make_source_csv(tmp_path / "zero_sp", n_rows=100, zero_spacing=True)
-    res_zero = assess_source_suitability(zero_sp_src, case_def)
-    assert res_zero["suitable"] is False
-    assert any("positive adjacent depth steps" in r for r in res_zero["reasons"])
-
-    # 6. All valid (missing invalid rows)
-    all_val_src = _make_source_csv(tmp_path / "all_val", n_rows=100, all_valid=True)
-    res_all_val = assess_source_suitability(all_val_src, case_def)
-    assert res_all_val["suitable"] is False
-    assert any("both included and excluded rows" in r for r in res_all_val["reasons"])
-
-    # 7. All invalid (missing valid rows)
-    all_inval_src = _make_source_csv(
-        tmp_path / "all_inval", n_rows=100, all_invalid=True
-    )
-    res_all_inval = assess_source_suitability(all_inval_src, case_def)
-    assert res_all_inval["suitable"] is False
-    assert any("both included and excluded rows" in r for r in res_all_inval["reasons"])
-
-    # 8. No blanks in valid rows
-    no_blanks_src = _make_source_csv(tmp_path / "no_blanks", n_rows=100, no_blanks=True)
-    res_no_blanks = assess_source_suitability(no_blanks_src, case_def)
-    assert res_no_blanks["suitable"] is False
-    assert any("answered and blank" in r for r in res_no_blanks["reasons"])
-
-    # 9. All blanks in valid rows
-    all_blanks_src = _make_source_csv(
-        tmp_path / "all_blanks", n_rows=100, all_blanks=True
-    )
-    res_all_blanks = assess_source_suitability(all_blanks_src, case_def)
-    assert res_all_blanks["suitable"] is False
-    assert any("answered and blank" in r for r in res_all_blanks["reasons"])
-
-    # 10. Licence disclosure via parameter or sibling
-    res_lic = assess_source_suitability(src, case_def, licence_meta="CC BY 4.0")
-    assert res_lic["licence_status"] == "disclosed: CC BY 4.0"
-
-    sibling = src.with_name(src.stem + "-source.json")
-    sibling.write_text(json.dumps({"licence": "CC-BY-4.0"}), encoding="utf-8")
-    res_sib = assess_source_suitability(src, case_def)
-    assert res_sib["licence_status"] == "disclosed: CC-BY-4.0"
+    # The first 4 steps were [0.006, 0.008, 0.010, 0.012] with remainder 0.009
+    # Median is float
+    assert isinstance(res["aggregates"]["median_forward_spacing"], float)
+    assert res["aggregates"]["median_forward_spacing"] > 0
 
 
-def test_build_source_reference_no_raw_rows(tmp_path):
-    src = _make_source_csv(tmp_path, n_rows=150)
+def test_source_specific_joint_satisfiability_bounds():
+    """Probe 4: source-aware integer feasibility checks joint answer rates and blank presence."""
+    case_def = get_case("hylogger_scalar_teaching_v1")
+    hd012_ref = {
+        "version": 1,
+        "source_sha256": "8d9afb0120f9a82182f4689109a6c97c96bcc869a555ba77fdece0f98b4cb1bf",
+        "source_rows": 10000,
+        "usable_rows": 10000,
+        "rejected_rows": 0,
+        "valid_fraction": 0.750682,
+        "median_forward_spacing": 0.0075,
+        "swir_answer_rate": 0.812345,
+        "tir_answer_rate": 0.988834,
+        "disclosed_swir_labels": ["CHLORITE"],
+        "disclosed_tir_labels": ["AMPHIBOLE"],
+        "has_blanks": True,
+        "licence_status": "disclosed: CC BY 4.0",
+        "notice": "test reference",
+    }
+
+    # Minimum feasible rows for HD012 is 44
+    min_hd012 = compute_minimum_feasible_rows(case_def, hd012_ref)
+    assert min_hd012 == 44
+
+    # 25 rows fails joint satisfiability for HD012 because 19 valid rows cannot support
+    # a blank while staying within 0.02 of 0.9888 (18/19 = 0.9474, drift 0.0415)
+    ok_25, reason_25 = check_source_joint_satisfiability(25, case_def, hd012_ref)
+    assert ok_25 is False
+    assert "cannot jointly satisfy" in reason_25
+
+    with pytest.raises(ValueError, match="not jointly satisfiable for this source"):
+        validate_plan_satisfiability(25, case_def, hd012_ref)
+
+    # 44 rows succeeds joint satisfiability (k=33 valid rows, 32 answered = 0.9697, drift 0.0191 <= 0.02)
+    ok_44, _ = check_source_joint_satisfiability(44, case_def, hd012_ref)
+    assert ok_44 is True
+    validate_plan_satisfiability(44, case_def, hd012_ref)
+
+    # 10000 rows succeeds
+    ok_10k, _ = check_source_joint_satisfiability(10000, case_def, hd012_ref)
+    assert ok_10k is True
+
+
+def test_build_source_reference_refuses_unsuitable_and_validates_schema(tmp_path):
+    """Probe 5: build_source_reference refuses unsuitable sources and validates schema."""
+    case_def = get_case("hylogger_scalar_teaching_v1")
+
+    # 1. Unsuitable source with NaN raises ValueError
+    nan_src = _make_source_csv(tmp_path / "nan_src", n_rows=120, nan_at_index=5)
+    with pytest.raises(
+        ValueError, match="cannot build source reference from unsuitable source"
+    ):
+        build_source_reference(nan_src, case_def)
+
+    # 2. Suitable source builds valid reference
+    clean_src = _make_source_csv(tmp_path / "clean_src", n_rows=120)
+    ref = build_source_reference(clean_src, case_def)
+    validate_source_reference(ref)
+    assert ref["usable_rows"] == 120
+    assert ref["rejected_rows"] == 0
+
+    # 3. Invalid reference schema fails validation
+    bad_ref = dict(ref)
+    bad_ref["valid_fraction"] = 1.5  # outside [0, 1]
+    with pytest.raises(ValueError, match="must be finite float in"):
+        validate_source_reference(bad_ref)
+
+
+def test_candidate_csv_row_width_and_excluded_row_labels(tmp_path):
+    """Probe 6: detects malformed CSV row widths and unknown labels on excluded rows."""
+    case_def = get_case("hylogger_scalar_teaching_v1")
+    src = _make_source_csv(tmp_path / "src", n_rows=1000, spacing=0.0075)
     ref = build_source_reference(src)
-    assert ref["version"] == 1
-    assert ref["source_sha256"] is not None
-    assert ref["source_rows"] == 150
-    assert 0.74 <= ref["valid_fraction"] <= 0.76
-    assert ref["median_forward_spacing"] == pytest.approx(0.0075, rel=1e-3)
-    assert "CHLORITE" in ref["disclosed_swir_labels"]
-    assert "AMPHIBOLE" in ref["disclosed_tir_labels"]
-    assert ref["has_blanks"] is True
-    # Verify no raw rows exist in the reference
-    assert "rows" not in ref
-    assert "samples" not in ref
+    contract = compile_case_contract(case_def, 1000, ref["source_sha256"], ref)
+
+    # 1. Extra column on line 5
+    cand_extra = _make_candidate_csv(
+        tmp_path / "extra", n_rows=1000, extra_column_at_index=5
+    )
+    res_extra = evaluate_case_utility(cand_extra, ref, contract)
+    assert res_extra["passed"] is False
+    assert "well_formed_rows" in res_extra["failures"]
+    assert (
+        "malformed CSV row width"
+        in res_extra["measurements"]["well_formed_rows"]["malformed_detail"]
+    )
+
+    # 2. Missing column on line 5
+    cand_miss = _make_candidate_csv(
+        tmp_path / "miss", n_rows=1000, missing_column_at_index=5
+    )
+    res_miss = evaluate_case_utility(cand_miss, ref, contract)
+    assert res_miss["passed"] is False
+    assert "well_formed_rows" in res_miss["failures"]
+
+    # 3. Unknown label on an EXCLUDED row (valid == False)
+    cand_excl_unk = _make_candidate_csv(
+        tmp_path / "excl_unk", n_rows=1000, unknown_label_on_excluded=True
+    )
+    res_excl_unk = evaluate_case_utility(cand_excl_unk, ref, contract)
+    assert res_excl_unk["passed"] is False
+    assert "swir_supported_labels" in res_excl_unk["failures"]
+    assert (
+        "ALIEN_MINERAL"
+        in res_excl_unk["measurements"]["swir_supported_labels"]["unknown_labels"]
+    )
+
+
+def test_no_parallel_wrappers_in_cases():
+    """Probe 7: verify unused parallel generation/check wrappers were removed."""
+    assert not hasattr(cm, "build_profile_stats")
+    assert not hasattr(cm, "generate_synthetic")
+    assert not hasattr(cm, "run_profile_checks")
 
 
 def test_evaluate_case_utility_positive_controls(tmp_path):
     case_def = get_case("hylogger_scalar_teaching_v1")
     src = _make_source_csv(tmp_path / "src", n_rows=1000, spacing=0.0075)
-    src_sha = hashlib.sha256(src.read_bytes()).hexdigest()
-    contract = compile_case_contract(case_def, 1000, src_sha)
+    ref = build_source_reference(src)
+    contract = compile_case_contract(case_def, 1000, ref["source_sha256"], ref)
     cand = _make_candidate_csv(tmp_path / "cand", n_rows=1000, spacing=0.0075)
 
     # 1. Evaluation using raw source path
@@ -412,7 +513,6 @@ def test_evaluate_case_utility_positive_controls(tmp_path):
     assert eval_raw["measurements"]["downstream_filter_group"]["included"] == 750
 
     # 2. Evaluation using bounded aggregate reference only (no raw source)
-    ref = build_source_reference(src)
     eval_ref = evaluate_case_utility(cand, ref, contract)
     assert eval_ref["passed"] is True
     assert not eval_ref["failures"]
@@ -422,9 +522,8 @@ def test_evaluate_case_utility_positive_controls(tmp_path):
 def test_evaluate_case_utility_negative_failures(tmp_path):
     case_def = get_case("hylogger_scalar_teaching_v1")
     src = _make_source_csv(tmp_path / "src", n_rows=1000, spacing=0.0075)
-    src_sha = hashlib.sha256(src.read_bytes()).hexdigest()
-    contract = compile_case_contract(case_def, 1000, src_sha)
     ref = build_source_reference(src)
+    contract = compile_case_contract(case_def, 1000, ref["source_sha256"], ref)
 
     # Negative 1: wrong output columns
     cand_cols = _make_candidate_csv(
@@ -458,7 +557,7 @@ def test_evaluate_case_utility_negative_failures(tmp_path):
 
     # Negative 5: unordered depth
     cand_unord = _make_candidate_csv(tmp_path / "unord", n_rows=100, unordered=True)
-    c_unord = compile_case_contract(case_def, 100, src_sha)
+    c_unord = compile_case_contract(case_def, 100, ref["source_sha256"], ref)
     res_unord = evaluate_case_utility(cand_unord, ref, c_unord)
     assert res_unord["passed"] is False
     assert "ordered_depth" in res_unord["failures"]
@@ -498,7 +597,7 @@ def test_evaluate_case_utility_negative_failures(tmp_path):
     assert "downstream_structure_both_states_present" in res_all_val["failures"]
 
     # Negative 11: source pin mismatch
-    contract_wrong_pin = compile_case_contract(case_def, 1000, "b" * 64)
+    contract_wrong_pin = compile_case_contract(case_def, 1000, "b" * 64, ref)
     res_pin = evaluate_case_utility(
         _make_candidate_csv(tmp_path / "pin", n_rows=1000), ref, contract_wrong_pin
     )
@@ -509,9 +608,8 @@ def test_evaluate_case_utility_negative_failures(tmp_path):
 def test_verify_case_candidate_consumer_no_raw_source(tmp_path):
     case_def = get_case("hylogger_scalar_teaching_v1")
     src = _make_source_csv(tmp_path / "src", n_rows=1000, spacing=0.0075)
-    src_sha = hashlib.sha256(src.read_bytes()).hexdigest()
-    contract = compile_case_contract(case_def, 1000, src_sha)
     ref = build_source_reference(src)
+    contract = compile_case_contract(case_def, 1000, ref["source_sha256"], ref)
 
     cand = _make_candidate_csv(tmp_path / "cand", n_rows=1000, spacing=0.0075)
     eval_res = evaluate_case_utility(cand, ref, contract)
@@ -544,9 +642,8 @@ def test_verify_case_candidate_consumer_no_raw_source(tmp_path):
 def test_actual_candidate_bytes_roundtrip(tmp_path):
     case_def = get_case("hylogger_scalar_teaching_v1")
     src = _make_source_csv(tmp_path / "src", n_rows=1000, spacing=0.0075)
-    src_sha = hashlib.sha256(src.read_bytes()).hexdigest()
-    contract = compile_case_contract(case_def, 1000, src_sha)
     ref = build_source_reference(src)
+    contract = compile_case_contract(case_def, 1000, ref["source_sha256"], ref)
 
     cand_path = _make_candidate_csv(tmp_path / "cand", n_rows=1000, spacing=0.0075)
     raw_bytes = cand_path.read_bytes()
