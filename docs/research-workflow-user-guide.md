@@ -74,7 +74,7 @@ done
 
 `prepare` validates the selected case and checks the source format and suitability locally **before contacting the request model**. It records the source SHA-256 pin without sending source rows, classification vocabulary or licence free text to that model. After interpreting the requested row count, it checks whether that exact count is feasible **before writing a draft specification or plan**. A changed source or source registry record is refused; run intake independently repeats the source and feasibility checks before generation.
 
-`prepare` translates the prompt into candidate settings for **human review** (`draft/request.json`, `draft/spec.json`, `draft/plan.json`). The operator must inspect the drafted specification before execution. Case references use `ID@VERSION`, with a positive ASCII integer version and no version whitespace, signs, underscores or decimal forms; ID whitespace is trimmed. A failed final source or registry check removes both runnable draft files and leaves an error receipt:
+`prepare` translates the prompt into candidate settings for **human review** (`draft/request.json`, `draft/spec.json`, `draft/plan.json`). The operator must inspect the drafted specification before execution. Case references use `ID@VERSION`, with a positive ASCII integer version and no leading zeroes, version whitespace, signs, underscores or decimal forms; ID whitespace is trimmed. A failed final source or registry check removes both runnable draft files and leaves an error receipt:
 
 ```bash
 # Hosted AGY run (prepare defaults to local-only; pass --model-policy hosted):

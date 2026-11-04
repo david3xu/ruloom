@@ -1,6 +1,6 @@
 # Research-led workflow and comparison agreement
 
-Updated: 2026-11-04
+Updated: 2026-11-05
 
 ## Owner agreement and stop condition
 
@@ -123,14 +123,14 @@ End after the Test 1 report. Test 2 remains awaiting explicit owner instruction.
 
 ## Implementation and review checklist
 
-- [ ] Add admitted case evidence and versioned contract with refusal boundaries.
-- [ ] Add coordinator-owned model roles and source-fit handoffs.
-- [ ] Enforce practical-use checks in run, acceptance, package and verification.
-- [ ] Add regression and negative controls; preserve legacy bytes and limits.
-- [ ] Update user instructions and feature ownership links.
-- [ ] Independent Sonnet review and Codex audit of frozen changes.
+- [x] Add admitted case evidence and versioned contract with refusal boundaries.
+- [x] Add coordinator-owned model roles and source-fit handoffs.
+- [x] Enforce practical-use checks in run, acceptance, package and verification.
+- [x] Add regression and negative controls; preserve legacy bytes and limits.
+- [x] Update user instructions and feature ownership links.
+- [x] Independent Sonnet review and Codex audit of frozen changes.
 - [ ] Run and report Test 1 with all attempts retained.
-- [ ] Publish reviewed code and evidence through the existing PR.
+- [x] Publish reviewed code and validation summary through PRs 27 and 28.
 - [ ] Stop for the owner's Test 2 instruction.
 
 ## Delivery focus and merge cadence
@@ -145,11 +145,19 @@ to main regularly. An earlier slice is a foundation, not a ready full workflow.
 No separate generation/release engine, benchmark-specific source/row hardcoding,
 automatic seed search or arbitrary contract overrides are permitted.
 
-## Profile foundation status and remaining runtime integration
+## Profile foundation and runtime integration
 
 The profile foundation (`profiles/hylogger/cases.json` and `profiles/hylogger/validation/cases.py`) establishes reviewed primary-evidence records (authenticated against installed trusted code via a pinned canonical JSON digest `26b083a5...`, with recorded admission metadata rather than external cryptographic proof or publisher certification), strict canonical contracts with integer interval feasibility, deterministic source suitability, bounded source aggregate references with literal label names and free-form licence text withheld from model views, and recipient utility verification without shipping raw source rows. No invented privacy or scientific guarantee is claimed.
 
-Subsequent slices complete runtime integration:
+The implemented runtime composes the profile helpers into the existing engine:
 1. Engine execution: binding compiled case contracts and utility checks into `engine.core.runner.execute` and the existing capability graph validation step.
 2. Acceptance and release: embedding the case contract and aggregate reference into release packages and enforcing recipient recomputation in `verify_release`.
 3. AI role orchestration: coordinator preparation and advisory reviewer steps under strict schema and offline replay policy.
+
+The [operator guide](research-workflow-user-guide.md) describes preparation,
+execution, human decisions and recipient anchors. The
+[combined validation record](quality/scalar-workflow-2026-11-05.md) separates
+exact-revision engineering evidence from the unexecuted frozen Test 1
+comparison. The installed-wheel strict harness uses disclosed fixed controls
+and mock AI handoffs; it is not the paired trial described above. Test 2
+remains unauthorized without a fresh owner instruction.
