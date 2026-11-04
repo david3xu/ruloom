@@ -471,11 +471,14 @@
     "max_rows": 200000
   },
   "generation": {
-    "strategies": ["fitted_markov_joint"],
+    "strategies": [
+      "fitted_markov_joint",
+      "fitted_markov_balanced"
+    ],
     "default_strategy": "fitted_markov_joint",
     "outputs": ["scalar", "imaging"],
     "request_context": {
-      "description": "Seeded synthetic HyLogger scalar table fitted only to aggregate Profile statistics of the supplied source; no source row is copied and the planner sees disclosed statistics only. Strategy fitted_markov_joint: depths begin at the source start depth (rounded to 3 decimals) and advance by one constant step equal to the source median forward spacing, repeating only between consecutive invalid rows so repeats stay masked; the valid flag follows a two-state chain fitted to the source valid and invalid mean run lengths; invalid rows carry no group labels; each valid row draws a joint answer pattern (both, SWIR only, TIR only, neither) at the source's valid-row rates, then draws answered labels from labels the source answers, conditioned on the previous label through source transition counts when at least two outgoing pairs support it (otherwise source label rates, or SWIR/TIR joint counts for a both-answered TIR draw). The same source, seed and row count give identical bytes.",
+      "description": "Seeded synthetic HyLogger scalar table fitted only to aggregate Profile statistics of the supplied source; no source row is copied and the planner sees disclosed statistics only. Strategies: fitted_markov_joint simulates a two-state Markov chain whose stay probabilities match source valid/invalid mean run lengths (inclusion-flag count is approximate); opt-in fitted_markov_balanced fits source valid fraction into an exact integer valid-row target and allocates positive alternating runs exhausting valid and invalid targets by construction. Recommend fitted_markov_balanced when preserving the source inclusion fraction is requested; the integer count is fitted from rounded aggregate fraction, not a scientific or privacy guarantee. Depths begin at source start depth (rounded to 3 decimals) and advance by median forward spacing, repeating only between consecutive invalid rows so repeats stay masked. Invalid rows carry no group labels. Each valid row draws joint answer pattern at source rates, then draws answered labels through source transitions with at least two outgoing pairs support (fallback to source label rates or joint counts). Same source, seed and row count give identical bytes.",
       "output_columns": [
         "depth_m: generated depth in metres, finite, nonnegative and non-decreasing from the fitted source start",
         "valid: true/false inclusion flag whose run pattern is fitted to the source's supplied validity flag; it is not a measure of instrument or scientific reliability",
@@ -486,7 +489,7 @@
         "An exact row count up to max_rows; the plan pins it and row_count_match checks it.",
         "Depth spacing similar to the source: generation uses the source start and median forward step; depth_start_match, spacing_step_match, depth_span_match and depth_end_within_requested check the generated geometry against that fitted plan, and spacing_median, depth_non_decreasing, depth_finite, depth_nonnegative and backward_steps apply fixed bands or literal rules.",
         "Blank group labels similar to the source: valid-row answer and blank patterns are fitted; swir_answer_fidelity and tir_answer_fidelity compare each answer rate with the source's own rate within its split-half tolerance, invalid_label_rate fails if invalid rows carry labels more often than in the source, and tir_answer_rate applies a calibrated band.",
-        "Inclusion (valid) flags similar to the source: valid and invalid run lengths are fitted from the source; valid_fraction, repeated_depth_fraction and repeated_depths_masked_out compare against fixed bands calibrated across reference holes, not a tolerance centred on this source's own rate.",
+        "Inclusion (valid) flags similar to the source: valid and invalid run lengths are fitted from the source; valid_fraction, repeated_depth_fraction and repeated_depths_masked_out compare against fixed bands. The opt-in fitted_markov_balanced strategy preserves the rounded aggregate valid fraction by exact integer run allocation (recommended for inclusion-fraction requests), while fitted_markov_joint remains approximate.",
         "Group labels similar to the source: swir_source_vocabulary, tir_source_vocabulary, swir_label_richness and tir_label_richness compare with the labels the source answers; swir_fidelity, tir_fidelity and tir_persistence_fidelity compare label distribution and TIR run persistence with the source within split-half tolerances; swir_vocabulary and tir_vocabulary check a fixed known vocabulary.",
         "Showing which checks passed: after generation, validation-report.json lists every check with pass, fail or skip and its measured detail, and evidence-report.md shows each recorded check with required or optional status. No new data column is needed.",
         "Fictional, synthetic or practice records: rows are generated from aggregates rather than copied from the source; that wording alone is not a privacy guarantee."
@@ -498,6 +501,7 @@
         "No privacy, anonymity, non-disclosure or no-matching-row guarantee is made; rare labels are withheld only from model-visible statistics.",
         "Images, spectra or measurement curves, sample or hole identifiers and coordinates are not generated by this scalar request route.",
         "No mineral abundance, grade, assay, geological or scientific-validity claim; the checks measure engineering similarity only.",
+        "The exact valid-row count in fitted_markov_balanced is fitted from the rounded aggregate fraction, not a scientific or privacy guarantee.",
         "swir_answer_rate is optional because its calibrated band is vacuous, so it is recorded as a skip; a skip is not a pass.",
         "Check outcomes are known only after generation; any required check can fail, and a failure blocks acceptance."
       ]

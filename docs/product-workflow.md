@@ -21,11 +21,12 @@ tabular data. It does not accept arbitrary datasets or quality promises.
 Example: “I need 10,000 fictional drill-sample records for a data-checking
 lesson. Keep the depth spacing, blank result labels and inclusion flags
 similar to this source, and show which checks passed.” The HyLogger scalar
-profile offers an aggregate-fitted strategy and fixed checks for those
-properties. It produces `depth_m`, `valid`, `swir_group` and `tir_group`;
-blank group labels mean no classification label was reported. The route
+profile offers aggregate-fitted strategies (legacy approximate
+`fitted_markov_joint` and opt-in exact-count `fitted_markov_balanced`) and
+fixed checks for those properties. It produces `depth_m`, `valid`, `swir_group`
+and `tir_group`; blank group labels mean no classification label was reported. The route
 does not produce measurement curves, sample IDs, coordinates or photographs.
-An explicit privacy guarantee or custom tolerance remains unsupported.
+An explicit privacy guarantee or custom tolerance remains unsupported. The balanced strategy fits an integer inclusion count from rounded source aggregates; it does not preserve the source row order or exact run-length distribution.
 
 ## Models, roles and development workers
 

@@ -1,6 +1,7 @@
 """Generator tests: determinism, seed sensitivity, plan validation, checks."""
 
 import hashlib
+import math
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,8 @@ import pytest
 from profiles.hylogger.analysis.calibration import load_thresholds
 from profiles.hylogger.analysis.statistics import Profile
 from profiles.hylogger.generation.generate import (
+    _balanced_flags,
+    _positive_partition,
     _supported,
     generate,
     generate_samples,
@@ -170,3 +173,212 @@ def test_synthetic_png_matches_dimensions() -> None:
     stats = compute_statistics(payload, "fixture.png").to_dict()
     width, height, _rows = decode_png(synthesize(stats, 3))
     assert (width, height) == (20, 12)
+
+
+def _synthetic_hole_profile(
+    n_samples: int = 100,
+    valid_fraction: float = 0.7,
+    depth_start: float = 100.0,
+    depth_step: float = 0.01,
+) -> Profile:
+    """Offline synthetic profile with known forward spacing and validity."""
+    samples = []
+    cutoff = int(round(10 * valid_fraction))
+    for i in range(n_samples):
+        valid = (i % 10) < cutoff
+        swir = "CHLORITE" if valid and (i % 2 == 0) else None
+        tir = "QUARTZ" if valid and (i % 3 == 0) else None
+        samples.append(
+            Sample(
+                depth_m=round(depth_start + i * depth_step, 4),
+                valid=valid,
+                swir_group=swir,
+                tir_group=tir,
+            )
+        )
+    return Profile.from_samples(samples, "synth-fixture", "0" * 64)
+
+
+def test_legacy_exact_bytes_pinned() -> None:
+    """Legacy fitted_markov_joint output bytes remain pinned and byte-identical."""
+    profile = _trap_profile()
+    plan_with_strategy = {"seed": 7, "n_rows": 200, "strategy": "fitted_markov_joint"}
+    plan_without_strategy = {"seed": 7, "n_rows": 200}
+    payload1 = generate(profile, plan_with_strategy)
+    payload2 = generate(profile, plan_without_strategy)
+    assert payload1 == payload2
+    assert (
+        hashlib.sha256(payload1).hexdigest()
+        == "0e0464d6f67c09036d34518593be4364378703818fe82365b56c199b653a58b9"
+    )
+
+
+def test_strategy_dispatch() -> None:
+    """Both strategies dispatch cleanly; balanced hits exact integer valid count."""
+    profile = _synthetic_hole_profile(n_samples=100, valid_fraction=0.7)
+    vf = profile.stats["validity"]["valid_fraction"]
+    expected_valid = int(round(100 * vf))
+
+    samples_joint = generate_samples(
+        profile, seed=42, n_rows=100, strategy="fitted_markov_joint"
+    )
+    samples_balanced = generate_samples(
+        profile, seed=42, n_rows=100, strategy="fitted_markov_balanced"
+    )
+
+    assert len(samples_joint) == 100
+    assert len(samples_balanced) == 100
+    assert sum(s.valid for s in samples_balanced) == expected_valid
+    # The two algorithms use different PRNG draw sequences and flag structures
+    assert [s.valid for s in samples_joint] != [s.valid for s in samples_balanced]
+
+
+def test_deterministic_balanced_output() -> None:
+    """Same (profile, seed, n_rows, balanced) produces identical CSV bytes."""
+    profile = _synthetic_hole_profile(n_samples=80, valid_fraction=0.6)
+    plan1 = {"seed": 10, "n_rows": 80, "strategy": "fitted_markov_balanced"}
+    plan2 = {"seed": 11, "n_rows": 80, "strategy": "fitted_markov_balanced"}
+
+    out1a = generate(profile, plan1)
+    out1b = generate(profile, plan1)
+    out2 = generate(profile, plan2)
+
+    assert out1a == out1b
+    assert out1a != out2
+
+
+def test_exact_valid_target_across_seeds_and_counts() -> None:
+    """Balanced strategy preserves exact rounded target across seeds and row counts."""
+    profile = _synthetic_hole_profile(n_samples=120, valid_fraction=0.7)
+    vf = float(profile.stats["validity"]["valid_fraction"])
+
+    for seed in (1, 42, 123, 9999):
+        for n_rows in (17, 33, 100, 250):
+            expected = int(round(n_rows * vf))
+            samples = generate_samples(
+                profile, seed=seed, n_rows=n_rows, strategy="fitted_markov_balanced"
+            )
+            assert len(samples) == n_rows
+            assert sum(s.valid for s in samples) == expected
+
+
+def test_balanced_all_valid_and_all_invalid() -> None:
+    """Extreme validity targets (all valid and all invalid) work without error."""
+    # All valid:
+    trap = _trap_profile()  # valid_fraction == 1.0
+    valid_samples = generate_samples(
+        trap, seed=7, n_rows=50, strategy="fitted_markov_balanced"
+    )
+    assert len(valid_samples) == 50
+    assert all(s.valid for s in valid_samples)
+
+    # All invalid:
+    inv_samples = [
+        Sample(
+            depth_m=round(10.0 + i * 0.01, 3),
+            valid=False,
+            swir_group=None,
+            tir_group=None,
+        )
+        for i in range(40)
+    ]
+    inv_profile = Profile.from_samples(inv_samples, "inv-prof", "0" * 64)
+    out_samples = generate_samples(
+        inv_profile, seed=7, n_rows=40, strategy="fitted_markov_balanced"
+    )
+    assert len(out_samples) == 40
+    assert not any(s.valid for s in out_samples)
+    assert all(s.swir_group is None and s.tir_group is None for s in out_samples)
+
+
+def test_mixed_mean_and_run_validation() -> None:
+    """_positive_partition and _balanced_flags validate bounds and allocations."""
+    import random
+
+    rng = random.Random(42)
+
+    # Partition validation
+    with pytest.raises(ValueError, match="cannot partition"):
+        _positive_partition(rng, total=5, count=0)
+    with pytest.raises(ValueError, match="cannot partition"):
+        _positive_partition(rng, total=4, count=5)
+    with pytest.raises(ValueError, match="cannot partition"):
+        _positive_partition(rng, total=0, count=1)
+
+    parts = _positive_partition(rng, total=25, count=6)
+    assert len(parts) == 6
+    assert sum(parts) == 25
+    assert all(p >= 1 for p in parts)
+
+    # Flag validation
+    with pytest.raises(ValueError, match="valid_fraction must be a finite float"):
+        _balanced_flags(rng, 10, -0.1, 5.0, 5.0)
+    with pytest.raises(ValueError, match="valid_fraction must be a finite float"):
+        _balanced_flags(rng, 10, 1.5, 5.0, 5.0)
+    with pytest.raises(ValueError, match="valid_fraction must be a finite float"):
+        _balanced_flags(rng, 10, float("nan"), 5.0, 5.0)
+
+    # Fallback to k=1 when means are None or invalid
+    flags_none = _balanced_flags(rng, 10, 0.6, None, None)
+    assert len(flags_none) == 10
+    assert sum(flags_none) == 6
+
+    # Single available mean
+    flags_single = _balanced_flags(rng, 20, 0.7, 5.0, None)
+    assert len(flags_single) == 20
+    assert sum(flags_single) == 14
+
+
+def test_unknown_strategy_refusal() -> None:
+    """Unknown or invalid strategy names are refused with ValueError."""
+    profile = _synthetic_hole_profile(n_samples=50, valid_fraction=0.8)
+
+    with pytest.raises(ValueError, match="unknown generation strategy"):
+        generate_samples(profile, seed=1, n_rows=10, strategy="unsupported_strategy")
+
+    with pytest.raises(ValueError, match="unknown generation strategy"):
+        generate(profile, {"seed": 1, "n_rows": 10, "strategy": "bogus"})
+
+    with pytest.raises(ValueError, match="must be a non-empty string"):
+        generate(profile, {"seed": 1, "n_rows": 10, "strategy": ""})
+
+    with pytest.raises(ValueError, match="must be a non-empty string"):
+        generate(profile, {"seed": 1, "n_rows": 10, "strategy": 42})
+
+
+def test_ordered_depths_and_masked_repeats_balanced() -> None:
+    """Balanced generator maintains non-decreasing finite depths with masked repeats."""
+    profile = _synthetic_hole_profile(n_samples=80, valid_fraction=0.5)
+    samples = generate_samples(
+        profile, seed=99, n_rows=80, strategy="fitted_markov_balanced"
+    )
+
+    depths = [s.depth_m for s in samples]
+    assert all(math.isfinite(d) for d in depths)
+    assert all(b >= a for a, b in zip(depths[:-1], depths[1:]))
+
+    for i in range(1, len(samples)):
+        if depths[i] == depths[i - 1]:
+            # Step repeats only when both previous and current rows are invalid (masked)
+            assert not samples[i - 1].valid
+            assert not samples[i].valid
+
+
+@pytest.mark.parametrize(
+    "n_rows,vf,expected", [(1, 0.5, 0), (1, 0.6, 1), (5, 0.5, 2), (7, 0.5, 4)]
+)
+def test_balanced_small_targets_and_ties(n_rows, vf, expected) -> None:
+    """Small targets retain Python's documented half-to-even rounding."""
+    import random
+
+    flags = _balanced_flags(random.Random(42), n_rows, vf, 2.0, 2.0)
+    assert len(flags) == n_rows
+    assert sum(flags) == expected
+
+
+@pytest.mark.parametrize("vf", [float("inf"), float("-inf"), True, "0.7"])
+def test_balanced_rejects_invalid_fraction_types(vf) -> None:
+    import random
+
+    with pytest.raises(ValueError, match="valid_fraction"):
+        _balanced_flags(random.Random(42), 10, vf, 2.0, 2.0)
