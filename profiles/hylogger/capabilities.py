@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -318,8 +319,12 @@ def plan(ctx: Any) -> None:
     fixed = ctx.fixed_plan() if callable(getattr(ctx, "fixed_plan", None)) else None
     if fixed is not None:
         try:
+            candidate = dict(fixed)
+            spec_strategy = _spec_strategy(ctx)
+            if "strategy" not in candidate and spec_strategy is not None:
+                candidate["strategy"] = spec_strategy
             replayed = validate_plan(
-                dict(fixed),
+                candidate,
                 max_rows=_spec_max_rows(ctx),
                 allowed_strategies=_allowed_strategies(ctx),
             )
@@ -331,7 +336,8 @@ def plan(ctx: Any) -> None:
         ctx.event("plan", "ok", {"plan": dict(replayed), "replay": True})
         ctx.say(
             f"[plan] replay seed={replayed['seed']} "
-            f"n_rows={replayed['n_rows']} (fixed plan, no planner call)"
+            f"n_rows={replayed['n_rows']} strategy={replayed.get('strategy')} "
+            f"(fixed plan, no planner call)"
         )
         return
     try:
@@ -346,9 +352,16 @@ def plan(ctx: Any) -> None:
         ctx.event("plan", "error", {"error": f"{type(exc).__name__}: {exc}"})
         ctx.say(f"[plan] error: {exc}")
         raise RuntimeError(f"plan failed: {exc}") from exc
-    ctx.set_plan(dict(completion.data))
-    ctx.event("plan", "ok", {"plan": dict(completion.data)}, usage=completion.usage)
-    ctx.say(f"[plan] seed={completion.data['seed']} n_rows={completion.data['n_rows']}")
+    proposed = dict(completion.data)
+    spec_strategy = _spec_strategy(ctx)
+    if "strategy" not in proposed and spec_strategy is not None:
+        proposed["strategy"] = spec_strategy
+    ctx.set_plan(dict(proposed))
+    ctx.event("plan", "ok", {"plan": dict(proposed)}, usage=completion.usage)
+    ctx.say(
+        f"[plan] seed={proposed['seed']} n_rows={proposed['n_rows']} "
+        f"strategy={proposed.get('strategy')}"
+    )
 
 
 def generate(ctx: Any) -> None:
@@ -400,11 +413,32 @@ def validate(ctx: Any) -> None:
         raise RuntimeError(f"synthetic artifact failed schema parse: {exc}") from exc
     thresholds = load_thresholds(_thresholds_path())
     meta = ctx.source_meta()
+    plan = ctx.plan()
+    strategy = plan.get("strategy") if isinstance(plan, dict) else None
+    if strategy is None:
+        strategy = _spec_strategy(ctx)
+    expected_valid_count: int | None = None
+    if strategy == "fitted_markov_balanced":
+        stats = getattr(ctx.profile(), "stats", None)
+        validity = stats.get("validity") if isinstance(stats, dict) else None
+        vf = validity.get("valid_fraction") if isinstance(validity, dict) else None
+        n_rows = plan.get("n_rows") if isinstance(plan, dict) else None
+        if (
+            isinstance(n_rows, int)
+            and not isinstance(n_rows, bool)
+            and isinstance(vf, (int, float))
+            and not isinstance(vf, bool)
+            and math.isfinite(float(vf))
+        ):
+            expected_valid_count = int(round(n_rows * float(vf)))
+        else:
+            expected_valid_count = -1
     report = run_checks(
         samples,
         thresholds,
         source_reference=ctx.reference_stats(),
         expected_geometry=_expected_geometry(ctx),
+        expected_valid_count=expected_valid_count,
         artifact_name=(f"{meta['source_name']}:attempt-{ctx.attempt_number}"),
         artifact_sha256=artifact.sha256,
     )
@@ -433,8 +467,12 @@ def repair(ctx: Any) -> None:
         completion = ctx.model("planner").complete(
             prompt, provider_schema(_allowed_strategies(ctx))
         )
+        candidate = dict(completion.data)
+        spec_strategy = _spec_strategy(ctx)
+        if "strategy" not in candidate and spec_strategy is not None:
+            candidate["strategy"] = spec_strategy
         new_plan = validate_plan(
-            completion.data,
+            candidate,
             max_rows=_spec_max_rows(ctx),
             allowed_strategies=_allowed_strategies(ctx),
         )

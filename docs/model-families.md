@@ -63,8 +63,8 @@ the adapter; domain profiles still depend only on the shared model contract.
 
 AGY's `init.model` identifies what its CLI reports, not independently verified
 backend weights. Its terminal usage is counted once, with cache and thinking
-counts recorded separately. A missing model name remains `unknown`. The
-adapter refuses a reported model different from the requested alias.
+counts recorded separately. The adapter refuses a missing, unknown or
+different reported model; the selected alias must be observed in `init.model`.
 
 AGY can expose built-in tools even when deny settings are requested. The
 adapter records the exposed tools, permission mode and actual tool events;

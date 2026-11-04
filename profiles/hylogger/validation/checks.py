@@ -230,6 +230,7 @@ def run_checks(
     source_samples: Sequence[Sample] | None = None,
     source_reference: Mapping[str, Any] | None = None,
     expected_geometry: Mapping[str, Any] | None = None,
+    expected_valid_count: int | None = None,
     artifact_name: str = "",
     artifact_sha256: str = "",
 ) -> CheckReport:
@@ -316,14 +317,65 @@ def run_checks(
             bands["repeated_depth_fraction"].hi,
         )
     )
-    add(
-        _band_check(
-            "valid_fraction",
-            observed["valid_fraction"],
-            bands["valid_fraction"].lo,
-            bands["valid_fraction"].hi,
+    if expected_valid_count is not None:
+        val_frac = observed["valid_fraction"]
+        lo = bands["valid_fraction"].lo
+        hi = bands["valid_fraction"].hi
+        actual_valid = sum(1 for s in samples if s.valid)
+        if (
+            isinstance(expected_valid_count, bool)
+            or not isinstance(expected_valid_count, int)
+            or expected_valid_count < 0
+            or val_frac is None
+            or not math.isfinite(val_frac)
+        ):
+            add(
+                CheckResult(
+                    "valid_fraction",
+                    FAIL,
+                    f"invalid valid_fraction or fitted target: val_frac={val_frac}, target={expected_valid_count}",
+                )
+            )
+        else:
+            pos = band_position(val_frac, lo, hi)
+            in_band = lo <= val_frac <= hi
+            count_match = actual_valid == expected_valid_count
+            if count_match and in_band:
+                add(
+                    CheckResult(
+                        "valid_fraction",
+                        PASS,
+                        f"{val_frac} in [{lo}, {hi}] (actual count {actual_valid} == fitted target {expected_valid_count})",
+                        pos,
+                    )
+                )
+            elif not count_match and in_band:
+                add(
+                    CheckResult(
+                        "valid_fraction",
+                        FAIL,
+                        f"{val_frac} in [{lo}, {hi}], but actual count {actual_valid} != fitted target {expected_valid_count}",
+                        pos,
+                    )
+                )
+            else:
+                add(
+                    CheckResult(
+                        "valid_fraction",
+                        FAIL,
+                        f"{val_frac} outside [{lo}, {hi}] (actual count {actual_valid}, fitted target {expected_valid_count})",
+                        pos,
+                    )
+                )
+    else:
+        add(
+            _band_check(
+                "valid_fraction",
+                observed["valid_fraction"],
+                bands["valid_fraction"].lo,
+                bands["valid_fraction"].hi,
+            )
         )
-    )
 
     n_repeated = sum(1 for d in diffs if d == 0)
     if n_repeated == 0:

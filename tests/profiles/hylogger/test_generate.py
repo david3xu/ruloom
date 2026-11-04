@@ -382,3 +382,28 @@ def test_balanced_rejects_invalid_fraction_types(vf) -> None:
 
     with pytest.raises(ValueError, match="valid_fraction"):
         _balanced_flags(random.Random(42), 10, vf, 2.0, 2.0)
+
+
+def test_public_path_valid_fraction_bool_and_non_numeric_refused() -> None:
+    """Public generate_samples refuses bool/non-numeric without float conversion."""
+    profile = _synthetic_hole_profile(n_samples=50, valid_fraction=0.8)
+
+    profile.stats["validity"]["valid_fraction"] = True
+    with pytest.raises(ValueError, match="valid_fraction must be a finite float"):
+        generate_samples(profile, seed=1, n_rows=20, strategy="fitted_markov_balanced")
+
+    profile.stats["validity"]["valid_fraction"] = "0.75"
+    with pytest.raises(ValueError, match="valid_fraction must be a finite float"):
+        generate_samples(profile, seed=1, n_rows=20, strategy="fitted_markov_balanced")
+
+
+def test_tiny_run_mean_bounded_safely() -> None:
+    """Tiny positive run-means (< 1.0) bound safely without division overflow."""
+    profile = _synthetic_hole_profile(n_samples=50, valid_fraction=0.7)
+    profile.stats["validity"]["valid_runs"]["mean"] = 1e-300
+    profile.stats["validity"]["invalid_runs"]["mean"] = 1e-300
+    samples = generate_samples(
+        profile, seed=42, n_rows=20, strategy="fitted_markov_balanced"
+    )
+    assert len(samples) == 20
+    assert sum(s.valid for s in samples) == 14

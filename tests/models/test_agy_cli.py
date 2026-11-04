@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from models.agy_cli import AgyCLIModel
+from models.agy_cli import TOOL_FREE_INSTRUCTION, AgyCLIModel
 from models.base import ModelError
 from models.selection import family_default, validate_selection
 
@@ -113,8 +113,17 @@ def test_malformed_or_ambiguous_stream_refuses(output):
         AgyCLIModel()._parse(subprocess.CompletedProcess([], 0, output, ""), SCHEMA)
 
 
-def test_missing_reported_identity_stays_unknown():
-    assert AgyCLIModel()._parse(reply(model=None), SCHEMA).usage.model == "unknown"
+@pytest.mark.parametrize("model", [None, "", "unknown"])
+def test_missing_reported_identity_refuses(model):
+    with pytest.raises(ModelError, match="model identity"):
+        AgyCLIModel()._parse(reply(model=model), SCHEMA)
+
+
+def test_absent_init_identity_refuses():
+    proc = reply()
+    proc.stdout = "\n".join(proc.stdout.splitlines()[1:])
+    with pytest.raises(ModelError, match="model identity"):
+        AgyCLIModel()._parse(proc, SCHEMA)
 
 
 def test_subprocess_contract_and_receipt(monkeypatch):
@@ -133,6 +142,9 @@ def test_subprocess_contract_and_receipt(monkeypatch):
         assert argv[argv.index("--model") + 1] == "claude-opus-5-5-high"
         settings = json.loads(argv[argv.index("--settings") + 1])
         assert settings["permissions"] == {"allow": [], "deny": ["*"]}
+        passed = argv[argv.index("--print") + 1]
+        assert passed.startswith(TOOL_FREE_INSTRUCTION)
+        assert passed.endswith("--tool literal prompt")
         assert not any(
             x in argv
             for x in ["--continue", "--conversation", "--dangerously-skip-permissions"]
@@ -147,6 +159,24 @@ def test_subprocess_contract_and_receipt(monkeypatch):
         == "not-established"
     )
     assert answer.meta["invocation"]["tools_used"] == ["finish"]
+
+
+def test_tool_free_instruction_prepended_and_payload_preserved(monkeypatch):
+    """Adapter prepends tool-free instruction while preserving original prompt payload."""
+    seen_prompts: list[str] = []
+
+    def run(argv, **kwargs):
+        seen_prompts.append(argv[argv.index("--print") + 1])
+        return reply()
+
+    monkeypatch.setattr("models.agy_cli.subprocess.run", run)
+    original_prompt = "Generate 100 rows for sample lesson"
+    AgyCLIModel().complete(original_prompt, SCHEMA)
+    assert len(seen_prompts) == 1
+    passed = seen_prompts[0]
+    assert passed.startswith(TOOL_FREE_INSTRUCTION)
+    assert passed == f"{TOOL_FREE_INSTRUCTION}{original_prompt}"
+    assert passed.endswith(original_prompt)
 
 
 def test_nonzero_exit_never_passes():
