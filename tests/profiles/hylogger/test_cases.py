@@ -308,11 +308,24 @@ def test_catalogue_strict_schema_mutations_rejection(monkeypatch):
     m["evidence_pack"]["auscope_nvcl"]["does_not_establish"] = "not a list"
     _assert_catalogue_raises(m, "does_not_establish must be non-empty list")
 
-    # 8. Reviewer containing 'gemini'
-    for rev_name in ("gemini", "Gemini Flash (AGY)"):
-        m = json.loads(json.dumps(cat))
-        m["evidence_pack"]["auscope_nvcl"]["admission_reviewer"] = rev_name
-        _assert_catalogue_raises(m, "reviewer cannot be implementer")
+    # 8. Source requirement set to False fails pinned digest / schema check
+    m = json.loads(json.dumps(cat))
+    m["cases"]["hylogger_scalar_teaching_v1"]["source_requirements"][
+        "require_both_inclusion_states"
+    ] = False
+    _assert_catalogue_raises(m, "cases catalogue digest mismatch")
+
+    # 8b. Extra check in contract template checks fails pinned digest
+    m = json.loads(json.dumps(cat))
+    m["cases"]["hylogger_scalar_teaching_v1"]["contract_template"]["checks"][
+        "extra_unapproved_check"
+    ] = True
+    _assert_catalogue_raises(m, "cases catalogue digest mismatch")
+
+    # 8c. Nested metadata change fails pinned digest
+    m = json.loads(json.dumps(cat))
+    m["cases"]["hylogger_scalar_teaching_v1"]["title"] = "Altered Lesson Title"
+    _assert_catalogue_raises(m, "cases catalogue digest mismatch")
 
     # 9. Case key different from id
     m = json.loads(json.dumps(cat))
@@ -351,6 +364,30 @@ def test_catalogue_strict_schema_mutations_rejection(monkeypatch):
         "absolute_valid_fraction_difference_max"
     ] = 0.5
     _assert_catalogue_raises(m, "loosened or wrong type")
+
+
+def test_catalogue_canonical_digest_whitespace_and_key_order_positive(monkeypatch):
+    """Guard 3: Semantically identical whitespace/key ordering passes the pinned digest check."""
+    cat = cm.load_cases_catalogue()
+
+    class PrettyPrintedPath:
+        def __init__(self, data):
+            self.data = data
+
+        def is_file(self):
+            return True
+
+        def read_text(self, encoding="utf-8"):
+            # Pretty-printed with 4 spaces indent, trailing newlines
+            return json.dumps(self.data, indent=4) + "\n\n"
+
+    monkeypatch.setattr(cm, "_cases_json_path", lambda: PrettyPrintedPath(cat))
+    loaded = cm.load_cases_catalogue()
+    assert loaded["version"] == 1
+    assert (
+        loaded["cases"]["hylogger_scalar_teaching_v1"]["id"]
+        == "hylogger_scalar_teaching_v1"
+    )
 
 
 def test_get_case_and_aliases():
@@ -745,6 +782,33 @@ def test_verify_case_candidate_comprehensive_checks(tmp_path):
     assert ver_val["case_verified"] is False
     assert ver_val["matches_reported"] is False
 
+    # 9. Guard 2 alias test: passed = 1 (int instead of bool)
+    forged_passed_int = dict(eval_res)
+    forged_passed_int["passed"] = 1
+    ver_p_int = verify_case_candidate(
+        cand, ref, contract, reported_utility=forged_passed_int
+    )
+    assert ver_p_int["case_verified"] is False
+    assert ver_p_int["matches_reported"] is False
+    assert any("verdict mismatch" in d for d in ver_p_int["discrepancies"])
+
+    # 10. Guard 2 alias test: row_count = 10000.0 (float instead of int)
+    forged_float_cnt = json.loads(json.dumps(eval_res))
+    forged_float_cnt["measurements"]["row_count"] = 1000.0
+    ver_f_cnt = verify_case_candidate(
+        cand, ref, contract, reported_utility=forged_float_cnt
+    )
+    assert ver_f_cnt["case_verified"] is False
+    assert ver_f_cnt["matches_reported"] is False
+    assert any("row_count" in d for d in ver_f_cnt["discrepancies"])
+
+    # 11. Guard 2 positive control: genuine unchanged JSON-roundtrip succeeds
+    roundtripped = json.loads(json.dumps(eval_res))
+    ver_rt = verify_case_candidate(cand, ref, contract, reported_utility=roundtripped)
+    assert ver_rt["case_verified"] is True
+    assert ver_rt["matches_reported"] is True
+    assert not ver_rt["discrepancies"]
+
 
 def test_candidate_parsing_robustness_and_refusal(tmp_path):
     """F8: candidate parsing handles UTF-8 decode errors, non-mapping contracts, and padded/underscore tokens."""
@@ -798,14 +862,55 @@ def test_candidate_parsing_robustness_and_refusal(tmp_path):
 
 
 def test_build_disclosed_model_summary(tmp_path):
-    """Separates code-side reference from model-facing summary."""
-    src = _make_source_csv(tmp_path, n_rows=120)
-    ref = build_source_reference(src)
+    """Guard 1: model summary withholds all literal labels and free-form licence text; protects singletons."""
+    # Build source with a singleton canary mineral label
+    canary_rows = []
+    d = 0.0
+    for i in range(120):
+        is_v = "1" if (i % 4 != 0) else "0"
+        sw = (
+            "PRIVATE_SINGLETON_CANARY"
+            if i == 5
+            else ("CHLORITE" if is_v == "1" and (i % 5 != 0) else "")
+        )
+        ti = "AMPHIBOLE" if is_v == "1" and i % 6 != 0 else ""
+        canary_rows.append((d, is_v, sw, ti))
+        d += 0.0075
+
+    case_def = get_case("hylogger_scalar_teaching_v1")
+    ref = build_source_reference(canary_rows, case_def)
+    assert "PRIVATE_SINGLETON_CANARY" in ref["disclosed_swir_labels"]
+
+    # Model summary must NOT contain the canary or ANY literal label names
+    ref_before = json.loads(json.dumps(ref))
     summary = build_disclosed_model_summary(ref)
+
+    # 1. No mutation to reference
+    assert ref == ref_before
+
+    # 2. Canary and mineral literals are absent from entire summary
+    summary_json = json.dumps(summary)
+    assert "PRIVATE_SINGLETON_CANARY" not in summary_json
+    assert "CHLORITE" not in summary_json
+    assert "AMPHIBOLE" not in summary_json
+
+    # 3. Label keys are completely absent
+    assert "disclosed_swir_labels" not in summary
+    assert "disclosed_tir_labels" not in summary
+
+    # 4. Free-form licence text is absent; coarse enum is used
+    assert "rights_status" in summary
+    assert summary["rights_status"] in {"disclosed", "unknown"}
+    assert "disclosed: " not in summary_json
+
+    # 5. Fixed schema numeric/bool fields are present
     assert summary["version"] == 1
-    assert "disclosed_swir_labels" in summary
-    assert "disclosed_tir_labels" in summary
-    assert "Model-facing disclosed summary" in summary["notice"]
+    assert isinstance(summary["valid_fraction"], float)
+    assert isinstance(summary["median_forward_spacing"], float)
+    assert isinstance(summary["swir_answer_rate"], float)
+    assert isinstance(summary["tir_answer_rate"], float)
+    assert isinstance(summary["has_blanks"], bool)
+    assert "withheld from the model context" in summary["notice"]
 
 
 def test_no_parallel_wrappers_in_cases():
