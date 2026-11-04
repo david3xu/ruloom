@@ -84,10 +84,10 @@ AZURE_OPENAI_HOST_SUFFIX = ".openai.azure.com"
 COGNITIVE_SERVICES_RESOURCE = "https://cognitiveservices.azure.com"
 
 #: Conservative charset for Entra ID bearer tokens (no whitespace or control chars).
-BEARER_TOKEN_RE = re.compile(r"^[A-Za-z0-9._~+/=-]+$")
+BEARER_TOKEN_RE = re.compile(r"^[A-Za-z0-9._~+/=-]+\Z")
 
 #: Transport request ID conservative format (bounded alphanumeric + delimiters).
-REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}\Z")
 
 #: Allowed message keys returned by backend choices.
 SUPPORTED_MESSAGE_KEYS = frozenset(
@@ -97,16 +97,67 @@ SUPPORTED_MESSAGE_KEYS = frozenset(
 
 def _validate_bearer_token(token: Any) -> str:
     """Validate that token contains only safe bearer charset characters."""
-    if not isinstance(token, str) or not token or not BEARER_TOKEN_RE.match(token):
+    if not isinstance(token, str) or not token or not BEARER_TOKEN_RE.fullmatch(token):
         raise ModelError("invalid bearer token character set") from None
     return token
 
 
 def _sanitize_request_id(val: Any) -> str:
     """Validate and bound request ID to a safe transport identifier."""
-    if isinstance(val, str) and REQUEST_ID_RE.match(val):
+    if isinstance(val, str) and REQUEST_ID_RE.fullmatch(val):
         return val
     return "unavailable"
+
+
+def _format_schema_path(exc_path: Any, schema: Mapping[str, Any]) -> str:
+    """Format schema validation path, suppressing any provider-supplied keys.
+
+    Only schema-defined property names and integer array indices are preserved.
+    Provider-supplied keys matching additionalProperties or patternProperties
+    are replaced with '[key]' to prevent echoing unvalidated input.
+    """
+    if not exc_path:
+        return "root"
+
+    parts: list[str] = []
+    curr: Any = schema
+    for seg in exc_path:
+        if isinstance(seg, int) and not isinstance(seg, bool):
+            parts.append(str(seg))
+            if isinstance(curr, Mapping):
+                items = curr.get("items")
+                if isinstance(items, Mapping):
+                    curr = items
+                elif (
+                    isinstance(items, list)
+                    and seg < len(items)
+                    and isinstance(items[seg], Mapping)
+                ):
+                    curr = items[seg]
+                else:
+                    curr = None
+            else:
+                curr = None
+        elif isinstance(seg, str):
+            curr_props = curr.get("properties") if isinstance(curr, Mapping) else None
+            if isinstance(curr_props, Mapping) and seg in curr_props:
+                parts.append(seg)
+                curr = curr_props[seg]
+            else:
+                parts.append("[key]")
+                if isinstance(curr, Mapping):
+                    add_props = curr.get("additionalProperties")
+                    if isinstance(add_props, Mapping):
+                        curr = add_props
+                    else:
+                        curr = None
+                else:
+                    curr = None
+        else:
+            parts.append("[item]")
+            curr = None
+
+    return "/".join(parts) if parts else "root"
 
 
 def _reject_constant(val: str) -> None:
@@ -351,6 +402,8 @@ class AzureFoundryModel(StructuredModel):
                     raise ModelError(
                         f"Azure Foundry response exceeded maximum allowed size ({MAX_RESPONSE_BYTES} bytes)"
                     ) from None
+        except ModelError:
+            raise
         except urllib.error.HTTPError as exc:
             # Do NOT dump raw response body or stderr to avoid echoing secrets
             raise ModelError(f"Azure Foundry HTTP {exc.code} for endpoint") from None
@@ -359,6 +412,7 @@ class AzureFoundryModel(StructuredModel):
             TimeoutError,
             OSError,
             http.client.HTTPException,
+            ValueError,
         ):
             raise ModelError("Azure Foundry network connection error") from None
 
@@ -449,7 +503,7 @@ class AzureFoundryModel(StructuredModel):
         try:
             jsonschema.validate(instance=data, schema=schema)
         except jsonschema.ValidationError as exc:
-            path_str = "/".join(str(p) for p in exc.path) if exc.path else "root"
+            path_str = _format_schema_path(exc.path, schema)
             raise ModelError(
                 f"Azure Foundry output does not conform to requested schema at {path_str}"
             ) from None

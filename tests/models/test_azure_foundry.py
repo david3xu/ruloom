@@ -605,6 +605,62 @@ def test_complete_refuses_schema_violation_in_content() -> None:
             model.complete("prompt", TEST_SCHEMA)
 
 
+def test_complete_open_key_schema_sanitizes_provider_keys() -> None:
+    model = AzureFoundryModel(
+        base_url=VALID_URL,
+        subscription_id=VALID_SUB,
+        token_provider=lambda s: "tok",
+    )
+    # additionalProperties schema: provider canary as key name
+    open_schema = {
+        "type": "object",
+        "additionalProperties": {"type": "integer"},
+    }
+    resp_add = _make_azure_response(content=json.dumps({CANARY: "not_an_integer"}))
+    with patch.object(
+        urllib.request.OpenerDirector, "open", return_value=MockHTTPResponse(resp_add)
+    ):
+        with pytest.raises(
+            ModelError, match=r"does not conform to requested schema at \[key\]"
+        ) as exc_info:
+            model.complete("prompt", open_schema)
+        assert CANARY not in str(exc_info.value)
+        tb = "".join(
+            traceback.format_exception(exc_info.type, exc_info.value, exc_info.tb)
+        )
+        assert CANARY not in tb
+
+    # patternProperties schema: provider canary in key name
+    pattern_schema = {
+        "type": "object",
+        "patternProperties": {r"^item_": {"type": "integer"}},
+        "additionalProperties": False,
+    }
+    resp_pat = _make_azure_response(
+        content=json.dumps({f"item_{CANARY}": "not_an_integer"})
+    )
+    with patch.object(
+        urllib.request.OpenerDirector, "open", return_value=MockHTTPResponse(resp_pat)
+    ):
+        with pytest.raises(
+            ModelError, match=r"does not conform to requested schema at \[key\]"
+        ) as exc_info:
+            model.complete("prompt", pattern_schema)
+        assert CANARY not in str(exc_info.value)
+        tb = "".join(
+            traceback.format_exception(exc_info.type, exc_info.value, exc_info.tb)
+        )
+        assert CANARY not in tb
+
+    # Positive control: valid data conforms to open schema
+    resp_valid = _make_azure_response(content='{"dynamic_count": 42}')
+    with patch.object(
+        urllib.request.OpenerDirector, "open", return_value=MockHTTPResponse(resp_valid)
+    ):
+        c = model.complete("prompt", open_schema)
+        assert c.data == {"dynamic_count": 42}
+
+
 def test_complete_refuses_invalid_json_content() -> None:
     model = AzureFoundryModel(
         base_url=VALID_URL,
@@ -742,6 +798,10 @@ def test_complete_refuses_oversized_payload() -> None:
         None,
         "token@host",
         "tok#en",
+        "abc\n",
+        "SECRETVAL\n",
+        "\nabc",
+        "token\r\n",
     ],
 )
 def test_bearer_token_validation_rejects_unsafe(bad_tok: Any) -> None:
@@ -763,6 +823,44 @@ def test_complete_injected_newline_token_does_not_leak_secret() -> None:
     assert secret not in tb
 
 
+def test_complete_injected_trailing_newline_token_refused_cleanly() -> None:
+    secret = "SECRETVAL_TRAILING_LF_99"
+    model = AzureFoundryModel(
+        base_url=VALID_URL,
+        subscription_id=VALID_SUB,
+        token_provider=lambda s: f"{secret}\n",
+    )
+    with pytest.raises(
+        ModelError, match="invalid bearer token character set"
+    ) as exc_info:
+        model.complete("prompt", TEST_SCHEMA)
+    assert secret not in str(exc_info.value)
+    tb = "".join(traceback.format_exception(exc_info.type, exc_info.value, exc_info.tb))
+    assert secret not in tb
+
+
+def test_complete_valid_bearer_token_positive_control() -> None:
+    valid_token = "valid.entra.token-123_456~789+/="
+    model = AzureFoundryModel(
+        base_url=VALID_URL,
+        subscription_id=VALID_SUB,
+        token_provider=lambda s: valid_token,
+    )
+    resp_body = _make_azure_response()
+    captured_reqs: list[urllib.request.Request] = []
+
+    def fake_open(
+        req: urllib.request.Request, *args: Any, **kwargs: Any
+    ) -> MockHTTPResponse:
+        captured_reqs.append(req)
+        return MockHTTPResponse(resp_body)
+
+    with patch.object(urllib.request.OpenerDirector, "open", side_effect=fake_open):
+        result = model.complete("prompt", TEST_SCHEMA)
+    assert result.data == {"seed": 42, "n_rows": 100}
+    assert captured_reqs[0].headers["Authorization"] == f"Bearer {valid_token}"
+
+
 # --- Network Read Failure Protection (B3) ---
 
 
@@ -773,6 +871,7 @@ def test_complete_injected_newline_token_does_not_leak_secret() -> None:
         lambda: http.client.IncompleteRead(f"incomplete {CANARY}".encode()),
         lambda: OSError(f"network os error {CANARY}"),
         lambda: http.client.BadStatusLine(f"500 {CANARY}"),
+        lambda: ValueError(f"raw header value {CANARY}"),
     ],
 )
 def test_network_read_failures_mapped_to_model_error(exc_factory: Any) -> None:
@@ -905,6 +1004,16 @@ def test_complete_bounds_and_sanitizes_request_id() -> None:
     ):
         c = model.complete("prompt", TEST_SCHEMA)
         assert c.meta["request_id"] == "chatcmpl-valid.123_456:789"
+
+    # trailing newline in id (R3: fullmatch)
+    resp_trailing_lf = _make_azure_response(rid="req-77\n")
+    with patch.object(
+        urllib.request.OpenerDirector,
+        "open",
+        return_value=MockHTTPResponse(resp_trailing_lf),
+    ):
+        c = model.complete("prompt", TEST_SCHEMA)
+        assert c.meta["request_id"] == "unavailable"
 
 
 # --- Az Subscription Echo & Exception Handling (B11) ---
