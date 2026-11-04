@@ -570,7 +570,7 @@ def check_source_joint_satisfiability(
     [k*(r - tol), k*(r + tol)] with the integer structural presence range
     [1, k - 1] to check whether a feasible integer count exists in O(1) time.
     """
-    validate_source_reference(source_reference)
+    validate_source_reference(source_reference, case_def)
     if type(target_rows) is not int or isinstance(target_rows, bool):
         raise TypeError(f"target_rows must be integer, got {type(target_rows)}")
 
@@ -628,6 +628,10 @@ def check_source_joint_satisfiability(
         # Integer continuous bounds for |a/k - rate| <= tol
         low = max(a_min, math.ceil(k * (rate - tol) - 1e-12))
         high = min(a_max, math.floor(k * (rate + tol) + 1e-12))
+        while low <= high and abs(low / k - rate) > tol:
+            low += 1
+        while high >= low and abs(high / k - rate) > tol:
+            high -= 1
         if low > high:
             max_rate_with_blank = (k - 1) / k if k > 0 else 0.0
             return (
@@ -650,7 +654,7 @@ def compute_minimum_feasible_rows(
     Searches across [min_satisfiable_rows, max_supported_rows] using O(1) interval arithmetic.
     Refuses with an explicit ValueError if no feasible row count exists within supported bounds.
     """
-    validate_source_reference(source_reference)
+    validate_source_reference(source_reference, case_def)
     design = case_def["design_choices"]
     floor = int(design["min_satisfiable_rows"])
     ceiling = int(design["max_supported_rows"])
@@ -688,7 +692,7 @@ def validate_plan_satisfiability(
         )
 
     if source_reference is not None:
-        validate_source_reference(source_reference)
+        validate_source_reference(source_reference, case_def)
         ok, reason = check_source_joint_satisfiability(
             n_rows, case_def, source_reference
         )
@@ -724,7 +728,7 @@ def compile_case_contract(
         )
 
     if source_reference is not None:
-        validate_source_reference(source_reference)
+        validate_source_reference(source_reference, case_def)
         ref_sha = source_reference.get("source_sha256")
         if ref_sha != source_sha256:
             raise ValueError(
@@ -799,7 +803,7 @@ def validate_case_contract(
         )
 
     if source_reference is not None:
-        validate_source_reference(source_reference)
+        validate_source_reference(source_reference, case_def)
         ref_sha = source_reference.get("source_sha256")
         if ref_sha != source_sha:
             raise ValueError(
@@ -890,6 +894,8 @@ def assess_source_suitability(
     A source-format fit is not a scientific or origin/rights certification.
     A model cannot upgrade an unsuitable code verdict.
     """
+    if source_path_or_rows is None:
+        raise ValueError("source_path_or_rows must not be None")
     reasons: list[str] = []
     reqs = case_def["source_requirements"]
     required_cols = reqs.get("required_columns", ["StartDepth", "Final_Mask"])
@@ -1150,11 +1156,16 @@ def assess_source_suitability(
     }
 
 
-def validate_source_reference(source_reference: Mapping[str, Any]) -> None:
-    """Validate that a source reference dictionary adheres strictly to schema and consistency rules."""
+def validate_source_reference(
+    source_reference: Mapping[str, Any],
+    case_def: Mapping[str, Any] | None = None,
+) -> None:
+    """Validate that a source reference dictionary adheres strictly to schema, case, and consistency rules."""
+    if source_reference is None:
+        raise ValueError("source reference must not be None")
     if not isinstance(source_reference, Mapping):
         raise TypeError(
-            f"source reference must be a mapping, got {type(source_reference)}"
+            f"source reference must be a mapping, got {type(source_reference).__name__}"
         )
     keys = set(source_reference.keys())
     missing = ALLOWED_REFERENCE_KEYS - keys
@@ -1180,26 +1191,32 @@ def validate_source_reference(source_reference: Mapping[str, Any]) -> None:
             f"source reference source_sha256 must be 64-char lowercase hex, got {sha!r}"
         )
 
+    min_rows = (
+        int(case_def["source_requirements"].get("min_source_rows", 20))
+        if (case_def and "source_requirements" in case_def)
+        else 20
+    )
+
     s_rows = source_reference.get("source_rows")
     u_rows = source_reference.get("usable_rows")
     r_rows = source_reference.get("rejected_rows")
 
-    if type(s_rows) is not int or isinstance(s_rows, bool) or s_rows <= 0:
+    if type(s_rows) is not int or isinstance(s_rows, bool) or s_rows < min_rows:
         raise ValueError(
-            f"source reference source_rows must be positive integer, got {s_rows!r}"
+            f"source reference source_rows must be integer >= {min_rows}, got {s_rows!r}"
+        )
+    if type(r_rows) is not int or isinstance(r_rows, bool) or r_rows != 0:
+        raise ValueError(
+            f"source reference rejected_rows must be integer 0, got {r_rows!r}"
         )
     if (
         type(u_rows) is not int
         or isinstance(u_rows, bool)
-        or u_rows <= 0
-        or u_rows > s_rows
+        or u_rows < min_rows
+        or u_rows != s_rows
     ):
         raise ValueError(
-            f"source reference usable_rows must be positive integer <= source_rows, got {u_rows!r}"
-        )
-    if type(r_rows) is not int or isinstance(r_rows, bool) or r_rows < 0:
-        raise ValueError(
-            f"source reference rejected_rows must be non-negative integer, got {r_rows!r}"
+            f"source reference usable_rows must be integer >= {min_rows} and equal source_rows ({s_rows}), got {u_rows!r}"
         )
     if u_rows + r_rows != s_rows:
         raise ValueError(
@@ -1215,9 +1232,9 @@ def validate_source_reference(source_reference: Mapping[str, Any]) -> None:
 
     for rate_key in ("swir_answer_rate", "tir_answer_rate"):
         r = source_reference.get(rate_key)
-        if type(r) is not float or not math.isfinite(r) or not (0.0 <= r <= 1.0):
+        if type(r) is not float or not math.isfinite(r) or not (0.0 < r < 1.0):
             raise ValueError(
-                f"source reference {rate_key} must be finite float in [0, 1], got {r!r}"
+                f"source reference {rate_key} must be finite float in (0, 1), got {r!r}"
             )
 
     sp = source_reference.get("median_forward_spacing")
@@ -1235,10 +1252,8 @@ def validate_source_reference(source_reference: Mapping[str, Any]) -> None:
         )
     if len(set(swir_labels)) != len(swir_labels):
         raise ValueError("source reference disclosed_swir_labels contains duplicates")
-    if float(source_reference["swir_answer_rate"]) > 0.0 and len(swir_labels) == 0:
-        raise ValueError(
-            "source reference disclosed_swir_labels cannot be empty when swir_answer_rate > 0"
-        )
+    if len(swir_labels) == 0:
+        raise ValueError("source reference disclosed_swir_labels cannot be empty")
 
     tir_labels = source_reference.get("disclosed_tir_labels")
     if not isinstance(tir_labels, list) or not all(
@@ -1249,21 +1264,12 @@ def validate_source_reference(source_reference: Mapping[str, Any]) -> None:
         )
     if len(set(tir_labels)) != len(tir_labels):
         raise ValueError("source reference disclosed_tir_labels contains duplicates")
-    if float(source_reference["tir_answer_rate"]) > 0.0 and len(tir_labels) == 0:
-        raise ValueError(
-            "source reference disclosed_tir_labels cannot be empty when tir_answer_rate > 0"
-        )
+    if len(tir_labels) == 0:
+        raise ValueError("source reference disclosed_tir_labels cannot be empty")
 
     has_blanks = source_reference.get("has_blanks")
-    if type(has_blanks) is not bool:
-        raise ValueError("source reference has_blanks must be boolean")
-    if (
-        float(source_reference["swir_answer_rate"]) < 1.0
-        or float(source_reference["tir_answer_rate"]) < 1.0
-    ) and not has_blanks:
-        raise ValueError(
-            "source reference has_blanks must be True when answer rates < 1.0"
-        )
+    if type(has_blanks) is not bool or not has_blanks:
+        raise ValueError("source reference has_blanks must be True")
 
     lic = source_reference.get("licence_status")
     if type(lic) is not str or not lic.strip():
@@ -1285,6 +1291,8 @@ def build_source_reference(
     statistical parameters and full code-side disclosed vocabulary required
     for recipient verification.
     """
+    if source_path_or_rows is None:
+        raise ValueError("source_path_or_rows must not be None")
     case = case_def or get_case("hylogger_scalar_teaching_v1")
     suit = assess_source_suitability(source_path_or_rows, case, licence_meta)
     if not suit["suitable"]:
@@ -1314,7 +1322,7 @@ def build_source_reference(
             "Contains no raw measurements or individual source rows."
         ),
     }
-    validate_source_reference(ref)
+    validate_source_reference(ref, case)
     return ref
 
 
@@ -1368,6 +1376,8 @@ def evaluate_case_utility(
     - structure presence of both inclusion states and blank labels per channel.
     """
     # 1. Resolve and validate source reference
+    if source_reference_or_path is None:
+        raise ValueError("source reference must be provided, got None")
     if isinstance(source_reference_or_path, Mapping):
         source_ref = dict(source_reference_or_path)
     else:

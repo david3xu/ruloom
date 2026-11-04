@@ -485,30 +485,36 @@ def test_source_reference_strict_schema_aliases_and_consistency():
     with pytest.raises(ValueError, match="64-char lowercase hex"):
         validate_source_reference(bad)
 
-    # 3. usable_rows > source_rows
+    # 3. usable_rows != source_rows or > source_rows
     bad = dict(clean_ref)
     bad["usable_rows"] = 10001
     with pytest.raises(
-        ValueError, match="usable_rows must be positive integer <= source_rows"
+        ValueError, match="usable_rows must be integer >= 20 and equal source_rows"
     ):
         validate_source_reference(bad)
 
-    # 4. rejected_rows = 'hidden' or negative
+    # 4. rejected_rows != 0 or 'hidden' or negative
     bad = dict(clean_ref)
     bad["rejected_rows"] = "hidden"
-    with pytest.raises(ValueError, match="rejected_rows must be non-negative integer"):
+    with pytest.raises(ValueError, match="rejected_rows must be integer 0"):
         validate_source_reference(bad)
 
     bad = dict(clean_ref)
     bad["rejected_rows"] = -1
-    with pytest.raises(ValueError, match="rejected_rows must be non-negative integer"):
+    with pytest.raises(ValueError, match="rejected_rows must be integer 0"):
         validate_source_reference(bad)
 
-    # 5. row accounting mismatch: usable + rejected != source_rows
     bad = dict(clean_ref)
-    bad["usable_rows"] = 9000
-    bad["rejected_rows"] = 500  # sum = 9500 != 10000
-    with pytest.raises(ValueError, match="row accounting mismatch"):
+    bad["rejected_rows"] = 10
+    bad["usable_rows"] = 9990
+    with pytest.raises(ValueError, match="rejected_rows must be integer 0"):
+        validate_source_reference(bad)
+
+    # 5. source_rows below case minimum 20
+    bad = dict(clean_ref)
+    bad["source_rows"] = 5
+    bad["usable_rows"] = 5
+    with pytest.raises(ValueError, match="source_rows must be integer >= 20"):
         validate_source_reference(bad)
 
     # 6. valid_fraction 0.0 or 1.0
@@ -522,13 +528,29 @@ def test_source_reference_strict_schema_aliases_and_consistency():
     with pytest.raises(ValueError, match="valid_fraction must be finite float in"):
         validate_source_reference(bad)
 
-    # 7. duplicate labels
+    # 7. answer rates 0.0 or 1.0 refused strictly in (0, 1)
+    for key in ("swir_answer_rate", "tir_answer_rate"):
+        bad0 = dict(clean_ref)
+        bad0[key] = 0.0
+        with pytest.raises(
+            ValueError, match=f"{key} must be finite float in \\(0, 1\\)"
+        ):
+            validate_source_reference(bad0)
+
+        bad1 = dict(clean_ref)
+        bad1[key] = 1.0
+        with pytest.raises(
+            ValueError, match=f"{key} must be finite float in \\(0, 1\\)"
+        ):
+            validate_source_reference(bad1)
+
+    # 8. duplicate labels
     bad = dict(clean_ref)
     bad["disclosed_swir_labels"] = ["CHLORITE", "CHLORITE"]
     with pytest.raises(ValueError, match="disclosed_swir_labels contains duplicates"):
         validate_source_reference(bad)
 
-    # 8. empty string in labels
+    # 9. empty string in labels
     bad = dict(clean_ref)
     bad["disclosed_tir_labels"] = [""]
     with pytest.raises(
@@ -536,25 +558,35 @@ def test_source_reference_strict_schema_aliases_and_consistency():
     ):
         validate_source_reference(bad)
 
-    # 9. empty labels when rate > 0
+    # 10. empty labels refused
     bad = dict(clean_ref)
     bad["disclosed_swir_labels"] = []
     with pytest.raises(ValueError, match="disclosed_swir_labels cannot be empty"):
         validate_source_reference(bad)
 
-    # 10. has_blanks = False when rates < 1.0
     bad = dict(clean_ref)
-    bad["has_blanks"] = False
-    with pytest.raises(
-        ValueError, match="has_blanks must be True when answer rates < 1.0"
-    ):
+    bad["disclosed_tir_labels"] = []
+    with pytest.raises(ValueError, match="disclosed_tir_labels cannot be empty"):
         validate_source_reference(bad)
 
-    # 11. non-string licence_status or notice
+    # 11. has_blanks = False refused
+    bad = dict(clean_ref)
+    bad["has_blanks"] = False
+    with pytest.raises(ValueError, match="has_blanks must be True"):
+        validate_source_reference(bad)
+
+    # 12. non-string licence_status or notice
     bad = dict(clean_ref)
     bad["licence_status"] = ""
     with pytest.raises(ValueError, match="licence_status must be non-empty string"):
         validate_source_reference(bad)
+
+    # 13. None reference clean error (N3) and non-mapping
+    with pytest.raises(ValueError, match="source reference must not be None"):
+        validate_source_reference(None)
+
+    with pytest.raises(TypeError, match="source reference must be a mapping"):
+        validate_source_reference("not_a_mapping")
 
 
 def test_assess_source_suitability_loss_and_formatting(tmp_path):
@@ -1025,3 +1057,142 @@ def test_evaluate_case_utility_negative_failures(tmp_path):
         evaluate_case_utility(
             _make_candidate_csv(tmp_path / "pin", n_rows=1000), ref, contract_wrong_pin
         )
+
+
+def test_source_reference_invariants_refusal_across_compiler_and_evaluator(tmp_path):
+    """N1 & N3: compile_case_contract and evaluate_case_utility refuse excluded source reference states."""
+    case_def = get_case("hylogger_scalar_teaching_v1")
+    src = _make_source_csv(tmp_path / "src", n_rows=1000, spacing=0.0075)
+    ref = build_source_reference(src)
+    contract = compile_case_contract(case_def, 1000, ref["source_sha256"], ref)
+    cand = _make_candidate_csv(tmp_path / "cand", n_rows=1000)
+
+    # 1. Compile refuses rates of 1.0 or 0.0
+    bad_rate1 = dict(ref)
+    bad_rate1["swir_answer_rate"] = 1.0
+    with pytest.raises(ValueError, match="swir_answer_rate must be finite float in"):
+        compile_case_contract(
+            case_def, 1000, ref["source_sha256"], source_reference=bad_rate1
+        )
+
+    bad_rate0 = dict(ref)
+    bad_rate0["tir_answer_rate"] = 0.0
+    with pytest.raises(ValueError, match="tir_answer_rate must be finite float in"):
+        compile_case_contract(
+            case_def, 1000, ref["source_sha256"], source_reference=bad_rate0
+        )
+
+    # 2. Compile refuses rejected_rows > 0
+    bad_rej = dict(ref)
+    bad_rej["rejected_rows"] = 10
+    bad_rej["usable_rows"] = ref["source_rows"] - 10
+    with pytest.raises(ValueError, match="rejected_rows must be integer 0"):
+        compile_case_contract(
+            case_def, 1000, ref["source_sha256"], source_reference=bad_rej
+        )
+
+    # 3. Compile refuses source_rows < 20
+    bad_small = dict(ref)
+    bad_small["source_rows"] = 5
+    bad_small["usable_rows"] = 5
+    with pytest.raises(ValueError, match="source_rows must be integer >= 20"):
+        compile_case_contract(
+            case_def, 1000, ref["source_sha256"], source_reference=bad_small
+        )
+
+    # 4. Compile refuses has_blanks = False
+    bad_noblank = dict(ref)
+    bad_noblank["has_blanks"] = False
+    with pytest.raises(ValueError, match="has_blanks must be True"):
+        compile_case_contract(
+            case_def, 1000, ref["source_sha256"], source_reference=bad_noblank
+        )
+
+    # 5. Evaluate refuses invalid references
+    with pytest.raises(ValueError, match="swir_answer_rate must be finite float in"):
+        evaluate_case_utility(cand, bad_rate1, contract)
+
+    with pytest.raises(ValueError, match="rejected_rows must be integer 0"):
+        evaluate_case_utility(cand, bad_rej, contract)
+
+    with pytest.raises(ValueError, match="source_rows must be integer >= 20"):
+        evaluate_case_utility(cand, bad_small, contract)
+
+    with pytest.raises(ValueError, match="has_blanks must be True"):
+        evaluate_case_utility(cand, bad_noblank, contract)
+
+    # 6. Evaluate and assess handle None cleanly (N3)
+    with pytest.raises(ValueError, match="source reference must be provided, got None"):
+        evaluate_case_utility(cand, None, contract)
+
+    with pytest.raises(ValueError, match="source_path_or_rows must not be None"):
+        build_source_reference(None)
+
+    with pytest.raises(ValueError, match="source_path_or_rows must not be None"):
+        assess_source_suitability(None, case_def)
+
+    # 7. Unchanged honest reference compiles and evaluates cleanly
+    c_ok = compile_case_contract(
+        case_def, 1000, ref["source_sha256"], source_reference=ref
+    )
+    assert c_ok["target_rows"] == 1000
+    res_ok = evaluate_case_utility(cand, ref, c_ok)
+    assert res_ok["passed"] is True
+
+
+def test_n2_float_boundary_drift_reproduction_and_alignment(tmp_path):
+    """N2: feasibility O(1) interval arithmetic aligns with evaluator floating-point checks at boundaries."""
+    case_def = get_case("hylogger_scalar_teaching_v1")
+    # For k=25, swir_answer_rate=0.26, tol=0.02:
+    # 6/25 = 0.24 -> delta = 0.020000000000000018 > 0.02 (fails evaluator)
+    # 7/25 = 0.28 -> delta = 0.020000000000000018 > 0.02 (fails evaluator)
+    # No integer in [1, 24] has delta <= 0.02 in floating point.
+    boundary_ref = {
+        "version": 1,
+        "source_sha256": "8d9afb0120f9a82182f4689109a6c97c96bcc869a555ba77fdece0f98b4cb1bf",
+        "source_rows": 10000,
+        "usable_rows": 10000,
+        "rejected_rows": 0,
+        "valid_fraction": 25.0 / 30.0,
+        "median_forward_spacing": 0.0075,
+        "swir_answer_rate": 0.26,
+        "tir_answer_rate": 0.5,
+        "disclosed_swir_labels": ["CHLORITE"],
+        "disclosed_tir_labels": ["AMPHIBOLE"],
+        "has_blanks": True,
+        "licence_status": "disclosed: CC BY 4.0",
+        "notice": "boundary ref",
+    }
+    # target_rows=30 with vf=25/30 gives exactly k=25 valid rows.
+    ok, reason = check_source_joint_satisfiability(30, case_def, boundary_ref)
+    # Feasibility must reject because no float-passing integer count exists:
+    assert ok is False
+    assert "cannot jointly satisfy SWIR answer rate" in reason
+
+    # Verify that a 30-row candidate with k=25 valid rows indeed fails evaluator on swir_answer_rate
+    # when it has 7 SWIR answered rows (7/25 = 0.28, delta = 0.020000000000000018)
+    contract = compile_case_contract(case_def, 30, boundary_ref["source_sha256"])
+    cand_rows_7 = []
+    d = 0.0
+    for i in range(30):
+        is_v = i < 25  # first 25 valid
+        sw = "CHLORITE" if (is_v and i < 7) else ""  # exactly 7 answered rows
+        ti = "AMPHIBOLE" if (is_v and i < 12) else ""
+        cand_rows_7.append((d, "1" if is_v else "0", sw, ti))
+        d += 0.0075
+
+    cand_p = tmp_path / "cand_boundary.csv"
+    with cand_p.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["StartDepth", "Final_Mask", "Grp1_sTSAS", "Grp1_sjCLST"])
+        for r in cand_rows_7:
+            writer.writerow(r)
+
+    # Contract validation inside evaluate_case_utility catches this early
+    with pytest.raises(ValueError, match="not jointly satisfiable for this source"):
+        evaluate_case_utility(cand_p, boundary_ref, contract)
+
+    # Even if individual candidate delta is measured, float drift is > 0.02
+    cand_swir_delta = abs(7.0 / 25.0 - boundary_ref["swir_answer_rate"])
+    assert cand_swir_delta > 0.02
+    assert cand_swir_delta == 0.020000000000000018
