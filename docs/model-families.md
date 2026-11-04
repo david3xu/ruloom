@@ -77,6 +77,16 @@ Reasoning effort defaults to `xhigh` (`max` is refused pre-call by the backend;
 supported efforts are `minimal`, `low`, `medium`, `high`, `xhigh`).
 Completion token bounds default to 4096 tokens (up to 16384 via direct adapter
 API; the CLI currently uses the 4096 default).
+Azure strict structured output requires every declared object property in the
+wire schema's `required` list. The adapter derives a separate schema that
+promotes these fields recursively through schema nodes, preserving existing
+required entries and constraints. Annotation data and the caller's original
+schema remain unchanged; local validation still checks the full original schema.
+This prevents the admitted research schema's optional passage-citation field
+from producing an invalid strict request. The retained mini attempt failed with
+HTTP 400; that body was redacted, so the specific cause remains an inference
+until a later bounded live verification. See
+[Azure structured output requirements](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/structured-outputs).
 The `azure_foundry` deployment `muse-spark-1.3` is strictly text-only; image inputs
 and vision critic roles (`complete_with_image`) are refused pre-call before Entra
 token acquisition or network dispatch.

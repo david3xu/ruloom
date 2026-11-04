@@ -19,6 +19,7 @@ authorization headers or bearer tokens.
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import http.client
 import json
@@ -346,6 +347,62 @@ def acquire_entra_token(
     return _validate_bearer_token(token.strip())
 
 
+def _normalize_strict_wire_schema(
+    schema: Mapping[str, Any], *, vision: bool = False
+) -> dict[str, Any]:
+    """Derive wire schema promoting all declared properties to required."""
+    wire: dict[str, Any] = copy.deepcopy(
+        dict(image_wire_schema(schema) if vision else schema)
+    )
+
+    def _promote(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        if isinstance(node.get("properties"), dict):
+            orig = list(node.get("required", []))
+            seen = set(orig)
+            node["required"] = orig + [k for k in node["properties"] if k not in seen]
+        for key in (
+            "properties",
+            "patternProperties",
+            "$defs",
+            "definitions",
+            "dependentSchemas",
+        ):
+            val = node.get(key)
+            if isinstance(val, dict):
+                for child in val.values():
+                    _promote(child)
+        for key in (
+            "additionalProperties",
+            "contains",
+            "not",
+            "if",
+            "then",
+            "else",
+            "propertyNames",
+            "unevaluatedProperties",
+            "unevaluatedItems",
+        ):
+            val = node.get(key)
+            if isinstance(val, dict):
+                _promote(val)
+        items = node.get("items")
+        if isinstance(items, dict):
+            _promote(items)
+        elif isinstance(items, list):
+            for child in items:
+                _promote(child)
+        for key in ("anyOf", "allOf", "oneOf", "prefixItems"):
+            val = node.get(key)
+            if isinstance(val, list):
+                for child in val:
+                    _promote(child)
+
+    _promote(wire)
+    return wire
+
+
 class AzureFoundryModel(StructuredModel):
     """Structured model adapter for Meta Muse models on Azure AI Foundry."""
 
@@ -425,6 +482,7 @@ class AzureFoundryModel(StructuredModel):
 
         token = _validate_bearer_token(self._get_token())
 
+        wire_schema = _normalize_strict_wire_schema(schema, vision=vision)
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -434,7 +492,7 @@ class AzureFoundryModel(StructuredModel):
                 "json_schema": {
                     "name": "structured_response",
                     "strict": True,
-                    "schema": image_wire_schema(schema) if vision else dict(schema),
+                    "schema": wire_schema,
                 },
             },
         }

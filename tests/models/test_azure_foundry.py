@@ -1506,3 +1506,98 @@ def test_managed_failure_redacts_provider_body(tmp_path: Path) -> None:
         with pytest.raises(ModelError, match="HTTP 503") as raised:
             _managed_model().complete_with_image("synthetic only", TEST_SCHEMA, image)
     assert "PROVIDER_CANARY" not in str(raised.value)
+
+
+def test_case_research_wire_declares_optional_passage_field_required() -> None:
+    import copy
+
+    from profiles.hylogger.validation.workflow import RESEARCH_CASE_SCHEMA
+
+    original = copy.deepcopy(RESEARCH_CASE_SCHEMA)
+    data = {
+        "case_id": "teaching-case",
+        "case_version": 1,
+        "cited_evidence_ids": ["admitted"],
+        "passage_citations": [],
+        "supported_requirements": [],
+        "unsupported_requirements": [],
+        "research_summary": "Bounded teaching advisory.",
+        "limitations": [],
+    }
+    reply = _make_azure_response(content=json.dumps(data))
+    model = AzureFoundryModel(VALID_URL, VALID_SUB, token_provider=lambda _: "tok")
+    with patch.object(
+        urllib.request.OpenerDirector, "open", return_value=MockHTTPResponse(reply)
+    ) as opened:
+        model.complete("admitted evidence only", RESEARCH_CASE_SCHEMA)
+    wire = json.loads(opened.call_args.args[0].data)["response_format"]["json_schema"][
+        "schema"
+    ]
+    assert "passage_citations" in wire["required"]
+    assert set(wire["required"]) == set(wire["properties"])
+    assert RESEARCH_CASE_SCHEMA == original
+    assert "passage_citations" not in RESEARCH_CASE_SCHEMA["required"]
+
+
+def test_azure_required_projection_preserves_nested_constraints_and_annotations() -> (
+    None
+):
+    import copy
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "seed": {"type": "integer"},
+            "n_rows": {"type": "integer"},
+            "optional_proof": {
+                "type": "object",
+                "properties": {
+                    "properties": {"type": "string"},
+                    "proof": {
+                        "type": "array",
+                        "items": {"type": "integer", "minimum": 5},
+                        "minItems": 1,
+                        "uniqueItems": True,
+                    },
+                },
+                "required": ["properties"],
+                "additionalProperties": False,
+            },
+        },
+        "required": ["seed", "n_rows"],
+        "additionalProperties": False,
+        "default": {"properties": {"annotation": {"type": "string"}}},
+    }
+    original = copy.deepcopy(schema)
+    content = json.dumps(
+        {
+            "seed": 8,
+            "n_rows": 1000,
+            "optional_proof": {"properties": "data", "proof": [6]},
+        }
+    )
+    model = AzureFoundryModel(VALID_URL, VALID_SUB, token_provider=lambda _: "tok")
+    with patch.object(
+        urllib.request.OpenerDirector,
+        "open",
+        return_value=MockHTTPResponse(_make_azure_response(content=content)),
+    ) as opened:
+        model.complete("bounded", schema)
+    wire = json.loads(opened.call_args.args[0].data)["response_format"]["json_schema"][
+        "schema"
+    ]
+    assert wire["required"] == ["seed", "n_rows", "optional_proof"]
+    assert wire["properties"]["optional_proof"]["required"] == ["properties", "proof"]
+    assert wire["default"] == original["default"]
+    assert schema == original
+    proof = wire["properties"]["optional_proof"]["properties"]["proof"]
+    assert proof["minItems"] == 1 and proof["uniqueItems"] is True
+    with patch.object(
+        urllib.request.OpenerDirector,
+        "open",
+        return_value=MockHTTPResponse(
+            _make_azure_response(content=content.replace("[6]", "[1]"))
+        ),
+    ):
+        with pytest.raises(ModelError, match="schema"):
+            model.complete("bounded", schema)
