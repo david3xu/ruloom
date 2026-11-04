@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import csv
 import hashlib
 import json
@@ -383,7 +384,7 @@ def test_case_check_results_early_return_emits_all_13_fail() -> None:
         "failures": ["invalid_utf8_encoding"],
         "measurements": {},
         "candidate_sha256": "0" * 64,
-        "limitations": [],
+        "limitations": ["Case-level teaching-table utility only."],
     }
 
     results = case_check_results(early_report)
@@ -1426,55 +1427,200 @@ def test_case_check_results_measurement_shape_validation(tmp_path: Path) -> None
         mod(r2["measurements"])
         return [x["check_id"] for x in case_check_results(r2) if x["status"] == "fail"]
 
-    # Valid candidate produces 0 failures
-    assert [
-        x["check_id"] for x in case_check_results(rep) if x["status"] == "fail"
-    ] == []
+    # 1. Genuine all 13 pass positive control
+    res_pass = case_check_results(rep)
+    assert [x["status"] for x in res_pass].count("pass") == 13
+    assert [x["check_id"] for x in res_pass if x["status"] == "fail"] == []
 
-    # Measurement corruption checks
-    assert chk(lambda m: m.__setitem__("inclusion_fraction", "garbage")) == [
+    # 2. Honest only inclusion failure positive control
+    cbad = cand_bytes.replace(b"true", b"false", 50)
+    rbad = evaluate_case_context(cbad, ctx)
+    res_bad = case_check_results(rbad)
+    assert [x["check_id"] for x in res_bad if x["status"] == "fail"] == [
         "case.inclusion_fraction"
     ]
-    assert chk(lambda m: m.__setitem__("depth_spacing", {"candidate": -5})) == [
-        "case.depth_spacing"
-    ]
-    assert chk(
-        lambda m: m.__setitem__(
-            "source_pin_match", {"contract_pin": "a", "reference_pin": "b"}
+    assert [x["status"] for x in res_bad].count("pass") == 12
+
+    # 3. Native N10: structure included_rows is string (must not crash, returns 13 fails)
+    assert (
+        len(
+            chk(
+                lambda m: m["downstream_structure_both_states_present"].__setitem__(
+                    "included_rows", "x"
+                )
+            )
         )
-    ) == ["case.source_pin_match"]
-    assert chk(lambda m: m.__setitem__("row_count", True)) == ["case.row_count"]
-    assert chk(lambda m: m.__setitem__("row_count", 200.0)) == ["case.row_count"]
+        == 13
+    )
+
+    # 4. Native N11: well_formed_rows malformed_detail str (check fails cleanly)
     assert chk(
-        lambda m: m.__setitem__("swir_supported_labels", {"unknown_labels": ["X"]})
-    ) == ["case.swir_supported_labels"]
-    assert chk(
-        lambda m: m.__setitem__(
-            "well_formed_rows", {"parsed": 1, "total": 200, "malformed_detail": None}
-        )
+        lambda m: m["well_formed_rows"].__setitem__("malformed_detail", "bad")
     ) == ["case.well_formed_rows"]
-    assert chk(
-        lambda m: m.__setitem__(
-            "downstream_filter_group",
-            {"total_rows": 3, "included": 1, "excluded": 1, "group_count": 1},
-        )
-    ) == ["case.downstream_filter_group"]
-    assert chk(
-        lambda m: m.__setitem__(
-            "downstream_structure_both_states_present",
-            {"structure_detail": ["bad"], "included_rows": 0, "excluded_rows": 0},
-        )
-    ) == ["case.downstream_structure_both_states_present"]
 
-    # Extra measurement key fails all 13 checks
-    assert len(chk(lambda m: m.__setitem__("zzz", 1))) == 13
+    # 5. Native N12: source_pin_match pins None (fails closed)
+    assert (
+        len(
+            chk(
+                lambda m: m["source_pin_match"].update(
+                    {"contract_pin": None, "reference_pin": None}
+                )
+            )
+        )
+        == 13
+    )
 
-    # Extra report top-level key fails all 13 checks (0 passes)
+    # 6. Native N13: bool in downstream_filter_group count (fails closed)
+    assert (
+        len(chk(lambda m: m["downstream_filter_group"].__setitem__("included", True)))
+        == 13
+    )
+
+    # 7. Native N14: limitations wrong/empty (0 passes, 13 fails)
     import copy
 
+    r_n14 = copy.deepcopy(rep)
+    r_n14["limitations"] = []
+    assert [x["status"] for x in case_check_results(r_n14)].count("pass") == 0
+
+    # 8. Native N15: candidate_sha256 int (0 passes, 13 fails)
+    r_n15 = copy.deepcopy(rep)
+    r_n15["candidate_sha256"] = 5
+    assert [x["status"] for x in case_check_results(r_n15)].count("pass") == 0
+
+    # 9. Native N16: candidate_sha256 missing (0 passes, 13 fails)
+    r_n16 = copy.deepcopy(rep)
+    del r_n16["candidate_sha256"]
+    assert [x["status"] for x in case_check_results(r_n16)].count("pass") == 0
+
+    # 10. Native N17: global failure visible (13 fails)
+    r_n17 = copy.deepcopy(rep)
+    r_n17["passed"] = False
+    r_n17["failures"] = ["invalid_utf8_encoding"]
+    r_n17["measurements"] = {}
+    assert [x["status"] for x in case_check_results(r_n17)].count("fail") == 13
+
+    # 11. Native N18: early report known + global (13 fails)
+    r_n18 = copy.deepcopy(rep)
+    r_n18["passed"] = False
+    r_n18["failures"] = ["no_usable_rows", "row_count"]
+    assert [x["status"] for x in case_check_results(r_n18)].count("fail") == 13
+
+    # 12. Native N19: inclusion extra subkey (fails closed, 13 fails)
+    assert len(chk(lambda m: m["inclusion_fraction"].__setitem__("extra", 1))) == 13
+
+    # 13. Native N20: inclusion missing subkeys (fails closed, 13 fails)
+    assert (
+        len(chk(lambda m: m.__setitem__("inclusion_fraction", {"candidate": 0.75})))
+        == 13
+    )
+
+    # 14. Native N21: depth_spacing string candidate (fails closed, 13 fails)
+    assert len(chk(lambda m: m["depth_spacing"].__setitem__("candidate", "x"))) == 13
+
+    # 15. Native N22: structure exc_rows None (fails closed, 13 fails)
+    assert (
+        len(
+            chk(
+                lambda m: m["downstream_structure_both_states_present"].__setitem__(
+                    "excluded_rows", None
+                )
+            )
+        )
+        == 13
+    )
+
+    # 16. Native N23: well_formed total string (fails closed, 13 fails)
+    assert len(chk(lambda m: m["well_formed_rows"].__setitem__("total", "200"))) == 13
+
+    # 17. Native N24: swir_answer_rate scalar instead of mapping (fails closed, 13 fails)
+    assert len(chk(lambda m: m.__setitem__("swir_answer_rate", 0.8))) == 13
+
+    # 18. Native N25: source_pin_match str (fails closed, 13 fails)
+    assert len(chk(lambda m: m.__setitem__("source_pin_match", "ok"))) == 13
+
+    # 19. Native N26: ordered_depth None (fails closed, 13 fails)
+    assert len(chk(lambda m: m.__setitem__("ordered_depth", None))) == 13
+
+    # 20. Native N27: ordered_depth int 1 (fails closed, 13 fails)
+    assert len(chk(lambda m: m.__setitem__("ordered_depth", 1))) == 13
+
+    # 21. Unhashable failure list regression test (never crashes with TypeError, 13 fails)
+    r_unhashable = copy.deepcopy(rep)
+    r_unhashable["failures"] = [{"bad": 1}]
+    assert [x["status"] for x in case_check_results(r_unhashable)].count("pass") == 0
+
+    # 22. Extra measurement key fails all 13 checks
+    assert len(chk(lambda m: m.__setitem__("zzz", 1))) == 13
+
+    # 23. Extra report top-level key fails all 13 checks (0 passes)
     rep_extra = copy.deepcopy(dict(rep))
     rep_extra["extra"] = 1
     assert [x["status"] for x in case_check_results(rep_extra)].count("pass") == 0
+
+
+def test_review_case_candidate_k9_absent_fact_raises_value_error(
+    tmp_path: Path,
+) -> None:
+    """Test K9 and K9b: structured fact referencing absent path raises ValueError, while available path succeeds."""
+    src = _make_source_csv(tmp_path, n_rows=120)
+    spec = {
+        "case": {"id": "hylogger_scalar_teaching_v1", "version": 1},
+        "target_rows": 200,
+        "source": {"sha256": hashlib.sha256(src.read_bytes()).hexdigest()},
+        "outputs": ["scalar"],
+    }
+    ctx = prepare_case_context(src, spec)
+
+    # Early failure candidate: headers only, 0 usable rows
+    cn = b"depth_m,valid,swir_group,tir_group\n"
+    rn = evaluate_case_context(cn, ctx)
+    ns = hashlib.sha256(cn).hexdigest()
+
+    # Fact path absent in early-fail report raises ValueError (not KeyError)
+    from models.base import Completion, Usage
+
+    class StubModel:
+        def __init__(self, data: dict[str, Any]) -> None:
+            self.data = data
+
+        def complete(self, prompt: str, schema: Any) -> Completion:
+            return Completion(data=copy.deepcopy(self.data), usage=Usage(model="m"))
+
+    m_k9 = StubModel(
+        {
+            "case_id": "hylogger_scalar_teaching_v1",
+            "candidate_sha256": ns,
+            "code_verdict_acknowledged": "fail",
+            "operator_recommendation": "recommend_reject",
+            "strengths": [],
+            "concerns": ["no usable rows"],
+            "evidence_facts": [
+                {"measurement": "inclusion_fraction.candidate", "value": 0.5}
+            ],
+            "evaluator_opinion": "reject",
+        }
+    )
+    with pytest.raises(
+        ValueError, match="path 'inclusion_fraction.candidate' not found"
+    ):
+        review_case_candidate(m_k9, cn, ctx, rn)
+
+    # K9b: fact for available path (row_count: 0) on the same early-fail report succeeds
+    m_k9b = StubModel(
+        {
+            "case_id": "hylogger_scalar_teaching_v1",
+            "candidate_sha256": ns,
+            "code_verdict_acknowledged": "fail",
+            "operator_recommendation": "recommend_reject",
+            "strengths": [],
+            "concerns": ["no usable rows"],
+            "evidence_facts": [{"measurement": "row_count", "value": 0}],
+            "evaluator_opinion": "reject",
+        }
+    )
+    res_k9b = review_case_candidate(m_k9b, cn, ctx, rn)
+    assert res_k9b["evidence_facts"] == [{"measurement": "row_count", "value": 0}]
 
 
 def test_source_fit_receipt_and_evidence_sha_strictness(tmp_path: Path) -> None:
