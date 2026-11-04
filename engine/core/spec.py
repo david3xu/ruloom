@@ -66,6 +66,7 @@ SPEC_KEYS = (
     "rights",
     "target_rows",
     "purpose",
+    "case",
 )
 
 
@@ -348,5 +349,53 @@ def normalize_spec(
     if pin is not None and (not isinstance(pin, str) or not pin):
         raise _refuse("spec 'source.sha256' must be a non-empty string")
     merged["source"] = {"path": str(source), "sha256": pin}
+
+    if "case" in merged:
+        case_val = merged["case"]
+        if not isinstance(case_val, Mapping):
+            raise _refuse("spec 'case' must be an object")
+        case_id = case_val.get("id")
+        case_version = case_val.get("version")
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise _refuse("spec 'case.id' must be a non-empty string")
+        if not _is_int(case_version) or case_version < 1:
+            raise _refuse("spec 'case.version' must be a positive integer")
+        extra_case_keys = set(case_val) - {"id", "version"}
+        if extra_case_keys:
+            raise _refuse(f"spec 'case' carries unknown keys {sorted(extra_case_keys)}")
+
+        declared_cases = generation.get("cases", [])
+        if not isinstance(declared_cases, list) or not declared_cases:
+            raise _refuse(
+                f"case {case_id!r} requested but profile {manifest.id!r} declares no cases"
+            )
+        matched_case = next(
+            (
+                c
+                for c in declared_cases
+                if isinstance(c, Mapping)
+                and c.get("id") == case_id
+                and c.get("version") == case_version
+            ),
+            None,
+        )
+        if matched_case is None:
+            raise _refuse(
+                f"case {case_id!r} v{case_version} is not declared by profile {manifest.id!r}"
+            )
+
+        if "target_rows" not in merged:
+            raise _refuse("spec 'case' requires an explicit 'target_rows'")
+        if outputs != ["scalar"]:
+            raise _refuse("spec 'case' requires outputs == ['scalar']")
+        if (
+            pin is None
+            or len(pin) != 64
+            or not all(c in "0123456789abcdefABCDEF" for c in pin)
+        ):
+            raise _refuse(
+                "spec 'case' requires a non-null 64-character hexadecimal source pin"
+            )
+        merged["case"] = {"id": case_id, "version": case_version}
 
     return merged, sha256_canonical(merged)

@@ -80,6 +80,10 @@ def render_evidence_report(evidence: Mapping[str, Any]) -> str:
     lines.append(
         f"Attempt bound: {_short((spec.get('limits') or {}).get('max_attempts'))}"
     )
+    if evidence.get("case_selected"):
+        case = evidence.get("case") or spec.get("case")
+        if isinstance(case, Mapping):
+            lines.append(f"Case: {case.get('id')} v{case.get('version')}")
     if isinstance(refs, Mapping) and refs.get("spec"):
         lines.append(f"Spec record: {refs.get('spec')}")
     lines.append("")

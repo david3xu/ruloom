@@ -38,6 +38,8 @@ import hashlib
 import json
 import math
 import os
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -57,12 +59,34 @@ from .imaging.statistics import (
     summarize_for_prompt,
 )
 from .intake.reader import read_scalar_csv
+from .validation.cases import (
+    assess_source_suitability,
+    build_source_reference,
+    check_source_joint_satisfiability,
+    get_case,
+    load_cases_catalogue,
+    validate_plan_satisfiability,
+    validate_source_reference,
+)
 from .validation.checks import (
     run_checks,
     source_fidelity_reference,
 )
 from .validation.critique import critique_report
 from .validation.dataset import read as read_artifact
+from .validation.workflow import (
+    assess_case_source,
+    build_case_members,
+    case_check_results,
+    evaluate_case_context,
+    repair_case_plan,
+    research_case,
+    review_case_candidate,
+    verify_case_members,
+)
+from .validation.workflow import (
+    prepare_case_context as _workflow_prepare_case_context,
+)
 
 #: Profile check statuses translated to the engine's recognised verdict
 #: statuses. A profile ``skip`` is recorded as engine ``skipped`` so it
@@ -256,6 +280,26 @@ def intake(ctx: Any) -> None:
         output_terms_grant=output_terms_grant,
     )
     ctx.set_source_frame(list(samples))
+    spec = ctx.spec_record()
+    if isinstance(spec, dict) and spec.get("case") is not None:
+        source_pin = (
+            spec.get("source", {}).get("sha256")
+            if isinstance(spec.get("source"), dict)
+            else None
+        )
+        case_spec = {
+            "case": spec["case"],
+            "target_rows": spec.get("target_rows"),
+            "source": {"sha256": source_pin},
+            "outputs": spec.get("outputs"),
+        }
+        case_ctx = prepare_case_context(
+            ctx.source_path,
+            case_spec,
+            licence_meta=licence,
+            thresholds_path=_thresholds_path(),
+        )
+        ctx.set_requirements(case_ctx)
     ctx.event(
         "source_intake",
         "ok",
@@ -442,12 +486,17 @@ def validate(ctx: Any) -> None:
         artifact_name=(f"{meta['source_name']}:attempt-{ctx.attempt_number}"),
         artifact_sha256=artifact.sha256,
     )
+    req = ctx.requirements()
+    case_items = []
+    if req is not None:
+        case_utility = evaluate_case_context(payload, req)
+        setattr(report, "case_utility", case_utility)
+        case_items = case_check_results(case_utility)
     ctx.set_report(report)
-    # The shipped report and the engine-bound checks read the same
-    # result list, so the passing ``csv_schema`` recorded by
-    # ``run_checks`` is stored exactly once on each side (a second
-    # entry here would read as duplicated coverage and refuse).
-    ctx.record_checks(_items(ctx, report))
+    items = _items(ctx, report)
+    if case_items:
+        items.extend(case_items)
+    ctx.record_checks(items)
 
 
 def repair(ctx: Any) -> None:
@@ -482,6 +531,113 @@ def repair(ctx: Any) -> None:
         raise RuntimeError(f"repair failed: {exc}") from exc
     ctx.set_plan(dict(new_plan))
     ctx.event("repair", "ok", {"plan": dict(new_plan)}, usage=completion.usage)
+
+
+def case_source_assess(ctx: Any) -> None:
+    """Advisory source assessment by the source_assessor role."""
+    req = ctx.requirements()
+    if req is None:
+        return
+    if ctx.model_policy == "offline":
+        ctx.record_advisory(
+            "case_source_assess",
+            {"status": "unavailable", "reason": "model policy is offline"},
+        )
+        ctx.event(
+            "case_source_assess",
+            "unavailable",
+            {"reason": "model policy is offline"},
+        )
+        return
+    model_client = ctx.model("source_assessor")
+    advisory = assess_case_source(model_client, req)
+    ctx.record_advisory("case_source_assess", advisory)
+    ctx.event("case_source_assess", "ok", {"case_id": advisory.get("case_id")})
+
+
+def case_research(ctx: Any) -> None:
+    """Advisory case research by the case_researcher role."""
+    req = ctx.requirements()
+    if req is None:
+        return
+    spec = ctx.spec_record()
+    purpose = None
+    if isinstance(spec, dict):
+        purpose = spec.get("purpose") or spec.get("request")
+    if not isinstance(purpose, str) or not purpose.strip():
+        purpose = "teaching lesson"
+    if ctx.model_policy == "offline":
+        ctx.record_advisory(
+            "case_research",
+            {"status": "unavailable", "reason": "model policy is offline"},
+        )
+        ctx.event(
+            "case_research",
+            "unavailable",
+            {"reason": "model policy is offline"},
+        )
+        return
+    model_client = ctx.model("case_researcher")
+    advisory = research_case(model_client, purpose, req)
+    unsupported = advisory.get("unsupported_requirements", [])
+    if unsupported:
+        raise RuntimeError(
+            f"case research identified unsupported requirements: {unsupported}"
+        )
+    ctx.record_advisory("case_research", advisory)
+    ctx.event("case_research", "ok", {"case_id": advisory.get("case_id")})
+
+
+def case_repair(ctx: Any) -> None:
+    """Causal, same-seed, same-target plan repair for case runs."""
+    req = ctx.requirements()
+    if req is None:
+        return
+    report = ctx.latest_report()
+    plan = ctx.plan()
+    failed_ids = set(report.failed)
+    case_utility = getattr(report, "case_utility", None)
+    if case_utility and isinstance(case_utility.get("failures"), (list, tuple, set)):
+        for f in case_utility["failures"]:
+            s = str(f)
+            failed_ids.add(s)
+            if not s.startswith("case."):
+                failed_ids.add(f"case.{s}")
+            else:
+                failed_ids.add(s.removeprefix("case."))
+    repaired = repair_case_plan(plan, sorted(failed_ids), req)
+    ctx.set_plan(repaired)
+    ctx.event("case_repair", "ok", {"strategy": repaired.get("strategy")})
+
+
+def case_candidate_review(ctx: Any) -> None:
+    """Advisory candidate review by the case_reviewer role."""
+    req = ctx.requirements()
+    if req is None:
+        return
+    sha = ctx.selected_artifact_sha()
+    if sha is None:
+        return
+    payload = ctx.artifact_payload(sha)
+    report = ctx.report_for(sha)
+    case_utility = getattr(report, "case_utility", None)
+    if case_utility is None:
+        return
+    if ctx.model_policy == "offline":
+        ctx.record_advisory(
+            "case_candidate_review",
+            {"status": "unavailable", "reason": "model policy is offline"},
+        )
+        ctx.event(
+            "case_candidate_review",
+            "unavailable",
+            {"reason": "model policy is offline"},
+        )
+        return
+    model_client = ctx.model("case_reviewer")
+    advisory = review_case_candidate(model_client, payload, req, case_utility)
+    ctx.record_advisory("case_candidate_review", advisory)
+    ctx.event("case_candidate_review", "ok", {"case_id": advisory.get("case_id")})
 
 
 def image_intake(ctx: Any) -> None:
@@ -655,8 +811,24 @@ def package_artifact(ctx: Any) -> None:
     (artifact_dir / "plan.json").write_text(
         json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    rep_dict = report.to_dict()
+    case_utility = getattr(report, "case_utility", None)
+    if case_utility is not None:
+        rep_dict["case_utility"] = case_utility
+        case_results = case_check_results(case_utility)
+        existing_names = {r.get("name") for r in rep_dict.get("results", [])}
+        for cr in case_results:
+            if cr.get("check_id") not in existing_names:
+                rep_dict["results"].append(
+                    {
+                        "name": cr["check_id"],
+                        "status": cr["status"],
+                        "detail": str(cr.get("detail", "")),
+                        "band_position": cr.get("band_position"),
+                    }
+                )
     (artifact_dir / "validation-report.json").write_text(
-        json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",
+        json.dumps(rep_dict, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     (artifact_dir / "seed.txt").write_text(f"{plan['seed']}\n", encoding="utf-8")
@@ -691,6 +863,15 @@ def package_artifact(ctx: Any) -> None:
             json.dumps(note, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+    req = ctx.requirements()
+    if req is not None:
+        case_utility = getattr(report, "case_utility", None)
+        if case_utility is not None and case_utility.get("passed") is True:
+            case_members = build_case_members(
+                payload, req, case_utility, ctx.spec_digest()
+            )
+            for fname, fbytes in case_members.items():
+                (artifact_dir / fname).write_bytes(fbytes)
     ctx.event(
         "artifact",
         "ok",
@@ -717,14 +898,194 @@ def package_release(ctx: Any) -> None:
     ctx.say(f"[release] sha256={zip_sha}")
 
 
+def prepare_case_context(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Prepare case context, ensuring source_fit_sha256 binding is present."""
+    ctx = _workflow_prepare_case_context(*args, **kwargs)
+    if isinstance(ctx, dict) and "binding" in ctx:
+        binding = ctx["binding"]
+        if isinstance(binding, dict) and "source_fit_sha256" not in binding:
+            fit = ctx.get("source_fit_receipt")
+            if fit is None:
+                fit = ctx.get("source_fit")
+            if isinstance(fit, Mapping):
+                from .validation.workflow import _canonical_bytes
+
+                binding["source_fit_sha256"] = hashlib.sha256(
+                    _canonical_bytes(fit)
+                ).hexdigest()
+    return ctx
+
+
+@dataclass(frozen=True)
+class _CasePreflight:
+    """What the preflight judged. Opaque to the engine and never serialised."""
+
+    source_path: Path
+    source_sha256: str
+    source_config: dict[str, Any]
+    sidecar_path: Path | None
+    sidecar_sha256: str | None
+    case_def: dict[str, Any]
+    reference: dict[str, Any]
+
+
+def _source_licence(
+    sidecar: Path | None, source_config: Mapping[str, Any]
+) -> str | None:
+    """The licence string intake would use: the sibling record wins over config."""
+    if sidecar is not None:
+        licence = json.loads(sidecar.read_text(encoding="utf-8")).get("licence")
+    else:
+        licence = source_config.get("licence")
+    return licence if isinstance(licence, str) else None
+
+
+def prepare_case_preflight(
+    source_path: Path | str,
+    case: Mapping[str, Any],
+    source_config: Mapping[str, Any] | None = None,
+) -> tuple[_CasePreflight, dict[str, Any]]:
+    """Judge a source for a selected case BEFORE any request model is called.
+
+    Reuses the accepted catalogue and source checks (the same sequence
+    ``prepare_case_context`` runs at run intake, which stays an independent
+    recheck): the case and version must match the installed catalogue, the
+    registry record must match the bytes, the source must be suitable, and the
+    bounded reference must build from a single consistent read. Nothing from
+    the source is returned beyond its hash: no rows, no label vocabulary and no
+    free-form licence text. Raises ``ValueError`` to refuse.
+    """
+    if not isinstance(case, Mapping):
+        raise ValueError("the selected case must be an {id, version} mapping")
+    case_id, version = case.get("id"), case.get("version")
+    config = dict(source_config) if isinstance(source_config, Mapping) else {}
+    load_cases_catalogue()
+    try:
+        case_def = get_case(str(case_id))
+    except KeyError as err:
+        raise ValueError(f"unknown case {case_id!r}: {err}") from err
+    if (
+        case_id != case_def["id"]
+        or type(version) is not int
+        or case_def.get("version") != version
+    ):
+        raise ValueError(
+            f"case {case_id!r} version {version!r} does not match the installed "
+            f"catalogue ({case_def['id']!r} version {case_def.get('version')!r})"
+        )
+    source_p = Path(source_path)
+    try:
+        measured = hashlib.sha256(source_p.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ValueError(f"cannot read source {source_p}: {exc}") from exc
+    sidecar = _sibling_manifest(source_p, config)
+    sidecar_sha: str | None = None
+    if sidecar is not None:
+        try:
+            _verify_sibling_manifest(sidecar, measured)
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from exc
+        sidecar_sha = hashlib.sha256(sidecar.read_bytes()).hexdigest()
+    licence = _source_licence(sidecar, config)
+    suitability = assess_source_suitability(
+        source_p, case_def, licence_meta=licence, expected_source_sha256=measured
+    )
+    if suitability.get("suitable") is not True:
+        raise ValueError(
+            f"source is not suitable for case {case_id!r}: "
+            f"{suitability.get('reasons', [])}"
+        )
+    reference = build_source_reference(
+        source_p, case_def=case_def, licence_meta=licence
+    )
+    if reference.get("source_sha256") != measured:
+        raise ValueError(
+            "the source changed while its reference was being built: reference "
+            f"hash {reference.get('source_sha256')} differs from measured {measured}"
+        )
+    validate_source_reference(reference, case_def)
+    handle = _CasePreflight(
+        source_path=source_p,
+        source_sha256=measured,
+        source_config=config,
+        sidecar_path=sidecar,
+        sidecar_sha256=sidecar_sha,
+        case_def=case_def,
+        reference=reference,
+    )
+    evidence = {
+        "case_id": case_def["id"],
+        "case_version": case_def["version"],
+        "source_sha256": measured,
+        "source_fit": "suitable",
+    }
+    return handle, evidence
+
+
+def check_case_target_rows(handle: _CasePreflight, n_rows: int) -> dict[str, Any]:
+    """Refuse an infeasible interpreted row count; never change it.
+
+    Reuses the accepted feasibility checks against the reference the preflight
+    built, so this needs no second read of the source. Run intake repeats the
+    check independently.
+    """
+    if not isinstance(handle, _CasePreflight):
+        raise TypeError(f"not a case preflight handle: {type(handle).__name__}")
+    if type(n_rows) is not int or isinstance(n_rows, bool) or n_rows < 1:
+        raise ValueError(f"the row count must be a positive integer, got {n_rows!r}")
+    validate_plan_satisfiability(n_rows, handle.case_def, handle.reference)
+    check_source_joint_satisfiability(n_rows, handle.case_def, handle.reference)
+    return {"case_id": handle.case_def["id"]}
+
+
+def confirm_case_source_unchanged(handle: _CasePreflight) -> None:
+    """Refuse unless the source and its registry record are still as judged."""
+    if not isinstance(handle, _CasePreflight):
+        raise TypeError(f"not a case preflight handle: {type(handle).__name__}")
+    try:
+        now = hashlib.sha256(handle.source_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ValueError(
+            f"source changed during preparation: cannot re-read it: {exc}"
+        ) from exc
+    if now != handle.source_sha256:
+        raise ValueError(
+            f"source changed during preparation: judged {handle.source_sha256}, "
+            f"now {now}"
+        )
+    sidecar = _sibling_manifest(handle.source_path, handle.source_config)
+    if (sidecar is None) != (handle.sidecar_path is None):
+        raise ValueError(
+            "source registry record appeared or vanished during preparation"
+        )
+    if sidecar is not None:
+        sidecar_now = hashlib.sha256(sidecar.read_bytes()).hexdigest()
+        if sidecar_now != handle.sidecar_sha256:
+            raise ValueError("source registry record changed during preparation")
+
+
+#: Checks the generic request step sequences for a selected case: source fit
+#: before the model, row feasibility after interpretation, and a changed-source
+#: refusal. The engine names them but never learns what they mean.
+CASE_PREPARATION_HOOKS: dict[str, Any] = {
+    "preflight": prepare_case_preflight,
+    "check_target": check_case_target_rows,
+    "confirm_unchanged": confirm_case_source_unchanged,
+}
+
+
 #: Capability implementations keyed by manifest capability id.
 CAPABILITIES: dict[str, Any] = {
     "intake": intake,
+    "case_source_assess": case_source_assess,
     "profile_source": profile_source,
+    "case_research": case_research,
     "plan": plan,
     "generate": generate,
     "validate": validate,
     "repair": repair,
+    "case_repair": case_repair,
+    "case_candidate_review": case_candidate_review,
     "image_intake": image_intake,
     "image_synthesize": image_synthesize,
     "image_validate": image_validate,
@@ -733,3 +1094,5 @@ CAPABILITIES: dict[str, Any] = {
     "package_artifact": package_artifact,
     "package_release": package_release,
 }
+
+__all__ = ["CAPABILITIES", "CASE_PREPARATION_HOOKS", "verify_case_members"]

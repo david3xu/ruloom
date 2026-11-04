@@ -81,35 +81,54 @@ def declared_release_members(manifest: Any) -> list[dict[str, Any]]:
 
 
 def selected_release_members(
-    manifest: Any, *, images_present: bool
+    manifest: Any,
+    *,
+    images_present: bool = False,
+    conditions: Mapping[str, bool] | None = None,
 ) -> list[dict[str, Any]]:
     """The release member specs active for this run, in manifest order.
 
-    Members whose ``when`` condition is unmet are absent (the imaging
-    branch produced nothing for this run, so its evidence stays out).
+    Members whose ``when`` condition is unmet are absent.
     """
+    effective_conditions = dict(conditions) if conditions is not None else {}
+    if "images_present" not in effective_conditions:
+        effective_conditions["images_present"] = images_present
     selected: list[dict[str, Any]] = []
     for spec in declared_release_members(manifest):
         condition = spec.get("when")
-        if condition == "images_present" and not images_present:
+        if condition is not None and not effective_conditions.get(condition, False):
             continue
         selected.append(spec)
     return selected
 
 
-def release_member_names(manifest: Any, *, images_present: bool) -> list[str]:
+def release_member_names(
+    manifest: Any,
+    *,
+    images_present: bool = False,
+    conditions: Mapping[str, bool] | None = None,
+) -> list[str]:
     """The ordered release file names active for this run."""
     return [
         spec["name"]
-        for spec in selected_release_members(manifest, images_present=images_present)
+        for spec in selected_release_members(
+            manifest, images_present=images_present, conditions=conditions
+        )
     ]
 
 
-def frozen_member_names(manifest: Any, *, images_present: bool) -> list[str]:
+def frozen_member_names(
+    manifest: Any,
+    *,
+    images_present: bool = False,
+    conditions: Mapping[str, bool] | None = None,
+) -> list[str]:
     """Active members whose bytes arrive via the frozen snapshot."""
     return [
         spec["name"]
-        for spec in selected_release_members(manifest, images_present=images_present)
+        for spec in selected_release_members(
+            manifest, images_present=images_present, conditions=conditions
+        )
         if spec.get("source", "frozen") == "frozen"
     ]
 
