@@ -15,11 +15,12 @@
   "docs": [
     "docs/credit-free-product.md",
     "docs/engine/core/README.md",
-    "docs/product-workflow.md"
+    "docs/product-workflow.md",
+    "docs/quality/request-capabilities-2026-11-04.md"
   ],
   "id": "F-ENGINE-CREDIT-FREE",
   "owner": "Codex",
-  "proof": "Automated synthetic fixtures only. Real local planning, repair and independent cross-provider comparison remain owner-deferred. Runtime receipts distinguish requested and reported identities and saved-plan replay; development authorship remains in Git and Datacore.",
+  "proof": "Request/policy regressions and installed-wheel fixtures execute offline. Dated live provider receipts and the retained stricter lesson-quality failure are separate evidence. Fresh live request interpretation and independent Sonnet review remain quota-blocked. Runtime receipts distinguish requested and reported identities and saved-plan replay; development authorship is recorded in Git and Datacore.",
   "required_rules": [
     "Q-MODEL-CALL-POLICY",
     "Q-MODEL-LOCAL-TRANSPORT",
@@ -31,7 +32,8 @@
     "tests/engine/test_model_policy.py",
     "tests/engine/test_request.py",
     "tests/test_local_transport.py",
-    "tests/engine/test_evidence_report.py"
+    "tests/engine/test_evidence_report.py",
+    "tests/test_wheel_cli.py"
   ],
   "title": "Credit-free call policy and human-reviewed request drafts"
 }
