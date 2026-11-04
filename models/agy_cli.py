@@ -18,7 +18,13 @@ from typing import Any
 
 import jsonschema
 
-from .base import UNKNOWN_MODEL, Completion, ModelError, Usage
+from .base import (
+    UNKNOWN_MODEL,
+    Completion,
+    ModelCapabilities,
+    ModelError,
+    Usage,
+)
 from .meta_cli import restricted_env
 from .selection import model_family, validate_selection
 
@@ -37,6 +43,16 @@ class AgyCLIModel:
     cli: str = "agy"
     timeout_s: float = 1200.0
     last_invocation: dict[str, Any] = field(default_factory=dict, init=False)
+    capabilities: ModelCapabilities = field(
+        default_factory=lambda: ModelCapabilities(
+            input_modalities=("text",),
+            structured_output=True,
+            image_media_types=(),
+            max_image_bytes=0,
+            max_image_pixels=0,
+        ),
+        init=False,
+    )
 
     def _argv(self, schema_file: str, prompt: str, log_file: str) -> list[str]:
         family = model_family("agy_cli", self.model)

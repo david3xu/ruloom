@@ -26,14 +26,15 @@ Use `--role-adapter`, `--role-family`, `--role-model` and `--role-effort` on
 `RULOOM_ROLE_PLANNER_EFFORT`. A profile role uses `adapter`, `family`, `model`
 and `reasoning_effort`.
 
-| Transport | Family | Example model | Effort |
-| --- | --- | --- | --- |
-| `agy_cli` | `claude` | `claude-opus-5-5-high` | `high` |
-| `agy_cli` | `gemini` | `gemini-4-argon-high` | `high` |
-| `agy_cli` | `gpt` | `gpt-oss-120b-medium` | `medium` |
-| `meta_cli` | `meta` | `muse-spark-1.3` | `high` |
-| `glimmer_local` | `meta` | `muse-glimmer-30B` | server dependent |
-| `azure_foundry` | `meta` | `muse-spark-1.3` | `xhigh` |
+| Transport | Family | Example model | Effort | Modalities |
+| --- | --- | --- | --- | --- |
+| `agy_cli` | `claude` | `claude-opus-5-5-high` | `high` | text |
+| `agy_cli` | `gemini` | `gemini-4-argon-high` | `high` | text |
+| `agy_cli` | `gpt` | `gpt-oss-120b-medium` | `medium` | text |
+| `meta_cli` | `meta` | `muse-spark-1.3` | `high` | text, image |
+| `glimmer_local` | `meta` | `muse-glimmer-30B` | server dependent | text |
+| `azure_foundry` | `meta` | `muse-spark-1.3` | `xhigh` | text |
+| `azure_foundry` | `meta` | `muse-glimmer-30b` | `xhigh` | text, image (unverified capacity) |
 
 The AGY aliases were listed by the installed `agy models` on 4 November
 2026. Defaults are convenience mappings, not promises about another account
@@ -55,6 +56,14 @@ own installation and credentials. No global CLI/account settings are edited.
 `offline` denies both transports. `local-only` and `requires.open_weight`
 refuse AGY; they require the existing local adapter.
 
+For vision critic roles, `meta_cli` Muse Spark 1.3 is the explicit vision
+fallback authorized by the owner. It supports structured output with image attachments
+via `complete_with_image`. The vision invocation explicitly selects `--provider meta`,
+bounds execution to 1 model step (`--max-model-steps 1`), and passes
+`--disable-shell`, `--disable-write`, `--disable-web-tools`,
+`--no-foreign-personal-context`, and `--disable-reminders`, while ordinary scalar
+`_argv` and scalar identity semantics remain strictly unchanged.
+
 For Azure Foundry, select `planner=azure_foundry`, `planner=meta`, model
 `muse-spark-1.3`, and specify `--azure-subscription-id <UUID>` (or
 `RULOOM_AZURE_SUBSCRIPTION_ID`) alongside `--role-base-url
@@ -67,10 +76,12 @@ Reasoning effort defaults to `xhigh` (`max` is refused pre-call by the backend;
 supported efforts are `minimal`, `low`, `medium`, `high`, `xhigh`).
 Completion token bounds default to 4096 tokens (up to 16384 via direct adapter
 API; the CLI currently uses the 4096 default).
-The `azure_foundry` adapter is text-only for `muse-spark-1.3`; image inputs and
-vision critic roles (`complete_with_image`) are not supported.
-Only the exact deployment name `muse-spark-1.3` is supported; Glimmer has no
-deployable SKU or capacity on Azure Foundry in eastus.
+The `azure_foundry` deployment `muse-spark-1.3` is strictly text-only; image inputs
+and vision critic roles (`complete_with_image`) are refused pre-call before Entra
+token acquisition or network dispatch.
+Multimodal protocol support for `muse-glimmer-30b` (text + base64 PNG `image_url` parts)
+is implemented on the `azure_foundry` adapter, but current retained capacity evidence reports
+no deployable SKU or capacity, and structured vision on Azure remains unverified. No automatic provider fallback is permitted.
 
 To enforce that only Azure Foundry is contacted and prohibit any Meta account
 fallback, pass `--model-policy azure-only`. Any role attempting to use a
@@ -79,6 +90,18 @@ non-Azure adapter is refused before token acquisition or invocation.
 refuse Azure Foundry because it is a remote cloud service.
 
 ## Evidence and limits
+
+Every adapter exposes immutable `.capabilities` (`models/base.py`) declaring
+input modalities, structured output support, admitted image media types, and
+positive byte and pixel ceilings. Vision capability is never inferred from a model
+name alone. `models/agy_cli.py` and `models/glimmer.py` declare text-only capabilities.
+
+Image inputs are validated generic-first via `models/image_input.py` (`read_validated_image`)
+with bounded reads before allocation, strict PNG magic, header, chunk, and CRC checks,
+plus bounded decompression consistency to protect against decompression bombs and
+malformed or trailing data. Attached image provenance records media digest, MIME type,
+byte size, and dimensions in `Completion.meta["media"]` without logging raw base64
+pixels or secrets.
 
 `models/agy_cli.py` uses an isolated temporary working directory, an
 allowlisted environment and requested deny settings. `models/selection.py`
@@ -100,12 +123,18 @@ an isolation boundary. True tool confinement remains planned.
 `models/azure_foundry.py` validates the Azure OpenAI endpoint URL and Entra
 subscription ID format before token acquisition. It validates the full returned
 JSON payload against the requested schema using `jsonschema`, ensures that the
-observed model matches the requested `muse-spark-1.3` deployment, and keeps raw
+observed model matches the requested deployment, and keeps raw
 provider completion totals in `Usage`. Azure OpenAI completion tokens reported
 by Azure Foundry already include reasoning tokens; the runner charges
 `prompt_tokens + completion_tokens` against the run budget without double-counting
 reasoning tokens. The adapter discards reasoning content blobs, bounds and sanitizes
 request IDs, and redacts raw HTTP error bodies and bearer tokens from receipts.
+
+`models/meta_cli.py` enforces restricted child invocation, allowlisted environment
+keys with credential stripping, pinned working directory, and spawn policy checks.
+For vision calls, validated CLI-reported costs are preserved in `meta["cost"]`;
+missing or malformed costs are explicitly unavailable. Scalar metadata stays unchanged.
+See [image workflow and attachment subset](vision-workflow.md).
 
 `prepare` retains selected configuration, CLI-reported identity, usage and
 invocation evidence in `request.json`. Runs keep their own invocation records.

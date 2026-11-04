@@ -764,6 +764,7 @@ def test_azure_foundry_budget_accounting_avoids_double_counting(
 def test_budgeted_client_refuses_vision_critic_pre_call(tmp_path: Path) -> None:
     from engine.core.runner import _BudgetedClient, _Runner
     from models.azure_foundry import AzureFoundryModel
+    from models.base import ModelError
 
     model = AzureFoundryModel(
         base_url="https://audit-fixture.openai.azure.com/openai/v1/",
@@ -788,7 +789,7 @@ def test_budgeted_client_refuses_vision_critic_pre_call(tmp_path: Path) -> None:
     )
     budgeted = _BudgetedClient(model, runner, "critic")
 
-    with pytest.raises(AttributeError, match="has no method 'complete_with_image'"):
+    with pytest.raises(ModelError, match="does not admit image input"):
         budgeted.complete_with_image("prompt", {}, tmp_path / "img.png")
 
     # Verify no model_call_started event was logged in runner.log
@@ -796,3 +797,13 @@ def test_budgeted_client_refuses_vision_critic_pre_call(tmp_path: Path) -> None:
         e for e in runner.log.events if e["stage"] == "model_call_started"
     ]
     assert len(started_events) == 0
+
+
+@pytest.mark.parametrize("role,expected", [("planner", True), ("critic", False)])
+def test_vision_contributor_override_preserves_scalar_default(role, expected):
+    from engine.cli import default_client
+
+    model = default_client(
+        role, {"adapter": "meta_cli", "model": "muse-spark-1.3", "contributor": False}
+    )
+    assert model.contributor is expected

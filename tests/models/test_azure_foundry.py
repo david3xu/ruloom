@@ -14,6 +14,7 @@ import subprocess
 import traceback
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -74,6 +75,7 @@ def _make_azure_response(
     extra_choices: list[Any] | None = None,
     extra_msg_fields: dict[str, Any] | None = None,
     rid: Any = "chatcmpl-test-receipt-uuid",
+    cost: dict[str, Any] | None = None,
 ) -> bytes:
     msg: dict[str, Any] = {"role": "assistant", "content": content}
     if tool_calls is not None:
@@ -113,6 +115,8 @@ def _make_azure_response(
         "choices": choices,
         "usage": usage,
     }
+    if cost is not None:
+        payload["cost"] = cost
     return json.dumps(payload).encode("utf-8")
 
 
@@ -429,7 +433,12 @@ CANARY = "DO_NOT_LOG_PROVIDER_SECRET_937"
         ),
         (
             "bad_total",
-            {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": CANARY},
+            {
+                "prompt_tokens": 10,
+                "completion_tokens": 10,
+                "reasoning_tokens": 0,
+                "total_tokens": CANARY,
+            },
         ),
         ("observed_model", {"model": CANARY}),
         ("finish_reason", {"finish_reason": CANARY}),
@@ -1069,16 +1078,27 @@ def test_acquire_entra_token_subscription_check() -> None:
             acquire_entra_token(VALID_SUB)
 
 
-# --- Text-Only Contract (B10) ---
+# --- Text-Only Contract & Vision Protocol (B10) ---
 
 
-def test_azure_foundry_text_only_no_vision_method() -> None:
+def test_azure_foundry_spark_complete_with_image_refuses_before_auth() -> None:
+    token_called = False
+
+    def dummy_token_provider(sub: str) -> str:
+        nonlocal token_called
+        token_called = True
+        return "tok"
+
     model = AzureFoundryModel(
         base_url=VALID_URL,
         subscription_id=VALID_SUB,
-        token_provider=lambda s: "tok",
+        model="muse-spark-1.3",
+        token_provider=dummy_token_provider,
     )
-    assert not hasattr(model, "complete_with_image")
+    with pytest.raises(ModelError, match="does not support image modality"):
+        model.complete_with_image("prompt", TEST_SCHEMA, "/any/path.png")
+
+    assert not token_called
 
 
 # --- Prepare & Plan Schemas Validated Offline (B11) ---
@@ -1136,3 +1156,231 @@ def test_complete_validates_actual_prepare_and_plan_schemas_offline() -> None:
     ):
         c_plan = model.complete("plan prompt", plan_schema)
         assert c_plan.data["seed"] == 42
+
+
+# --- Azure Vision (complete_with_image) Tests ---
+
+
+def _make_test_png(width: int = 2, height: int = 2) -> bytes:
+    import struct
+    import zlib
+
+    magic = b"\x89PNG\r\n\x1a\n"
+    ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
+    ihdr = struct.pack(">I4s", 13, b"IHDR") + ihdr_data + struct.pack(">I", ihdr_crc)
+    raw = b"".join(b"\x00" + (b"\xff\x00\x00\xff" * width) for _ in range(height))
+    compressed = zlib.compress(raw)
+    idat_crc = zlib.crc32(b"IDAT" + compressed) & 0xFFFFFFFF
+    idat = (
+        struct.pack(">I4s", len(compressed), b"IDAT")
+        + compressed
+        + struct.pack(">I", idat_crc)
+    )
+    iend_crc = zlib.crc32(b"IEND") & 0xFFFFFFFF
+    iend = struct.pack(">I4s", 0, b"IEND") + struct.pack(">I", iend_crc)
+    return magic + ihdr + idat + iend
+
+
+def test_azure_foundry_glimmer_complete_with_image_payload_and_media_metadata(
+    tmp_path: Path,
+) -> None:
+    img_path = tmp_path / "valid.png"
+    img_bytes = _make_test_png(width=2, height=2)
+    img_path.write_bytes(img_bytes)
+
+    captured_req: list[urllib.request.Request] = []
+
+    def mock_open(
+        self: Any, req: urllib.request.Request, **kwargs: Any
+    ) -> MockHTTPResponse:
+        captured_req.append(req)
+        return MockHTTPResponse(
+            _make_azure_response(
+                model="muse-glimmer-30b",
+                content='{"seed": 42, "n_rows": 100}',
+                prompt_tokens=300,
+                completion_tokens=500,
+                reasoning_tokens=400,
+                total_tokens=800,
+            )
+        )
+
+    model = AzureFoundryModel(
+        base_url=VALID_URL,
+        subscription_id=VALID_SUB,
+        model="muse-glimmer-30b",
+        token_provider=lambda s: "mock-bearer-token",
+    )
+
+    with patch.object(urllib.request.OpenerDirector, "open", mock_open):
+        c = model.complete_with_image("critique prompt", TEST_SCHEMA, img_path)
+
+    assert len(captured_req) == 1
+    req = captured_req[0]
+    assert req.get_header("Authorization") == "Bearer mock-bearer-token"
+    assert req.get_header("Content-type") == "application/json"
+
+    body = json.loads(req.data.decode("utf-8"))
+    assert body["model"] == "muse-glimmer-30b"
+    assert len(body["messages"]) == 1
+    assert body["messages"][0]["role"] == "user"
+    parts = body["messages"][0]["content"]
+    assert len(parts) == 2
+    assert parts[0] == {"type": "text", "text": "critique prompt"}
+    assert parts[1]["type"] == "image_url"
+    assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    from base64 import b64decode
+
+    assert b64decode(parts[1]["image_url"]["url"].split(",", 1)[1]) == img_bytes
+
+    # Verify structured answer
+    assert c.data == {"seed": 42, "n_rows": 100}
+
+    # Verify usage without double counting reasoning tokens
+    assert c.usage.input_tokens == 300
+    assert c.usage.output_tokens == 500
+    assert c.usage.reasoning_tokens == 400
+    assert c.usage.model == "muse-glimmer-30b"
+
+    # Verify media metadata has digest, dimensions, size, but NO base64 pixels
+    media = c.meta["media"]
+    assert media["media_type"] == "image/png"
+    assert media["width"] == 2
+    assert media["height"] == 2
+    assert media["size_bytes"] == len(img_bytes)
+    assert media["digest"].startswith("sha256:")
+    assert "data:image" not in str(c.meta)
+    assert "base64" not in str(c.meta)
+
+    # Verify cost is explicitly unavailable with reason
+    assert c.meta["cost"] == {
+        "status": "unavailable",
+        "reason": "transport reports no valid monetary cost",
+    }
+
+    # Verify declared protocol format distinguished from live validation
+    assert c.meta["protocol"] == {
+        "modality": "text+image_url",
+        "format": "openai_v1_chat_completions",
+    }
+
+
+def test_azure_foundry_complete_with_image_model_mismatch_refused(
+    tmp_path: Path,
+) -> None:
+    img_path = tmp_path / "img.png"
+    img_path.write_bytes(_make_test_png(2, 2))
+
+    resp = _make_azure_response(
+        model="wrong-returned-model",
+        content='{"seed": 42, "n_rows": 100}',
+    )
+    model = AzureFoundryModel(
+        base_url=VALID_URL,
+        subscription_id=VALID_SUB,
+        model="muse-glimmer-30b",
+        token_provider=lambda s: "tok",
+    )
+    with patch.object(
+        urllib.request.OpenerDirector,
+        "open",
+        return_value=MockHTTPResponse(resp),
+    ):
+        with pytest.raises(ModelError, match="Azure Foundry model mismatch"):
+            model.complete_with_image("prompt", TEST_SCHEMA, img_path)
+
+
+def test_azure_foundry_complete_with_image_tool_calls_refused(
+    tmp_path: Path,
+) -> None:
+    img_path = tmp_path / "img.png"
+    img_path.write_bytes(_make_test_png(2, 2))
+
+    resp = _make_azure_response(
+        model="muse-glimmer-30b",
+        tool_calls=[{"id": "call_1", "type": "function", "function": {"name": "foo"}}],
+    )
+    model = AzureFoundryModel(
+        base_url=VALID_URL,
+        subscription_id=VALID_SUB,
+        model="muse-glimmer-30b",
+        token_provider=lambda s: "tok",
+    )
+    with patch.object(
+        urllib.request.OpenerDirector,
+        "open",
+        return_value=MockHTTPResponse(resp),
+    ):
+        with pytest.raises(ModelError, match="unexpected tool calls"):
+            model.complete_with_image("prompt", TEST_SCHEMA, img_path)
+
+
+def test_azure_foundry_complete_with_image_corrupt_png_refused_before_network(
+    tmp_path: Path,
+) -> None:
+    img_path = tmp_path / "corrupt.png"
+    img_path.write_bytes(b"NOT_A_PNG_DATA" * 4)
+
+    model = AzureFoundryModel(
+        base_url=VALID_URL,
+        subscription_id=VALID_SUB,
+        model="muse-glimmer-30b",
+        token_provider=lambda s: "tok",
+    )
+    with patch.object(urllib.request.OpenerDirector, "open") as mock_open:
+        with pytest.raises(ModelError, match="invalid PNG magic header"):
+            model.complete_with_image("prompt", TEST_SCHEMA, img_path)
+        assert mock_open.call_count == 0
+
+
+def test_azure_foundry_complete_with_image_network_timeout_redaction(
+    tmp_path: Path,
+) -> None:
+    img_path = tmp_path / "valid.png"
+    img_path.write_bytes(_make_test_png(2, 2))
+
+    model = AzureFoundryModel(
+        base_url=VALID_URL,
+        subscription_id=VALID_SUB,
+        model="muse-glimmer-30b",
+        token_provider=lambda s: "tok",
+    )
+    with patch.object(
+        urllib.request.OpenerDirector,
+        "open",
+        side_effect=TimeoutError("request timed out"),
+    ):
+        with pytest.raises(ModelError, match="Azure Foundry network connection error"):
+            model.complete_with_image("prompt", TEST_SCHEMA, img_path)
+
+
+def test_azure_foundry_complete_with_image_reported_cost(
+    tmp_path: Path,
+) -> None:
+    img_path = tmp_path / "valid.png"
+    img_path.write_bytes(_make_test_png(2, 2))
+
+    resp = _make_azure_response(
+        model="muse-glimmer-30b",
+        content='{"seed": 42, "n_rows": 100}',
+        cost={"amount": 0.0042, "currency": "USD", "source": "azure"},
+    )
+    model = AzureFoundryModel(
+        base_url=VALID_URL,
+        subscription_id=VALID_SUB,
+        model="muse-glimmer-30b",
+        token_provider=lambda s: "tok",
+    )
+    with patch.object(
+        urllib.request.OpenerDirector,
+        "open",
+        return_value=MockHTTPResponse(resp),
+    ):
+        c = model.complete_with_image("prompt", TEST_SCHEMA, img_path)
+    assert c.meta["cost"] == {
+        "status": "reported",
+        "amount": 0.0042,
+        "currency": "USD",
+        "source": "azure",
+    }

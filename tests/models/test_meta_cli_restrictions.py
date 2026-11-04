@@ -194,8 +194,23 @@ def test_complete_with_image_records_invocation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     image = tmp_path / "synthetic.png"
-    image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
-    seen = _stub_run(monkeypatch, _answer())
+    image.write_bytes(_make_minimal_test_png())
+    usage = json.dumps(
+        {
+            "payload_type": "run.usage",
+            "payload": {
+                "models": [
+                    {
+                        "model": "muse-spark-1.3",
+                        "input_tokens": 10,
+                        "output_tokens": 2,
+                        "calls": 1,
+                    }
+                ]
+            },
+        }
+    )
+    seen = _stub_run(monkeypatch, _Proc(usage + "\n" + _answer().stdout))
     model = MuseCLIModel(allowed_root=tmp_path)
     completion = model.complete_with_image("describe", {"type": "object"}, image)
     assert seen["cwd"] == str(tmp_path)
@@ -472,3 +487,438 @@ def test_complete_records_requested_and_observed_permissions(
     assert "absolute host paths" in observed["filesystem_limit"]
     assert requested != observed
     assert PROBE_VALUE not in json.dumps(invocation)
+
+
+# --- Vision argv and invocation tests ---
+
+
+def _make_minimal_test_png(width: int = 2, height: int = 2) -> bytes:
+    import struct
+    import zlib
+
+    magic = b"\x89PNG\r\n\x1a\n"
+    ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
+    ihdr = struct.pack(">I4s", 13, b"IHDR") + ihdr_data + struct.pack(">I", ihdr_crc)
+    raw = b"".join(b"\x00" + (b"\xff\x00\x00\xff" * width) for _ in range(height))
+    compressed = zlib.compress(raw)
+    idat_crc = zlib.crc32(b"IDAT" + compressed) & 0xFFFFFFFF
+    idat = (
+        struct.pack(">I4s", len(compressed), b"IDAT")
+        + compressed
+        + struct.pack(">I", idat_crc)
+    )
+    iend_crc = zlib.crc32(b"IEND") & 0xFFFFFFFF
+    iend = struct.pack(">I4s", 0, b"IEND") + struct.pack(">I", iend_crc)
+    return magic + ihdr + idat + iend
+
+
+def test_scalar_argv_unchanged(tmp_path: Path) -> None:
+    model = MuseCLIModel(allowed_root=tmp_path)
+    schema_file = str(tmp_path / "schema.json")
+    argv = model._argv(schema_file, "scalar prompt")
+
+    assert argv == [
+        "muse",
+        "exec",
+        "--json",
+        "--effort",
+        "max",
+        "--model",
+        "muse-spark-1.3",
+        "--output-schema",
+        schema_file,
+        "--workspace",
+        str(tmp_path),
+        "--contributor-mode",
+        "on",
+        "scalar prompt",
+    ]
+    # No vision flags present on scalar call
+    assert "--provider" not in argv
+    assert "--max-model-steps" not in argv
+    assert "--disable-shell" not in argv
+    assert "--disable-write" not in argv
+    assert "--disable-web-tools" not in argv
+    assert "--no-foreign-personal-context" not in argv
+    assert "--disable-reminders" not in argv
+    assert "--image" not in argv
+
+
+def test_vision_argv_structure(tmp_path: Path) -> None:
+    model = MuseCLIModel(allowed_root=tmp_path)
+    schema_file = str(tmp_path / "schema.json")
+    img_path = tmp_path / "image.png"
+    argv = model._argv(schema_file, "vision prompt", [img_path])
+
+    assert "--provider" in argv
+    prov_idx = argv.index("--provider")
+    assert argv[prov_idx + 1] == "meta"
+
+    assert "--base-url" in argv
+    base_idx = argv.index("--base-url")
+    assert argv[base_idx + 1] == "https://api.meta.ai/v1"
+
+    assert "--preset" in argv
+    preset_idx = argv.index("--preset")
+    assert argv[preset_idx + 1] == "empty"
+
+    assert "--max-model-steps" in argv
+    step_idx = argv.index("--max-model-steps")
+    assert argv[step_idx + 1] == "1"
+
+    assert "--disable-shell" in argv
+    assert "--disable-write" in argv
+    assert "--disable-web-tools" in argv
+    assert "--no-foreign-personal-context" in argv
+    assert "--disable-reminders" in argv
+    assert "--disable-request-user-input" in argv
+
+    assert "--image" in argv
+    img_idx = argv.index("--image")
+    assert argv[img_idx + 1] == str(img_path)
+
+    assert argv[-3:] == ["--contributor-mode", "on", "vision prompt"]
+    # Verify built vision argv passes spawn policy
+    enforce_spawn_policy(argv)
+
+
+def test_complete_with_image_stages_in_private_temp_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    caller_img = tmp_path / "mutable_caller.png"
+    caller_img.write_bytes(_make_minimal_test_png(2, 2))
+
+    captured_argv: list[str] = []
+    expected_bytes = caller_img.read_bytes()
+
+    def mock_run(argv: list[str], **kwargs: Any) -> _Proc:
+        captured_argv.extend(argv)
+        caller_img.write_bytes(b"changed by caller after validation")
+        staged = Path(argv[argv.index("--image") + 1])
+        assert staged.read_bytes() == expected_bytes
+        assert staged.stat().st_mode & 0o777 == 0o400
+        assert staged.parent.stat().st_mode & 0o777 == 0o700
+        usage_line = json.dumps(
+            {
+                "payload_type": "run.usage",
+                "payload": {
+                    "kind": "run_usage",
+                    "models": [
+                        {
+                            "model": "muse-spark-1.3",
+                            "input_tokens": 10,
+                            "output_tokens": 5,
+                            "calls": 1,
+                        }
+                    ],
+                },
+            }
+        )
+        term_line = _terminal_event(json.dumps({"seed": 1}))
+        return _Proc(stdout=f"{usage_line}\n{term_line}")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    model = MuseCLIModel(model="muse-spark-1.3")
+    model.complete_with_image("prompt", {"type": "object"}, caller_img)
+
+    assert "--image" in captured_argv
+    passed_path_str = captured_argv[captured_argv.index("--image") + 1]
+    passed_path = Path(passed_path_str)
+
+    # Must be staged into a private temp directory, NOT caller's path
+    assert passed_path != caller_img
+    assert "ruloom-staged-img-" in str(passed_path)
+
+    assert not passed_path.exists()
+
+
+def test_complete_with_image_refuses_unverified_model(tmp_path: Path) -> None:
+    img = tmp_path / "img.png"
+    img.write_bytes(_make_minimal_test_png(2, 2))
+
+    model = MuseCLIModel(model="arbitrary-unverified-model")
+    with pytest.raises(ModelError, match="does not support vision capability"):
+        model.complete_with_image("prompt", {"type": "object"}, img)
+
+
+def test_vision_argv_spawn_policy_refuses_injected_flags(tmp_path: Path) -> None:
+    model = MuseCLIModel()
+    schema_file = str(tmp_path / "schema.json")
+    img_path = tmp_path / "image.png"
+    argv = model._argv(schema_file, "vision prompt", [img_path])
+
+    # Injecting denied capability option before prompt
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        enforce_spawn_policy(argv[:-3] + ["--tool", "bash"] + argv[-3:])
+
+    with pytest.raises(ModelError, match="outside the permission policy"):
+        enforce_spawn_policy(argv[:-3] + ["--dispatch"] + argv[-3:])
+
+
+def test_complete_with_image_validates_png_before_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = MuseCLIModel()
+    spawn_called = False
+
+    def mock_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal spawn_called
+        spawn_called = True
+        return _answer()
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    corrupt_png = tmp_path / "bad.png"
+    corrupt_png.write_bytes(b"CORRUPT_NOT_PNG" * 4)
+
+    with pytest.raises(ModelError, match="invalid PNG magic header"):
+        model.complete_with_image("prompt", {"type": "object"}, corrupt_png)
+
+    assert not spawn_called
+
+
+def test_complete_with_image_records_cost_and_media_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    img_path = tmp_path / "test.png"
+    img_bytes = _make_minimal_test_png(width=2, height=2)
+    img_path.write_bytes(img_bytes)
+
+    usage_line = json.dumps(
+        {
+            "payload_type": "run.usage",
+            "payload": {
+                "kind": "run_usage",
+                "models": [
+                    {
+                        "model": "muse-spark-1.3",
+                        "input_tokens": 150,
+                        "output_tokens": 50,
+                        "calls": 1,
+                    }
+                ],
+                "cost": {"amount": 0.042, "currency": "USD", "source": "cli"},
+            },
+        }
+    )
+    terminal_line = _terminal_event(json.dumps({"seed": 777}))
+
+    proc = _Proc(stdout=f"{usage_line}\n{terminal_line}")
+    _stub_run(monkeypatch, proc)
+
+    model = MuseCLIModel()
+    completion = model.complete_with_image("critique", {"type": "object"}, img_path)
+
+    assert completion.data == {"seed": 777}
+    assert completion.meta["cost"] == {
+        "status": "reported",
+        "amount": 0.042,
+        "currency": "USD",
+        "source": "cli",
+    }
+
+    media = completion.meta["media"]
+    assert media["media_type"] == "image/png"
+    assert media["width"] == 2
+    assert media["height"] == 2
+    assert media["size_bytes"] == len(img_bytes)
+    assert media["digest"].startswith("sha256:")
+    assert "data:image" not in str(completion.meta)
+
+    invocation = completion.meta["invocation"]
+    assert invocation["media"]["digest"] == media["digest"]
+    assert invocation["media"]["width"] == 2
+
+
+def test_complete_with_image_unavailable_cost_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    img_path = tmp_path / "test.png"
+    img_path.write_bytes(_make_minimal_test_png(2, 2))
+
+    usage_line = json.dumps(
+        {
+            "payload_type": "run.usage",
+            "payload": {
+                "kind": "run_usage",
+                "models": [
+                    {
+                        "model": "muse-spark-1.3",
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "calls": 1,
+                    }
+                ],
+            },
+        }
+    )
+    terminal_line = _terminal_event(json.dumps({"seed": 888}))
+
+    proc = _Proc(stdout=f"{usage_line}\n{terminal_line}")
+    _stub_run(monkeypatch, proc)
+
+    model = MuseCLIModel()
+    completion = model.complete_with_image("critique", {"type": "object"}, img_path)
+    assert completion.meta["cost"] == {
+        "status": "unavailable",
+        "reason": "transport reports no valid monetary cost",
+    }
+
+
+def test_complete_with_image_stderr_redacted_on_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    img_path = tmp_path / "test.png"
+    img_path.write_bytes(_make_minimal_test_png(2, 2))
+
+    secret = "SUPER_SECRET_TOKEN_DO_NOT_LEAK"
+    proc = _Proc()
+    proc.returncode = 1
+    proc.stderr = f"Sensitive stderr output: {secret}"
+
+    _stub_run(monkeypatch, proc)
+
+    model = MuseCLIModel()
+    with pytest.raises(ModelError) as exc_info:
+        model.complete_with_image("prompt", {"type": "object"}, img_path)
+
+    msg = str(exc_info.value)
+    # Generic error; secret stderr is redacted
+    assert msg == "muse exec vision call failed with exit code 1"
+    assert secret not in msg
+
+
+def test_parse_vision_refuses_model_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    img_path = tmp_path / "test.png"
+    img_path.write_bytes(_make_minimal_test_png(2, 2))
+
+    usage_line = json.dumps(
+        {
+            "payload_type": "run.usage",
+            "payload": {
+                "kind": "run_usage",
+                "models": [
+                    {
+                        "model": "unexpected-model",
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "calls": 1,
+                    }
+                ],
+            },
+        }
+    )
+    terminal_line = _terminal_event(json.dumps({"seed": 1}))
+    _stub_run(monkeypatch, _Proc(stdout=f"{usage_line}\n{terminal_line}"))
+
+    model = MuseCLIModel(model="muse-spark-1.3")
+    with pytest.raises(ModelError, match="muse exec vision model mismatch"):
+        model.complete_with_image("prompt", {"type": "object"}, img_path)
+
+
+def test_parse_vision_refuses_negative_or_missing_counters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    img_path = tmp_path / "test.png"
+    img_path.write_bytes(_make_minimal_test_png(2, 2))
+
+    # Missing calls counter
+    usage_line = json.dumps(
+        {
+            "payload_type": "run.usage",
+            "payload": {
+                "kind": "run_usage",
+                "models": [
+                    {
+                        "model": "muse-spark-1.3",
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                    }
+                ],
+            },
+        }
+    )
+    terminal_line = _terminal_event(json.dumps({"seed": 1}))
+    _stub_run(monkeypatch, _Proc(stdout=f"{usage_line}\n{terminal_line}"))
+
+    model = MuseCLIModel(model="muse-spark-1.3")
+    with pytest.raises(
+        ModelError, match="missing or negative token usage counter 'calls'"
+    ):
+        model.complete_with_image("prompt", {"type": "object"}, img_path)
+
+
+def test_parse_vision_refuses_schema_violation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    img_path = tmp_path / "test.png"
+    img_path.write_bytes(_make_minimal_test_png(2, 2))
+
+    usage_line = json.dumps(
+        {
+            "payload_type": "run.usage",
+            "payload": {
+                "kind": "run_usage",
+                "models": [
+                    {
+                        "model": "muse-spark-1.3",
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "calls": 1,
+                    }
+                ],
+            },
+        }
+    )
+    # Output fails schema requirement 'seed' integer
+    terminal_line = _terminal_event(json.dumps({"seed": "not-an-integer"}))
+    _stub_run(monkeypatch, _Proc(stdout=f"{usage_line}\n{terminal_line}"))
+
+    model = MuseCLIModel(model="muse-spark-1.3")
+    schema = {
+        "type": "object",
+        "properties": {"seed": {"type": "integer"}},
+        "required": ["seed"],
+    }
+    with pytest.raises(ModelError, match="vision output violates requested schema"):
+        model.complete_with_image("prompt", schema, img_path)
+
+
+@pytest.mark.parametrize(
+    "wire",
+    [
+        '{"payload_type":"structured","payload":{"structuredOutput":{"note":"one","note":"two"}}}',
+        '{"payload_type":"structured","payload":{"structuredOutput":{"value":NaN}}}',
+    ],
+)
+def test_vision_rejects_invalid_json_in_event_envelope(wire: str) -> None:
+    with pytest.raises(ModelError, match="malformed JSONL"):
+        MuseCLIModel()._parse_vision(_Proc(wire), {"type": "object"})
+
+
+def test_vision_schema_error_redacts_rejected_value() -> None:
+    secret = "provider-error-canary-do-not-echo"
+    wire = _terminal_event(json.dumps({"note": secret}))
+    with pytest.raises(ModelError, match="violates requested schema") as err:
+        MuseCLIModel()._parse_vision(
+            _Proc(wire), {"type": "object", "properties": {"note": {"type": "integer"}}}
+        )
+    assert secret not in str(err.value)
+
+
+def test_invalid_vision_schema_refused_before_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image = tmp_path / "synthetic.png"
+    image.write_bytes(_make_minimal_test_png())
+    called = []
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: called.append(True))
+    with pytest.raises(ModelError, match="invalid vision output schema"):
+        MuseCLIModel().complete_with_image(
+            "review", {"type": "invented-schema-type"}, image
+        )
+    assert not called

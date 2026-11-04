@@ -1,4 +1,4 @@
-"""Azure AI Foundry structured-model adapter for Meta Muse Spark 1.3.
+"""Azure AI Foundry structured-model adapter for Meta Muse models.
 
 The adapter POSTs ``{base_url}chat/completions`` against an explicit verified
 Azure OpenAI v1 endpoint (``https://<account>.openai.azure.com/openai/v1/``)
@@ -17,6 +17,8 @@ authorization headers or bearer tokens.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import http.client
 import json
 import math
@@ -27,15 +29,48 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 import jsonschema
 
-from .base import Completion, ModelError, StructuredModel, Usage
+from .base import (
+    Completion,
+    ModelCapabilities,
+    ModelError,
+    StructuredModel,
+    Usage,
+    monetary_cost,
+    structured_image_schema,
+)
+from .image_input import read_validated_image
 from .local_transport import _NoRedirect
 
-#: Exact model identifier supported by this Azure deployment slice.
+#: Declared capabilities per supported Azure Foundry model.
+#: Spark on Azure remains text-only; Glimmer multimodal protocol is implemented
+#: with declared protocol format and honest metadata regarding unverified capacity.
+AZURE_MODEL_CAPABILITIES: dict[str, ModelCapabilities] = {
+    "muse-spark-1.3": ModelCapabilities(
+        input_modalities=("text",),
+        structured_output=True,
+        image_media_types=(),
+        max_image_bytes=0,
+        max_image_pixels=0,
+    ),
+    "muse-glimmer-30b": ModelCapabilities(
+        input_modalities=("text", "image"),
+        structured_output=True,
+        image_media_types=("image/png",),
+        max_image_bytes=4 * 1024 * 1024,
+        max_image_pixels=4_000_000,
+    ),
+}
+
+#: Exact default model identifier supported by this Azure deployment slice.
 SUPPORTED_MODEL = "muse-spark-1.3"
+
+#: Set of supported models for Azure Foundry.
+SUPPORTED_MODELS = frozenset(AZURE_MODEL_CAPABILITIES.keys())
 
 #: Default and maximum completion token bounds.
 DEFAULT_MAX_COMPLETION_TOKENS = 4096
@@ -292,7 +327,7 @@ def acquire_entra_token(
 
 
 class AzureFoundryModel(StructuredModel):
-    """Structured model adapter for Meta Muse Spark 1.3 on Azure AI Foundry."""
+    """Structured model adapter for Meta Muse models on Azure AI Foundry."""
 
     def __init__(
         self,
@@ -307,11 +342,12 @@ class AzureFoundryModel(StructuredModel):
         self.base_url = validate_azure_base_url(base_url)
         self.subscription_id = validate_subscription_id(subscription_id)
 
-        if model != SUPPORTED_MODEL:
+        if model not in SUPPORTED_MODELS:
             raise ValueError(
-                f"unsupported azure_foundry model {model!r}; this slice supports {SUPPORTED_MODEL!r} only"
+                f"unsupported azure_foundry model {model!r}; supported models: {sorted(SUPPORTED_MODELS)}"
             )
         self.model = model
+        self.capabilities = AZURE_MODEL_CAPABILITIES[model]
 
         if effort == "max":
             raise ValueError(
@@ -343,12 +379,14 @@ class AzureFoundryModel(StructuredModel):
             return self._token_provider(self.subscription_id)
         return acquire_entra_token(self.subscription_id)
 
-    def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
-        """Call Azure Foundry chat completions and return validated Completion.
-
-        Raises ModelError if authentication fails, network fails, response
-        violates schema, finish reason is not 'stop', or model mismatch occurs.
-        """
+    def _call_endpoint(
+        self,
+        messages: list[dict[str, Any]],
+        schema: Mapping[str, Any],
+        *,
+        vision: bool = False,
+    ) -> Completion:
+        """Internal dispatch to Azure Foundry chat completions endpoint."""
         if not isinstance(schema, Mapping):
             raise ModelError(
                 f"schema must be a Mapping, got {type(schema).__name__}"
@@ -363,7 +401,7 @@ class AzureFoundryModel(StructuredModel):
 
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "reasoning_effort": self.effort,
             "max_completion_tokens": self.max_completion_tokens,
             "stream": False,
@@ -419,7 +457,17 @@ class AzureFoundryModel(StructuredModel):
         elapsed = time.monotonic() - t0
 
         try:
-            resp_dict = json.loads(raw_bytes.decode("utf-8"))
+            resp_dict = json.loads(
+                raw_bytes.decode("utf-8"),
+                **(
+                    {
+                        "parse_constant": _reject_constant,
+                        "object_pairs_hook": _reject_duplicates,
+                    }
+                    if vision
+                    else {}
+                ),
+            )
         except Exception:
             raise ModelError("Azure Foundry returned invalid JSON response") from None
 
@@ -507,6 +555,12 @@ class AzureFoundryModel(StructuredModel):
             raise ModelError(
                 f"Azure Foundry output does not conform to requested schema at {path_str}"
             ) from None
+        except Exception:
+            if vision:
+                raise ModelError(
+                    "Azure Foundry vision response schema could not be resolved"
+                ) from None
+            raise
 
         # Token usage validation
         usage_raw = resp_dict.get("usage")
@@ -588,7 +642,7 @@ class AzureFoundryModel(StructuredModel):
         request_id = _sanitize_request_id(resp_dict.get("id"))
 
         # Reasoning content blob is discarded immediately and not retained
-        meta = {
+        meta: dict[str, Any] = {
             "requested_model": self.model,
             "deployment": self.model,
             "model": observed_model,
@@ -600,5 +654,79 @@ class AzureFoundryModel(StructuredModel):
             "request_id": request_id,
             "timing_s": elapsed,
         }
+        if "cost" in resp_dict or "cost" in usage_raw:
+            meta["_raw_cost"] = resp_dict.get("cost") or usage_raw.get("cost")
 
         return Completion(data=data, usage=usage, meta=meta)
+
+    def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
+        """Call Azure Foundry chat completions and return validated Completion.
+
+        Raises ModelError if authentication fails, network fails, response
+        violates schema, finish reason is not 'stop', or model mismatch occurs.
+        """
+        messages = [{"role": "user", "content": prompt}]
+        completion = self._call_endpoint(messages=messages, schema=schema)
+        completion.meta.pop("_raw_cost", None)
+        return completion
+
+    def complete_with_image(
+        self,
+        prompt: str,
+        schema: Mapping[str, Any],
+        image_path: str | Path,
+    ) -> Completion:
+        """Call Azure Foundry with an attached image and return validated Completion.
+
+        Spark on Azure remains text-only; an image call on muse-spark-1.3 refuses
+        BEFORE token acquisition or any network dispatch.
+        """
+        if not self.capabilities.supports_image:
+            raise ModelError(
+                f"Azure Foundry model {self.model!r} does not support image modality"
+            )
+
+        schema = structured_image_schema(schema)
+        payload_bytes, media_type, width, height = read_validated_image(
+            image_path, self.capabilities
+        )
+        digest = hashlib.sha256(payload_bytes).hexdigest()
+        b64_img = base64.b64encode(payload_bytes).decode("ascii")
+        data_url = f"data:{media_type};base64,{b64_img}"
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": data_url},
+                    },
+                ],
+            }
+        ]
+
+        completion = self._call_endpoint(messages=messages, schema=schema, vision=True)
+
+        # Attach media provenance without raw base64 pixels
+        completion.meta["media"] = {
+            "digest": f"sha256:{digest}",
+            "media_type": media_type,
+            "size_bytes": len(payload_bytes),
+            "width": width,
+            "height": height,
+        }
+
+        # Cost: explicitly unavailable with reason unless actual cost present in response
+        raw_cost = completion.meta.pop("_raw_cost", None)
+        completion.meta["cost"] = monetary_cost(raw_cost, source="azure")
+        completion.meta["adapter"] = "azure_foundry"
+        completion.meta["evidence_kind"] = "provider_reported"
+
+        # Declared protocol specification distinguished from live validation
+        completion.meta["protocol"] = {
+            "modality": "text+image_url",
+            "format": "openai_v1_chat_completions",
+        }
+        return completion

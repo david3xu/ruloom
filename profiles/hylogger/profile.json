@@ -46,6 +46,7 @@
     },
     "image_synthesize": {
       "impl": "hylogger.imaging.generate",
+      "reads_raw_source": false,
       "stage": "image_synthesize"
     },
     "image_validate": {
@@ -610,6 +611,11 @@
       },
       {
         "name": "image-validation.json",
+        "required": true,
+        "when": "images_present"
+      },
+      {
+        "name": "vision-advisory.json",
         "required": true,
         "when": "images_present"
       },

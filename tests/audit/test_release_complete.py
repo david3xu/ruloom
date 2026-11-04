@@ -25,12 +25,13 @@ from engine.artifacts.consumer import (
 )
 from engine.core.manifest import load_manifest
 from engine.core.runner import EXIT_OK, execute
-from models.base import Completion, Usage
+from models.base import Completion, ModelCapabilities, Usage
 from profiles.hylogger import capabilities as hy_capabilities
 from profiles.hylogger.generation.plan import provider_schema
 from profiles.hylogger.imaging.critic import CRITIC_SCHEMA
 from profiles.hylogger.imaging.generate import make_fixture_png
 from profiles.tabular.capabilities import CAPABILITIES as TAB_CAPABILITIES
+from tests.profiles.hylogger.test_critic import vision_answer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TAB_MANIFEST = load_manifest(REPO_ROOT / "profiles" / "tabular" / "profile.json")
@@ -83,6 +84,13 @@ class FakePlanner:
 class FakeVisionClient:
     """A vision-role double returning one queued advisory note."""
 
+    capabilities = ModelCapabilities(
+        input_modalities=("text", "image"),
+        image_media_types=("image/png",),
+        max_image_bytes=4194304,
+        max_image_pixels=4000000,
+    )
+
     def __init__(self, note: str = "looks plausibly banded") -> None:
         self.note = note
 
@@ -91,9 +99,14 @@ class FakeVisionClient:
     ) -> Completion:
         assert dict(schema) == CRITIC_SCHEMA
         return Completion(
-            data={"note": self.note},
+            data=vision_answer(prompt, self.note),
             usage=Usage(model="fake-vision", input_tokens=7, output_tokens=3, calls=1),
-            meta={"model": "fake-vision"},
+            meta={
+                "model": "fake-vision",
+                "provider": "fixture",
+                "adapter": "injected",
+                "evidence_kind": "injected",
+            },
         )
 
 

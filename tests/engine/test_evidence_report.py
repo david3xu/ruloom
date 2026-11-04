@@ -316,3 +316,52 @@ def test_failed_run_writes_report_without_release(
     assert "Decision: none" in text
     assert "mean_value" in text
     assert not (artifact / "release.zip").exists()
+
+
+def test_report_renders_attached_image_metadata() -> None:
+    bundle = _evidence()
+    bundle["model_invocations"] = [
+        {
+            "role": "critic",
+            "adapter": "meta_cli",
+            "model": "muse-spark-1.3",
+            "returned_model": "muse-spark-1.3",
+            "attached_image": {
+                "artifact_sha256": "img-sha-abc-123",
+                "produced_by": "image_synthesize",
+                "media_type": "image/png",
+                "bytes": 4096,
+                "width": 64,
+                "height": 32,
+            },
+        }
+    ]
+    bundle["images_present"] = True
+    text = render_evidence_report(bundle)
+    assert "Attached image artifact for critic:" in text
+    assert "img-sha-abc-123" in text
+    assert "4096 bytes" in text
+    assert "64x32" in text
+    assert "image/png" in text
+    assert "image_synthesize" in text
+
+
+def test_image_unavailability_is_visible_without_truncated_payload():
+    evidence = _evidence()
+    evidence["advisories"] = [
+        {
+            "name": "vision_note",
+            "payload": {
+                "version": 1,
+                "receipt_sha256": "a" * 64,
+                "status": "unavailable",
+                "evidence_kind": "not_dispatched",
+                "provider": None,
+                "model": None,
+                "cost": {"status": "unavailable", "reason": "offline policy"},
+            },
+        }
+    ]
+    rendered = render_evidence_report(evidence)
+    assert "Image advisory status: unavailable" in rendered
+    assert "evidence: not_dispatched" in rendered
