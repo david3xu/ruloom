@@ -213,9 +213,11 @@ def test_complete_with_image_records_invocation(
     seen = _stub_run(monkeypatch, _Proc(usage + "\n" + _answer().stdout))
     model = MuseCLIModel(allowed_root=tmp_path)
     completion = model.complete_with_image("describe", {"type": "object"}, image)
-    assert seen["cwd"] == str(tmp_path)
+    staged = Path(seen["argv"][seen["argv"].index("--image") + 1])
+    assert seen["cwd"] == str(staged.parent)
+    assert seen["cwd"] != str(tmp_path)
     assert "--image" in seen["argv"]
-    assert model.last_invocation["cwd"] == str(tmp_path)
+    assert model.last_invocation["cwd"] == str(staged.parent)
     assert completion.meta["invocation"] == model.last_invocation
 
 
@@ -597,6 +599,12 @@ def test_complete_with_image_stages_in_private_temp_directory(
         caller_img.write_bytes(b"changed by caller after validation")
         staged = Path(argv[argv.index("--image") + 1])
         assert staged.read_bytes() == expected_bytes
+        assert kwargs["cwd"] == str(staged.parent)
+        assert argv[argv.index("--workspace") + 1] == str(staged.parent)
+        assert set(p.name for p in staged.parent.iterdir()) == {
+            staged.name,
+            "response-schema.json",
+        }
         assert staged.stat().st_mode & 0o777 == 0o400
         assert staged.parent.stat().st_mode & 0o777 == 0o700
         usage_line = json.dumps(
