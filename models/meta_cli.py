@@ -392,8 +392,8 @@ class MuseCLIModel:
         ]
         for image_path in image_paths:
             argv += ["--image", str(image_path)]
-        if self.allowed_root is not None:
-            argv += ["--workspace", str(self.allowed_root)]
+        # Vision context is restricted to the staged image/schema workspace.
+        argv += ["--workspace", str(Path(image_paths[0]).parent)]
         argv += ["--contributor-mode", "on" if self.contributor else "off", prompt]
         return argv
 
@@ -449,18 +449,20 @@ class MuseCLIModel:
         except OSError as exc:
             raise ModelError(f"muse exec failed to start: {exc}") from exc
 
-    def _run_vision(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
+    def _run_vision(
+        self, argv: list[str], workspace: Path
+    ) -> subprocess.CompletedProcess[str]:
         """Run vision child invocation with generic/redacted errors."""
         enforce_spawn_policy(list(argv))
         env = restricted_env()
-        cwd = resolve_cwd(self.allowed_root)
+        cwd = str(workspace)
         self.last_invocation = {
             "argv": list(argv),
             "cwd": cwd,
             "env_keys": sorted(env),
             "contributor": self.contributor,
             "model": self.model,
-            "requested_permissions": requested_permissions(self.allowed_root),
+            "requested_permissions": requested_permissions(workspace),
             "observed_permissions": observed_permissions(cwd, sorted(env)),
         }
         try:
@@ -531,16 +533,10 @@ class MuseCLIModel:
             except OSError:
                 pass
 
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", delete=False
-            ) as handle:
-                json.dump(schema_dict, handle)
-                schema_file = handle.name
-            try:
-                argv = self._argv(schema_file, prompt, [staged_path])
-                proc = self._run_vision(argv)
-            finally:
-                Path(schema_file).unlink(missing_ok=True)
+            schema_file = Path(staged_dir) / "response-schema.json"
+            schema_file.write_text(json.dumps(schema_dict), encoding="utf-8")
+            argv = self._argv(str(schema_file), prompt, [staged_path])
+            proc = self._run_vision(argv, Path(staged_dir))
 
             completion = self._parse_vision(proc, schema_dict)
 

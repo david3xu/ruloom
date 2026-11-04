@@ -59,7 +59,8 @@ ruloom run SOURCE.csv --profile hylogger --images EXPORTED_PNG_DIR \
 
 The critic composition disables contributor mode for this seat. Vision uses an
 explicit Meta endpoint and empty tool preset, with shell/write/web/context tools
-disabled and one model step. Scalar invocation behavior stays unchanged. Authentication
+disabled and one model step. Its working directory contains only the staged
+synthetic PNG and response schema. Scalar invocation behavior stays unchanged. Authentication
 continues through the existing provider configuration; do not put credentials in
 commands, prompts or release evidence. See [model configuration](model-families.md).
 
