@@ -33,6 +33,7 @@ and `reasoning_effort`.
 | `agy_cli` | `gpt` | `gpt-oss-120b-medium` | `medium` |
 | `meta_cli` | `meta` | `muse-spark-1.3` | `high` |
 | `glimmer_local` | `meta` | `muse-glimmer-30B` | server dependent |
+| `azure_foundry` | `meta` | `muse-spark-1.3` | `xhigh` |
 
 The AGY aliases were listed by the installed `agy models` on 4 November
 2026. Defaults are convenience mappings, not promises about another account
@@ -48,11 +49,34 @@ ruloom run SOURCE.csv --profile tabular --max-attempts 2 \
   --role-model planner=claude-opus-5-5-high --role-effort planner=high
 ```
 
-For Muse, select `planner=meta_cli`, `planner=meta`, the intended Muse model
+For Muse via Meta CLI, select `planner=meta_cli`, `planner=meta`, the intended Muse model
 and its effort. AGY authentication and quotas stay with AGY; Muse uses its
 own installation and credentials. No global CLI/account settings are edited.
 `offline` denies both transports. `local-only` and `requires.open_weight`
 refuse AGY; they require the existing local adapter.
+
+For Azure Foundry, select `planner=azure_foundry`, `planner=meta`, model
+`muse-spark-1.3`, and specify `--azure-subscription-id <UUID>` (or
+`RULOOM_AZURE_SUBSCRIPTION_ID`) alongside `--role-base-url
+planner=https://<account>.openai.azure.com/openai/v1/` (or
+`RULOOM_ROLE_PLANNER_BASE_URL`). Azure Foundry requires Entra ID bearer tokens
+acquired via `az account get-access-token` scoped to `--resource
+https://cognitiveservices.azure.com` and the explicit subscription UUID.
+No ambient default account, API keys, custom ports, or redirects are permitted.
+Reasoning effort defaults to `xhigh` (`max` is refused pre-call by the backend;
+supported efforts are `minimal`, `low`, `medium`, `high`, `xhigh`).
+Completion token bounds default to 4096 tokens (up to 16384 via direct adapter
+API; the CLI currently uses the 4096 default).
+The `azure_foundry` adapter is text-only for `muse-spark-1.3`; image inputs and
+vision critic roles (`complete_with_image`) are not supported.
+Only the exact deployment name `muse-spark-1.3` is supported; Glimmer has no
+deployable SKU or capacity on Azure Foundry in eastus.
+
+To enforce that only Azure Foundry is contacted and prohibit any Meta account
+fallback, pass `--model-policy azure-only`. Any role attempting to use a
+non-Azure adapter is refused before token acquisition or invocation.
+`offline` denies Azure Foundry, while `local-only` and `requires.open_weight`
+refuse Azure Foundry because it is a remote cloud service.
 
 ## Evidence and limits
 
@@ -72,6 +96,16 @@ it refuses responses using anything except the `finish` schema-finalisation
 tool. That is a **post-call audit**, not prevention of a tool's effects or
 filesystem confinement. Do not send private rows or treat this adapter as
 an isolation boundary. True tool confinement remains planned.
+
+`models/azure_foundry.py` validates the Azure OpenAI endpoint URL and Entra
+subscription ID format before token acquisition. It validates the full returned
+JSON payload against the requested schema using `jsonschema`, ensures that the
+observed model matches the requested `muse-spark-1.3` deployment, and keeps raw
+provider completion totals in `Usage`. Azure OpenAI completion tokens reported
+by Azure Foundry already include reasoning tokens; the runner charges
+`prompt_tokens + completion_tokens` against the run budget without double-counting
+reasoning tokens. The adapter discards reasoning content blobs, bounds and sanitizes
+request IDs, and redacts raw HTTP error bodies and bearer tokens from receipts.
 
 `prepare` retains selected configuration, CLI-reported identity, usage and
 invocation evidence in `request.json`. Runs keep their own invocation records.

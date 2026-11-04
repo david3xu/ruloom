@@ -108,18 +108,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="ROLE=ADAPTER",
-        help="explicit adapter: meta_cli, agy_cli or glimmer_local (repeatable)",
+        help="explicit adapter: meta_cli, agy_cli, glimmer_local or azure_foundry (repeatable)",
     )
     run.add_argument(
         "--role-family",
         action="append",
         default=[],
         metavar="ROLE=FAMILY",
-        help="explicit family: claude, gemini or gpt via agy_cli; meta via Muse/local",
+        help="explicit family: claude, gemini or gpt via agy_cli; meta via Muse/local/azure",
+    )
+    run.add_argument(
+        "--azure-subscription-id",
+        "--subscription",
+        default=None,
+        metavar="UUID",
+        help="explicit Azure subscription ID (canonical UUID)",
     )
     run.add_argument(
         "--model-policy",
-        choices=("hosted", "offline", "local-only"),
+        choices=("hosted", "offline", "local-only", "azure-only"),
         default="hosted",
         help="model-call policy, including repair and critique",
     )
@@ -138,13 +145,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", required=True, help="new directory for draft and receipt"
     )
     prepare.add_argument(
-        "--model-policy", choices=("hosted", "local-only"), default="local-only"
+        "--model-policy",
+        choices=("hosted", "local-only", "azure-only"),
+        default="local-only",
     )
     prepare.add_argument("--role-model", action="append", default=[])
     prepare.add_argument("--role-effort", action="append", default=[])
     prepare.add_argument("--role-base-url", action="append", default=[])
     prepare.add_argument("--role-adapter", action="append", default=[])
     prepare.add_argument("--role-family", action="append", default=[])
+    prepare.add_argument(
+        "--azure-subscription-id",
+        "--subscription",
+        default=None,
+        metavar="UUID",
+        help="explicit Azure subscription ID (canonical UUID)",
+    )
     return parser
 
 
@@ -171,6 +187,7 @@ DEFAULT_MODEL_BY_ADAPTER = {
     "meta_cli": "muse-spark-1.3",
     "glimmer_local": "muse-glimmer-30B",
     "agy_cli": "claude-opus-5-5-high",
+    "azure_foundry": "muse-spark-1.3",
 }
 DEFAULT_EFFORT = "max"
 
@@ -212,6 +229,7 @@ def resolve_role_bindings(
     cli_base_urls: Sequence[str] | None = None,
     cli_adapters: Sequence[str] | None = None,
     cli_families: Sequence[str] | None = None,
+    cli_subscription_id: str | None = None,
     env: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, str]]]:
     """Apply CLI > env > profile > default precedence to every role.
@@ -282,6 +300,7 @@ def resolve_role_bindings(
                 "glimmer_local": "local",
                 "meta_cli": "meta-api",
                 "agy_cli": "agy",
+                "azure_foundry": "azure",
             }[adapter]
 
         if role in cli_model_map:
@@ -314,11 +333,13 @@ def resolve_role_bindings(
             role_sources["reasoning_effort"] = SOURCE_PROFILE
         else:
             base["reasoning_effort"] = (
-                "high" if adapter == "agy_cli" else DEFAULT_EFFORT
+                "xhigh"
+                if adapter == "azure_foundry"
+                else ("high" if adapter == "agy_cli" else DEFAULT_EFFORT)
             )
             role_sources["reasoning_effort"] = SOURCE_DEFAULT
 
-        if adapter == "glimmer_local":
+        if adapter in {"glimmer_local", "azure_foundry"}:
             if role in cli_base_url_map:
                 base["base_url"] = cli_base_url_map[role]
                 role_sources["base_url"] = SOURCE_CLI
@@ -327,17 +348,55 @@ def resolve_role_bindings(
                 role_sources["base_url"] = SOURCE_ENV
             elif isinstance(binding, Mapping) and binding.get("base_url"):
                 role_sources["base_url"] = SOURCE_PROFILE
-            else:
+            elif adapter == "glimmer_local":
                 from models.glimmer import DEFAULT_BASE_URL
 
                 base["base_url"] = DEFAULT_BASE_URL
                 role_sources["base_url"] = SOURCE_DEFAULT
+            else:
+                raise ManifestError(
+                    f"role {role!r} bound to adapter 'azure_foundry' requires explicit base_url"
+                )
+            if adapter == "azure_foundry":
+                from models.azure_foundry import validate_azure_base_url
+
+                try:
+                    base["base_url"] = validate_azure_base_url(base["base_url"])
+                except ValueError as exc:
+                    raise ManifestError(str(exc)) from exc
+
+        if adapter == "azure_foundry":
+            sub_env = "RULOOM_AZURE_SUBSCRIPTION_ID"
+            role_sub_env = f"RULOOM_ROLE_{role.upper()}_SUBSCRIPTION_ID"
+            if cli_subscription_id:
+                base["subscription_id"] = cli_subscription_id
+                role_sources["subscription_id"] = SOURCE_CLI
+            elif role_sub_env in environment:
+                base["subscription_id"] = environment[role_sub_env]
+                role_sources["subscription_id"] = SOURCE_ENV
+            elif sub_env in environment:
+                base["subscription_id"] = environment[sub_env]
+                role_sources["subscription_id"] = SOURCE_ENV
+            elif isinstance(binding, Mapping) and binding.get("subscription_id"):
+                role_sources["subscription_id"] = SOURCE_PROFILE
+            else:
+                raise ManifestError(
+                    f"role {role!r} bound to adapter 'azure_foundry' requires explicit subscription_id"
+                )
+            from models.azure_foundry import validate_subscription_id
+
+            try:
+                base["subscription_id"] = validate_subscription_id(
+                    base["subscription_id"]
+                )
+            except ValueError as exc:
+                raise ManifestError(str(exc)) from exc
 
         family_env = f"RULOOM_ROLE_{role.upper()}_FAMILY"
         family = cli_family_map.get(role, environment.get(family_env))
         if family is None and adapter == original_adapter:
             family = base.get("family")
-        if family is not None or adapter == "agy_cli":
+        if family is not None or adapter in {"agy_cli", "azure_foundry"}:
             from models.selection import (
                 family_default,
                 model_family,
@@ -436,10 +495,29 @@ def default_client(role: str, config: Mapping[str, Any]) -> StructuredModel:
             model=str(config.get("model", "claude-opus-5-5-high")),
             effort=str(config.get("reasoning_effort", "high")),
         )
+    if adapter == "azure_foundry":
+        from models.azure_foundry import AzureFoundryModel
+
+        base_url = config.get("base_url")
+        if not base_url:
+            raise ValueError(
+                f"role {role!r} bound to adapter 'azure_foundry' requires explicit base_url"
+            )
+        subscription_id = config.get("subscription_id")
+        if not subscription_id:
+            raise ValueError(
+                f"role {role!r} bound to adapter 'azure_foundry' requires explicit subscription_id"
+            )
+        return AzureFoundryModel(
+            base_url=str(base_url),
+            subscription_id=str(subscription_id),
+            model=str(config.get("model", "muse-spark-1.3")),
+            effort=str(config.get("reasoning_effort", "xhigh")),
+        )
     if adapter != "meta_cli":
         raise ValueError(
             f"unknown model adapter {adapter!r} for role {role!r} "
-            "(expected 'meta_cli', 'agy_cli' or 'glimmer_local')"
+            "(expected 'meta_cli', 'agy_cli', 'glimmer_local' or 'azure_foundry')"
         )
     from models.meta_cli import MuseCLIModel
 
@@ -503,6 +581,7 @@ def main(
                 cli_base_urls=args.role_base_url,
                 cli_adapters=args.role_adapter,
                 cli_families=args.role_family,
+                cli_subscription_id=getattr(args, "azure_subscription_id", None),
             )
             config = dict(resolved["planner"])
             config["local_only"] = args.model_policy == "local-only"
@@ -540,6 +619,7 @@ def main(
                 cli_base_urls=args.role_base_url,
                 cli_adapters=args.role_adapter,
                 cli_families=args.role_family,
+                cli_subscription_id=getattr(args, "azure_subscription_id", None),
             )
         except (ValueError, ManifestError) as exc:
             try:
