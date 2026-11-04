@@ -11,6 +11,12 @@ Gemini performs the product AI roles for Test 1; Claude works independently on
 the same task. After the owner reviews Test 1, only a new owner instruction may
 start Test 2 with Muse inside Ruloom and a fresh independent Claude run. No Muse
 calls, Test 2 launch, or claimed superiority is authorised by this document.
+Dated authorization exception (4 November 2026): Azure-sold Muse configuration
+and an isolated engineering smoke are authorized on Azure AI Foundry; Meta account
+use is strictly prohibited. No frozen paired Test 2 or changed Test 1 protocol
+is authorized by this exception. The Gemini Test 1 and fresh Claude comparison
+agreement remains otherwise unchanged; this Azure adapter engineering smoke is
+not that benchmark.
 
 Development workers are separate: the owner-provided AGY Gemini Flash high
 session implements; native Claude Sonnet high independently reviews; Codex

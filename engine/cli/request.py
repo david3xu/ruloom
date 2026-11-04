@@ -153,10 +153,38 @@ def prepare_request(
         receipt["usage"] = dataclasses.asdict(completion.usage)
         receipt["observed_model"] = completion.usage.model or "unknown"
         receipt["response"] = completion.data
-        receipt["model_evidence"] = completion.meta
+        if config.get("adapter") == "azure_foundry" and isinstance(
+            completion.meta, Mapping
+        ):
+            receipt["model_evidence"] = {
+                k: completion.meta[k]
+                for k in (
+                    "provider",
+                    "endpoint_host",
+                    "subscription_id",
+                    "deployment",
+                    "model",
+                    "requested_model",
+                    "model_family",
+                    "reasoning_effort",
+                    "request_id",
+                    "timing_s",
+                )
+                if k in completion.meta
+            }
+        else:
+            receipt["model_evidence"] = completion.meta
         receipt["model_config"] = {
             key: config.get(key)
-            for key in ("adapter", "family", "model", "reasoning_effort")
+            for key in (
+                "adapter",
+                "family",
+                "model",
+                "reasoning_effort",
+                "base_url",
+                "subscription_id",
+            )
+            if config.get(key) is not None
         }
         jsonschema.validate(completion.data, schema)
         proposal = completion.data

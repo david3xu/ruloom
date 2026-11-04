@@ -7,7 +7,7 @@ from typing import Any
 
 from models.local_transport import require_loopback_url
 
-MODEL_POLICIES = ("hosted", "offline", "local-only")
+MODEL_POLICIES = ("hosted", "offline", "local-only", "azure-only")
 
 
 class ModelPolicyError(ValueError):
@@ -25,6 +25,13 @@ def enforce_model_policy(policy: str, config: Mapping[str, Any]) -> None:
     if policy == "offline":
         raise ModelPolicyError("offline policy forbids every model call; no fallback")
     if policy == "hosted":
+        return
+    if policy == "azure-only":
+        if config.get("adapter") != "azure_foundry":
+            raise ModelPolicyError(
+                "azure-only policy refuses any non-Azure adapter; "
+                "Meta account and other transports forbidden"
+            )
         return
     if config.get("adapter") != "glimmer_local":
         raise ModelPolicyError("local-only policy refuses a non-local adapter")

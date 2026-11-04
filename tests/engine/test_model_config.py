@@ -11,6 +11,7 @@ never resolve.
 from __future__ import annotations
 
 import dataclasses
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -105,6 +106,7 @@ def _run(
     max_attempts: int = 2,
     role_bindings: Mapping[str, Mapping[str, Any]] | None = None,
     role_binding_sources: Mapping[str, Mapping[str, str]] | None = None,
+    model_policy: str = "hosted",
 ) -> tuple[int, dict[str, Any]]:
     script = ["accept", "a note"]
 
@@ -122,6 +124,7 @@ def _run(
         ask=ask,
         role_bindings=role_bindings,
         role_binding_sources=role_binding_sources,
+        model_policy=model_policy,
     )
 
 
@@ -535,3 +538,261 @@ def test_capability_bound_to_reporter_refused_at_composition(
     assert "reporter" in outcome["error"]
     assert "disabled" in outcome["error"]
     assert client.calls == 0
+
+
+# --- (5) AZURE FOUNDRY ROLE CONFIG RESOLUTION ---------------------------------
+
+
+def test_azure_foundry_role_binding_defaults_and_validation() -> None:
+    manifest = _manifest()
+    # Missing base_url
+    with pytest.raises(ManifestError, match="requires explicit base_url"):
+        cli_module.resolve_role_bindings(
+            manifest,
+            cli_adapters=["planner=azure_foundry"],
+            cli_subscription_id="11111111-2222-3333-4444-555555555555",
+            env={},
+        )
+
+    # Missing subscription_id
+    with pytest.raises(ManifestError, match="requires explicit subscription_id"):
+        cli_module.resolve_role_bindings(
+            manifest,
+            cli_adapters=["planner=azure_foundry"],
+            cli_base_urls=["planner=https://audit-fixture.openai.azure.com/openai/v1/"],
+            env={},
+        )
+
+    # Valid binding with defaults
+    resolved, sources = cli_module.resolve_role_bindings(
+        manifest,
+        cli_adapters=["planner=azure_foundry"],
+        cli_base_urls=["planner=https://audit-fixture.openai.azure.com/openai/v1/"],
+        cli_subscription_id="11111111-2222-3333-4444-555555555555",
+        env={},
+    )
+    planner = resolved["planner"]
+    assert planner["adapter"] == "azure_foundry"
+    assert planner["model"] == "muse-spark-1.3"
+    assert planner["provider"] == "azure"
+    assert planner["family"] == "meta"
+    assert planner["reasoning_effort"] == "xhigh"
+    assert planner["base_url"] == "https://audit-fixture.openai.azure.com/openai/v1/"
+    assert planner["subscription_id"] == "11111111-2222-3333-4444-555555555555"
+    assert sources["planner"]["reasoning_effort"] == "default"
+
+
+def test_azure_foundry_precedence_cli_over_env() -> None:
+    manifest = _manifest()
+    sub_cli = "11111111-2222-3333-4444-555555555555"
+    sub_env = "22222222-3333-4444-5555-666666666666"
+    url_cli = "https://cli-account.openai.azure.com/openai/v1/"
+    url_env = "https://env-account.openai.azure.com/openai/v1/"
+
+    resolved, sources = cli_module.resolve_role_bindings(
+        manifest,
+        cli_adapters=["planner=azure_foundry"],
+        cli_base_urls=[f"planner={url_cli}"],
+        cli_subscription_id=sub_cli,
+        env={
+            "RULOOM_AZURE_SUBSCRIPTION_ID": sub_env,
+            "RULOOM_ROLE_PLANNER_BASE_URL": url_env,
+        },
+    )
+    assert resolved["planner"]["subscription_id"] == sub_cli
+    assert sources["planner"]["subscription_id"] == "cli"
+    assert resolved["planner"]["base_url"] == url_cli
+    assert sources["planner"]["base_url"] == "cli"
+
+    # Env used when CLI not provided
+    resolved_env, sources_env = cli_module.resolve_role_bindings(
+        manifest,
+        cli_adapters=["planner=azure_foundry"],
+        cli_subscription_id=None,
+        env={
+            "RULOOM_AZURE_SUBSCRIPTION_ID": sub_env,
+            "RULOOM_ROLE_PLANNER_BASE_URL": url_env,
+        },
+    )
+    assert resolved_env["planner"]["subscription_id"] == sub_env
+    assert sources_env["planner"]["subscription_id"] == "env"
+    assert resolved_env["planner"]["base_url"] == url_env
+    assert sources_env["planner"]["base_url"] == "env"
+
+
+def test_azure_foundry_recorded_in_runlog(tmp_path: Path) -> None:
+    manifest = _manifest()
+    sub_id = "11111111-2222-3333-4444-555555555555"
+    base_url = "https://audit-fixture.openai.azure.com/openai/v1/"
+    resolved, role_sources = cli_module.resolve_role_bindings(
+        manifest,
+        cli_adapters=["planner=azure_foundry"],
+        cli_base_urls=[f"planner={base_url}"],
+        cli_subscription_id=sub_id,
+        env={},
+    )
+    client = FakeClient(_usage())
+
+    def intake(ctx: Any) -> None:
+        ctx.set_plan({"rev": 0})
+
+    def decide(ctx: Any) -> None:
+        ctx.model("planner").complete("p", {"type": "object"})
+        ctx.record_artifact("out.bin", "text/csv", b"data")
+
+    def judge(ctx: Any) -> None:
+        ctx.record_checks(
+            [
+                {
+                    "check_id": "shape_ok",
+                    "kind": "constraint",
+                    "status": "pass",
+                    "measured": "ok",
+                    "threshold": {"source": "literal"},
+                    "threshold_source": "literal",
+                }
+            ]
+        )
+
+    code, outcome = _run(
+        tmp_path,
+        manifest,
+        {
+            "intake": intake,
+            "decide": decide,
+            "judge": judge,
+            "repair": lambda ctx: None,
+        },
+        client,
+        role_bindings=resolved,
+        role_binding_sources=role_sources,
+        model_policy="azure-only",
+    )
+    assert code == EXIT_OK
+    log = RunLog.read_jsonl(tmp_path / "out" / "runs" / outcome["run_id"] / "run.jsonl")
+    bindings_events = [e for e in log.events if e["stage"] == "model_bindings"]
+    assert len(bindings_events) == 1
+    roles = bindings_events[0]["details"]["roles"]
+    assert roles["planner"]["adapter"] == "azure_foundry"
+    assert roles["planner"]["base_url"] == base_url
+    assert roles["planner"]["subscription_id"] == sub_id
+
+
+def test_azure_foundry_budget_accounting_avoids_double_counting(
+    tmp_path: Path,
+) -> None:
+    from engine.core.runner import usage_tokens
+
+    # 1. Direct usage_tokens function test:
+    # Sample from root smoke: 227 prompt + 1054 completion incl 977 reasoning
+    smoke_usage = _usage(
+        input_tokens=227,
+        output_tokens=1054,
+        reasoning_tokens=977,
+        cached_tokens=0,
+    )
+    # With adapter="azure_foundry", output_tokens already includes reasoning:
+    # 227 + 1054 = 1281
+    assert usage_tokens(smoke_usage, adapter="azure_foundry") == 1281
+    # Legacy adapter (default) sums all three: 227 + 1054 + 977 = 2258
+    assert usage_tokens(smoke_usage) == 2258
+
+    # 2. Runner budget test:
+    # Manifest ceiling: 1500 tokens.
+    # First call: 227 + 1054 (977 reasoning).
+    # If double-counted (2258), the runner would exceed 1500 and refuse attempt 2.
+    # With correct accounting (1281 < 1500), attempt 2 IS admitted!
+    manifest = _budget_manifest(1500)
+    sub_id = "11111111-2222-3333-4444-555555555555"
+    base_url = "https://audit-fixture.openai.azure.com/openai/v1/"
+    resolved, role_sources = cli_module.resolve_role_bindings(
+        manifest,
+        cli_adapters=["planner=azure_foundry"],
+        cli_base_urls=[f"planner={base_url}"],
+        cli_subscription_id=sub_id,
+        env={},
+    )
+
+    usages = [
+        _usage(input_tokens=227, output_tokens=1054, reasoning_tokens=977),
+        _usage(input_tokens=50, output_tokens=50, reasoning_tokens=0),
+        _usage(input_tokens=50, output_tokens=50, reasoning_tokens=0),
+    ]
+    call_idx = 0
+
+    class SequenceClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
+            nonlocal call_idx
+            u = usages[call_idx]
+            call_idx += 1
+            self.calls += 1
+            return Completion(
+                data={"seed": 42, "n_rows": 100},
+                usage=u,
+                meta={
+                    "provider": "azure",
+                    "request_id": f"req-{self.calls}",
+                    "model": "muse-spark-1.3",
+                },
+            )
+
+    client = SequenceClient()
+    # Attempt 1 fails check; repair is called; attempt 2 passes check.
+    code, outcome = _run(
+        tmp_path,
+        manifest,
+        _registry([["shape_ok"], []], client),  # type: ignore
+        client,  # type: ignore
+        role_bindings=resolved,
+        role_binding_sources=role_sources,
+        model_policy="azure-only",
+    )
+    assert code == EXIT_OK
+    assert client.calls == 3
+    # Verify attempt tokens recorded in attempt records:
+    # Attempt 1 token cost must be exactly 1281 (not 2258)
+    run_dir = tmp_path / "out" / "runs" / outcome["run_id"]
+    receipt1 = json.loads(
+        (run_dir / "attempts" / "attempt-1" / "receipt.json").read_text()
+    )
+    assert receipt1["tokens"] == 1281
+
+
+def test_budgeted_client_refuses_vision_critic_pre_call(tmp_path: Path) -> None:
+    from engine.core.runner import _BudgetedClient, _Runner
+    from models.azure_foundry import AzureFoundryModel
+
+    model = AzureFoundryModel(
+        base_url="https://audit-fixture.openai.azure.com/openai/v1/",
+        subscription_id="11111111-2222-3333-4444-555555555555",
+        token_provider=lambda s: "tok",
+    )
+    manifest = _manifest()
+    runner = _Runner(
+        manifest=manifest,
+        registry={
+            "intake": lambda c: None,
+            "decide": lambda c: None,
+            "judge": lambda c: None,
+            "repair": lambda c: None,
+        },
+        source=_source(tmp_path),
+        max_attempts=2,
+        model_factory=lambda r, c: model,
+        out=tmp_path / "out",
+        say=lambda m: None,
+        ask=lambda p: "",
+    )
+    budgeted = _BudgetedClient(model, runner, "critic")
+
+    with pytest.raises(AttributeError, match="has no method 'complete_with_image'"):
+        budgeted.complete_with_image("prompt", {}, tmp_path / "img.png")
+
+    # Verify no model_call_started event was logged in runner.log
+    started_events = [
+        e for e in runner.log.events if e["stage"] == "model_call_started"
+    ]
+    assert len(started_events) == 0

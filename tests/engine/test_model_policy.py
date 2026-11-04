@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -290,3 +291,46 @@ def test_saved_plan_cannot_change_exact_row_target(tmp_path):
     assert code == 1
     assert "target_rows 10" in outcome["error"]
     assert outcome["attempts"] == 0
+
+
+def test_azure_only_policy_permits_azure_foundry() -> None:
+    enforce_model_policy("azure-only", {"adapter": "azure_foundry"})
+
+
+@pytest.mark.parametrize("adapter", ["meta_cli", "agy_cli", "glimmer_local", "unknown"])
+def test_azure_only_policy_refuses_non_azure_adapters(adapter: str) -> None:
+    with pytest.raises(
+        ModelPolicyError, match="azure-only policy refuses any non-Azure adapter"
+    ):
+        enforce_model_policy("azure-only", {"adapter": adapter})
+
+
+@pytest.mark.parametrize("policy", ["offline", "local-only"])
+def test_legacy_policies_refuse_azure_foundry(policy: str) -> None:
+    with pytest.raises(ModelPolicyError):
+        enforce_model_policy(policy, {"adapter": "azure_foundry"})
+
+
+def test_azure_only_policy_refuses_meta_cli_before_factory(tmp_path: Path) -> None:
+    source = _write_tabular_source(tmp_path)
+    manifest = load_manifest(manifest_path("tabular"))
+    made: list[str] = []
+
+    def factory(role: str, config: Any) -> Any:
+        made.append(role)
+        raise AssertionError("must not construct a client")
+
+    code, outcome = execute(
+        manifest,
+        cli.load_registry("tabular"),
+        source=source,
+        max_attempts=1,
+        model_factory=factory,
+        out=tmp_path / "out",
+        model_policy="azure-only",
+        say=lambda message: None,
+    )
+    assert code == 1
+    assert made == []
+    assert outcome["status"] in ("error", "refused")
+    assert "azure-only policy refuses" in outcome["error"]

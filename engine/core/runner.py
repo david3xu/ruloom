@@ -39,6 +39,7 @@ reports the failing checks and never ships as passing.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -118,16 +119,25 @@ class _Permissions:
     writes_verdict: bool = False
 
 
-def usage_tokens(usage: Any) -> int:
+def usage_tokens(usage: Any, adapter: str | None = None) -> int:
     """Count the budget tokens one model call reported.
 
     The budget unit is ``input + output + reasoning`` tokens as the
     adapter reports them (local calls count the same way; their cost is
     zero but the budget is denominated in tokens, not money). Missing or
     non-integer fields count as zero.
+
+    When ``adapter == "azure_foundry"``, Azure OpenAI completion_tokens
+    already includes reasoning_tokens, so charging input + output bounds
+    token usage without double-counting reasoning tokens.
     """
     total = 0
-    for field in ("input_tokens", "output_tokens", "reasoning_tokens"):
+    fields = (
+        ("input_tokens", "output_tokens")
+        if adapter == "azure_foundry"
+        else ("input_tokens", "output_tokens", "reasoning_tokens")
+    )
+    for field in fields:
         value = getattr(usage, field, 0)
         if isinstance(value, bool) or not isinstance(value, int):
             if isinstance(usage, Mapping):
@@ -170,10 +180,15 @@ class _BudgetedClient:
     def _complete(
         self, method: str, prompt: str, schema: Mapping[str, Any], *args: Any
     ) -> Any:
+        target_fn = getattr(self._client, method, None)
+        if target_fn is None or not callable(target_fn):
+            raise AttributeError(
+                f"{type(self._client).__name__!r} object has no method {method!r}"
+            )
         self._check_budget()
         self._runner.log.append("model_call_started", "started", {"role": self._role})
         try:
-            completion = getattr(self._client, method)(prompt, schema, *args)
+            completion = target_fn(prompt, schema, *args)
         except Exception as exc:
             self._runner.log.append(
                 "model_call_failed",
@@ -185,7 +200,7 @@ class _BudgetedClient:
                 },
             )
             raise
-        self._runner.record_model_usage(completion.usage)
+        self._runner.record_model_usage(completion.usage, role=self._role)
         self._runner.note_model_call(completion.usage)
         self._runner.note_model_invocation(self._role, self._client, completion)
         return completion
@@ -835,9 +850,14 @@ class _Runner:
                     "to the hosted adapter: refusing (no run)"
                 )
 
-    def record_model_usage(self, usage: Any) -> None:
+    def record_model_usage(
+        self, usage: Any, role: str | None = None, adapter: str | None = None
+    ) -> None:
         """Accumulate one model call's reported tokens toward the budget."""
-        self.model_tokens += usage_tokens(usage)
+        effective_adapter = adapter or (
+            self.role_bindings.get(role, {}).get("adapter") if role else None
+        )
+        self.model_tokens += usage_tokens(usage, adapter=effective_adapter)
 
     def note_model_call(self, usage: Any) -> None:
         """Remember the latest model usage for the attempt log entry."""
@@ -929,6 +949,27 @@ class _Runner:
             details["returned_model"] = observed
             if models_copy is not None:
                 details["models"] = models_copy
+            if details.get("adapter") == "azure_foundry" and isinstance(meta, Mapping):
+                azure_invocation: dict[str, Any] = {
+                    "provider": str(meta.get("provider", "azure")),
+                    "endpoint_host": str(meta.get("endpoint_host", "")),
+                    "subscription_id": str(meta.get("subscription_id", "")),
+                    "deployment": str(
+                        meta.get("deployment", meta.get("requested_model", requested))
+                    ),
+                    "model": requested,
+                    "returned_model": observed,
+                    "reasoning_effort": str(meta.get("reasoning_effort", "")),
+                    "request_id": str(meta.get("request_id", "")),
+                    "timing_s": meta.get("timing_s"),
+                }
+                if usage is not None:
+                    azure_invocation["usage"] = (
+                        dataclasses.asdict(usage)
+                        if dataclasses.is_dataclass(usage)
+                        else dict(usage)
+                    )
+                details["invocation"] = azure_invocation
         self.log.append(
             "model_invocation", "ok", details, usage=getattr(completion, "usage", None)
         )
@@ -2139,7 +2180,12 @@ def execute(
                     **({"family": config["family"]} if "family" in config else {}),
                     **(
                         {"base_url": config.get("base_url")}
-                        if config.get("adapter") == "glimmer_local"
+                        if config.get("adapter") in {"glimmer_local", "azure_foundry"}
+                        else {}
+                    ),
+                    **(
+                        {"subscription_id": config.get("subscription_id")}
+                        if config.get("adapter") == "azure_foundry"
                         else {}
                     ),
                     "sources": dict(runner.role_binding_sources.get(role, {})),
