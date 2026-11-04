@@ -3,13 +3,16 @@
 This module provides profile-owned case logic for the research-led workflow:
 - validates installed case definitions and reviewed local evidence pack;
 - verifies tamper-evident snapshot hashes, primary URLs and admission reviews;
-- compiles strict typed case contracts with bounded target rows and source pins;
+- compiles and strictly validates typed case contracts with bounded target rows
+  and source pins;
 - enforces deterministic source suitability pre-flight before any model call;
 - builds bounded source aggregate references without shipping raw source rows;
 - enforces downstream practical-use checking (read/filter/group, row accounting,
   structure presence, and fixed lesson tolerances from agreement);
 - provides independent consumer recomputation for recipient verification.
 
+This is a profile foundation for the research-led workflow, not a runtime CLI
+or publication integration (which bind into execute and package in subsequent slices).
 This module imports no engine and no model code (FP-CODE-2).
 """
 
@@ -20,12 +23,13 @@ import hashlib
 import io
 import json
 import math
+import statistics
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from ..intake.reader import NO_ANSWER
+from ..intake.reader import normalize_group, parse_depth, parse_valid
 
 ALLOWED_TOP_KEYS = frozenset({"version", "evidence_pack", "cases"})
 
@@ -78,6 +82,25 @@ ALLOWED_CONTRACT_KEYS = frozenset(
     }
 )
 
+ALLOWED_REFERENCE_KEYS = frozenset(
+    {
+        "version",
+        "source_sha256",
+        "source_rows",
+        "usable_rows",
+        "rejected_rows",
+        "valid_fraction",
+        "median_forward_spacing",
+        "swir_answer_rate",
+        "tir_answer_rate",
+        "disclosed_swir_labels",
+        "disclosed_tir_labels",
+        "has_blanks",
+        "licence_status",
+        "notice",
+    }
+)
+
 
 def compute_expected_valid_count(stats_profile: Any, plan: Any) -> int | None:
     """Compute exact expected valid count for balanced strategy, or None."""
@@ -94,77 +117,6 @@ def compute_expected_valid_count(stats_profile: Any, plan: Any) -> int | None:
         ):
             return round(n_rows * vf)
     return None
-
-
-def build_profile_stats(source_path: Path | str) -> tuple[Any, Any, Any]:
-    """Build fitted statistics and fidelity reference from source CSV."""
-    from ..analysis.statistics import Profile
-    from ..intake.reader import read_scalar_csv
-    from ..validation.checks import source_fidelity_reference
-
-    path = Path(source_path)
-    samples = read_scalar_csv(path)
-    source_sha = hashlib.sha256(path.read_bytes()).hexdigest()
-    profile = Profile.from_samples(samples, path.name, source_sha)
-    ref_stats = source_fidelity_reference(samples)
-    return profile, ref_stats, samples
-
-
-def generate_synthetic(profile: Any, plan: Mapping[str, Any]) -> bytes:
-    """Generate synthetic CSV bytes from fitted profile and plan."""
-    from ..generation.generate import generate
-
-    return generate(profile, plan)
-
-
-def run_profile_checks(
-    csv_bytes: bytes,
-    profile: Any,
-    ref_stats: Any,
-    plan: Mapping[str, Any],
-) -> tuple[list[dict[str, Any]], bool]:
-    """Execute profile validation checks on candidate CSV bytes."""
-    import os
-
-    from ..analysis.calibration import load_thresholds
-    from ..validation.checks import run_checks
-    from ..validation.dataset import read as read_artifact
-
-    thresholds_path = os.environ.get("RULOOM_THRESHOLDS")
-    t_path = (
-        Path(thresholds_path)
-        if thresholds_path
-        else Path(__file__).resolve().parent.parent / "thresholds.json"
-    )
-    thresholds = load_thresholds(t_path)
-    samples = read_artifact(csv_bytes)
-    expected_count = compute_expected_valid_count(profile, plan)
-    results_report = run_checks(
-        samples,
-        thresholds,
-        source_reference=ref_stats,
-        expected_geometry={
-            "n_rows": plan.get("n_rows"),
-            "start_m": getattr(
-                getattr(profile, "geometry", None), "depth_start_m", None
-            ),
-            "step_m": getattr(
-                getattr(profile, "geometry", None), "median_forward_spacing_m", None
-            ),
-        },
-        expected_valid_count=expected_count,
-    )
-    passed = results_report.verdict == "pass"
-    records = [
-        {
-            "name": r.name,
-            "status": r.status,
-            "detail": r.detail,
-            "band_position": r.band_position,
-        }
-        for r in results_report.results
-    ]
-    return records, passed
 
 
 def _cases_json_path() -> Path:
@@ -325,7 +277,75 @@ def validate_citations(
     return validated
 
 
-def validate_plan_satisfiability(n_rows: int, case_def: Mapping[str, Any]) -> None:
+def check_source_joint_satisfiability(
+    target_rows: int,
+    case_def: Mapping[str, Any],
+    source_reference: Mapping[str, Any],
+) -> tuple[bool, str | None]:
+    """Check if target_rows can jointly satisfy inclusion, answer rates and blank presence."""
+    design = case_def.get("design_choices", {})
+    vf_tol = design.get("valid_fraction_tolerance_absolute_max", 0.02)
+    swir_tol = design.get("answer_rate_tolerance_absolute_max", 0.02)
+    tir_tol = design.get("answer_rate_tolerance_absolute_max", 0.02)
+
+    vf = source_reference.get("valid_fraction", 0.0)
+    swir_rate = source_reference.get("swir_answer_rate", 0.0)
+    tir_rate = source_reference.get("tir_answer_rate", 0.0)
+    has_blanks = source_reference.get("has_blanks", True)
+
+    k = round(target_rows * vf)
+    if k < 1 or (target_rows - k) < 1:
+        return (
+            False,
+            f"target_rows {target_rows} gives {k} included and {target_rows - k} excluded rows; "
+            "both states must be present",
+        )
+
+    if abs(k / target_rows - vf) > vf_tol:
+        return (
+            False,
+            f"target_rows {target_rows} valid fraction {k / target_rows:.4f} drifts "
+            f"{abs(k / target_rows - vf):.4f} from source {vf:.4f} (max {vf_tol})",
+        )
+
+    if has_blanks and k > 1:
+        for channel, rate, tol in (
+            ("SWIR", swir_rate, swir_tol),
+            ("TIR", tir_rate, tir_tol),
+        ):
+            if rate < 1.0:
+                feasible_a = [a for a in range(1, k) if abs(a / k - rate) <= tol]
+                if not feasible_a:
+                    max_rate = (k - 1) / k
+                    return (
+                        False,
+                        f"target row count {target_rows} (k={k} valid rows) cannot jointly satisfy "
+                        f"{channel} answer rate ({rate:.4f} +/- {tol}) and required blank presence "
+                        f"(max feasible rate with at least one blank is {k - 1}/{k} = {max_rate:.4f})",
+                    )
+
+    return True, None
+
+
+def compute_minimum_feasible_rows(
+    case_def: Mapping[str, Any],
+    source_reference: Mapping[str, Any],
+) -> int:
+    """Find smallest target row count >= floor that is jointly satisfiable for this source."""
+    floor = case_def.get("design_choices", {}).get("min_satisfiable_rows", 25)
+    ceiling = case_def.get("design_choices", {}).get("max_supported_rows", 200000)
+    for n in range(floor, min(ceiling, 5000) + 1):
+        ok, _ = check_source_joint_satisfiability(n, case_def, source_reference)
+        if ok:
+            return n
+    return floor
+
+
+def validate_plan_satisfiability(
+    n_rows: int,
+    case_def: Mapping[str, Any],
+    source_reference: Mapping[str, Any] | None = None,
+) -> None:
     """Validate that requested row count satisfies tolerance floors at contract time."""
     if not isinstance(n_rows, int) or isinstance(n_rows, bool):
         raise TypeError(f"target row count must be an integer, got {type(n_rows)}")
@@ -342,20 +362,33 @@ def validate_plan_satisfiability(n_rows: int, case_def: Mapping[str, Any]) -> No
             f"requested row count {n_rows} exceeds maximum supported rows ({ceiling})"
         )
 
+    if source_reference is not None:
+        ok, reason = check_source_joint_satisfiability(
+            n_rows, case_def, source_reference
+        )
+        if not ok:
+            min_feasible = compute_minimum_feasible_rows(case_def, source_reference)
+            raise ValueError(
+                f"target row count {n_rows} is not jointly satisfiable for this source: {reason}; "
+                f"minimum feasible rows for this source is {min_feasible}"
+            )
+
 
 def compile_case_contract(
     case_def: Mapping[str, Any],
     target_rows: int,
     source_sha256: str,
+    source_reference: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compile an immutable case contract binding requested rows and source pin.
 
-    - Validates target_rows against the satisfiability floor (25) and max (200000).
-    - Binds measured intake source_sha256 pin (64-char hex string).
+    - Validates target_rows against satisfiability floor (25), max (200000),
+      and source-aware joint satisfiability when source_reference is supplied.
+    - Binds measured intake source_sha256 pin (64-char lowercase hex string).
     - Locks case checks, denominators, and thresholds from installed case definition.
     - Resulting contract shape is strictly typed with no extra keys.
     """
-    validate_plan_satisfiability(target_rows, case_def)
+    validate_plan_satisfiability(target_rows, case_def, source_reference)
     if (
         not isinstance(source_sha256, str)
         or len(source_sha256) != 64
@@ -392,21 +425,94 @@ def compile_case_contract(
 def validate_case_contract(
     contract: Mapping[str, Any],
     case_def: Mapping[str, Any],
+    source_reference: Mapping[str, Any] | None = None,
 ) -> None:
-    """Validate that a case contract adheres to strict schema and case rules."""
-    extra = set(contract.keys()) - ALLOWED_CONTRACT_KEYS
+    """Validate that a case contract strictly matches canonical schema and case rules."""
+    if not isinstance(contract, Mapping):
+        raise TypeError(f"contract must be a mapping, got {type(contract)}")
+
+    contract_keys = set(contract.keys())
+    missing = ALLOWED_CONTRACT_KEYS - contract_keys
+    if missing:
+        raise ValueError(f"contract missing required keys: {sorted(missing)}")
+    extra = contract_keys - ALLOWED_CONTRACT_KEYS
     if extra:
         raise ValueError(f"contract has unexpected keys: {sorted(extra)}")
+
+    if contract.get("version") != 1 or isinstance(contract.get("version"), bool):
+        raise ValueError(
+            f"contract version must be integer 1, got {contract.get('version')!r}"
+        )
 
     if contract.get("case_id") != case_def.get("id"):
         raise ValueError(
             f"contract case_id mismatch: expected {case_def.get('id')}, "
             f"got {contract.get('case_id')}"
         )
+
     target_rows = contract.get("target_rows")
     if not isinstance(target_rows, int) or isinstance(target_rows, bool):
-        raise TypeError("contract target_rows must be integer")
-    validate_plan_satisfiability(target_rows, case_def)
+        raise TypeError(
+            f"contract target_rows must be integer, got {type(target_rows)}"
+        )
+    validate_plan_satisfiability(target_rows, case_def, source_reference)
+
+    source_sha = contract.get("source_sha256")
+    if (
+        not isinstance(source_sha, str)
+        or len(source_sha) != 64
+        or not all(c in "0123456789abcdef" for c in source_sha.lower())
+    ):
+        raise ValueError(
+            f"contract source_sha256 must be a valid 64-char hex string, got {source_sha!r}"
+        )
+
+    expected_cols = list(case_def["contract_template"]["output_columns"])
+    if contract.get("output_columns") != expected_cols:
+        raise ValueError(
+            f"contract output_columns mismatch: expected {expected_cols}, "
+            f"got {contract.get('output_columns')}"
+        )
+
+    expected_strat = case_def["contract_template"]["recommended_strategy"]
+    if contract.get("recommended_strategy") != expected_strat:
+        raise ValueError(
+            f"contract recommended_strategy mismatch: expected {expected_strat!r}, "
+            f"got {contract.get('recommended_strategy')!r}"
+        )
+
+    canonical_checks = dict(case_def["contract_template"]["checks"])
+    canonical_checks["exact_rows"] = target_rows
+    if contract.get("checks") != canonical_checks:
+        raise ValueError(
+            f"contract checks mismatch: expected canonical {canonical_checks}, "
+            f"got {contract.get('checks')}"
+        )
+
+    expected_denoms = dict(case_def["contract_template"]["denominators"])
+    if contract.get("denominators") != expected_denoms:
+        raise ValueError(
+            f"contract denominators mismatch: expected {expected_denoms}, "
+            f"got {contract.get('denominators')}"
+        )
+
+    expected_flag = case_def["contract_template"]["flag_encoding"]
+    if contract.get("flag_encoding") != expected_flag:
+        raise ValueError(
+            f"contract flag_encoding mismatch: expected {expected_flag!r}, "
+            f"got {contract.get('flag_encoding')!r}"
+        )
+
+    expected_spacing = case_def["contract_template"]["spacing_definition"]
+    if contract.get("spacing_definition") != expected_spacing:
+        raise ValueError(
+            f"contract spacing_definition mismatch: expected {expected_spacing!r}, "
+            f"got {contract.get('spacing_definition')!r}"
+        )
+
+    expected_limits = list(case_def.get("limitations", []))
+    if contract.get("limitations") != expected_limits:
+        raise ValueError("contract limitations mismatch with installed case definition")
 
 
 def assess_source_suitability(
@@ -417,15 +523,16 @@ def assess_source_suitability(
 ) -> dict[str, Any]:
     """Deterministic local code check of source suitability.
 
-    Checks:
-    - source exists and matches expected hash if pinned;
-    - contains required source columns;
-    - meets minimum row count;
-    - depth values are finite, non-negative, and monotonically non-decreasing;
-    - median forward spacing is positive;
-    - contains both inclusion states (valid and invalid rows);
-    - contains both answered and blank labels among valid rows;
-    - records licence metadata status (missing licence -> 'rights unknown').
+    Reuses existing HyLogger reader semantics:
+    - Verifies 100% clean numerical rows for this admitted case:
+      records raw, usable, and rejected row counts. Any non-finite,
+      negative, or malformed depth cell is rejected.
+    - Required source columns: StartDepth, Final_Mask, Grp1_sTSAS, Grp1_sjCLST.
+    - Non-decreasing finite depth ordering.
+    - Positive median forward spacing (computed with even-length averaging).
+    - Both inclusion states present.
+    - Both answered and blank labels present among valid rows.
+    - Disclosed licence status recorded.
 
     A source-format fit is not a scientific or origin/rights certification.
     A model cannot upgrade an unsuitable code verdict.
@@ -456,7 +563,6 @@ def assess_source_suitability(
             headers = reader.fieldnames or []
             raw_rows = list(reader)
     else:
-        # Supplied as pre-parsed sequence
         raw_rows = list(source_path_or_rows)
         if raw_rows and isinstance(raw_rows[0], dict):
             headers = list(raw_rows[0].keys())
@@ -470,6 +576,8 @@ def assess_source_suitability(
             "suitable": False,
             "source_sha256": source_sha,
             "source_rows": len(raw_rows),
+            "usable_rows": 0,
+            "rejected_rows": len(raw_rows),
             "assessed_columns": headers,
             "reasons": reasons,
             "findings": "Source lacks required columns.",
@@ -477,37 +585,39 @@ def assess_source_suitability(
             "disclaimer": "A source-format fit is not a scientific or origin/rights certification.",
         }
 
-    if len(raw_rows) < min_rows:
+    raw_count = len(raw_rows)
+    if raw_count < min_rows:
         reasons.append(
-            f"source row count {len(raw_rows)} is below minimum requirement {min_rows}"
+            f"source row count {raw_count} is below minimum requirement {min_rows}"
         )
 
     parsed_rows: list[tuple[float, bool, str | None, str | None]] = []
+    rejected_count = 0
     for r in raw_rows:
-        try:
-            depth_val = float(r["StartDepth"])
-            if not math.isfinite(depth_val) or depth_val < 0:
-                continue
-            is_valid = str(r["Final_Mask"]).strip() == "1"
-            swir = str(r.get("Grp1_sTSAS", "")).strip()
-            tir = str(r.get("Grp1_sjCLST", "")).strip()
-            parsed_rows.append(
-                (
-                    depth_val,
-                    is_valid,
-                    None if swir.upper() in NO_ANSWER else swir,
-                    None if tir.upper() in NO_ANSWER else tir,
-                )
-            )
-        except (ValueError, TypeError, KeyError):
+        depth_val = parse_depth(r.get("StartDepth"))
+        if depth_val is None or depth_val < 0:
+            rejected_count += 1
             continue
+        is_valid = parse_valid(r.get("Final_Mask"))
+        swir = normalize_group(r.get("Grp1_sTSAS"))
+        tir = normalize_group(r.get("Grp1_sjCLST"))
+        parsed_rows.append((depth_val, is_valid, swir, tir))
+
+    if rejected_count > 0:
+        reasons.append(
+            f"source contains {rejected_count} malformed, non-finite or negative depth rows "
+            f"(raw: {raw_count}, usable: {len(parsed_rows)}, rejected: {rejected_count}); "
+            "admitted case requires 100% clean finite depths"
+        )
 
     if not parsed_rows:
         reasons.append("source contains no valid numerical depth rows")
         return {
             "suitable": False,
             "source_sha256": source_sha,
-            "source_rows": len(raw_rows),
+            "source_rows": raw_count,
+            "usable_rows": 0,
+            "rejected_rows": rejected_count,
             "assessed_columns": headers,
             "reasons": reasons,
             "findings": "Source contains no usable numerical rows.",
@@ -526,7 +636,7 @@ def assess_source_suitability(
             reasons.append("source has no positive adjacent depth steps")
         else:
             diffs.sort()
-            med_spacing = diffs[len(diffs) // 2]
+            med_spacing = float(statistics.median(diffs))
             if med_spacing <= 0:
                 reasons.append("source median forward spacing is non-positive")
 
@@ -572,8 +682,9 @@ def assess_source_suitability(
         else f"Source failed suitability checks: {'; '.join(reasons)}"
     )
 
+    diffs = [b[0] - a[0] for a, b in zip(parsed_rows, parsed_rows[1:]) if b[0] > a[0]]
     diffs.sort()
-    med_spacing = diffs[len(diffs) // 2] if diffs else 0.0
+    med_spacing = float(statistics.median(diffs)) if diffs else 0.0
     valid_rows = [r for r in parsed_rows if r[1]]
     swir_rate = (
         sum(1 for r in valid_rows if r[2] is not None) / len(valid_rows)
@@ -589,14 +700,16 @@ def assess_source_suitability(
     return {
         "suitable": suitable,
         "source_sha256": source_sha,
-        "source_rows": len(raw_rows),
+        "source_rows": raw_count,
+        "usable_rows": len(parsed_rows),
+        "rejected_rows": rejected_count,
         "assessed_columns": headers,
         "reasons": reasons,
         "findings": findings,
         "licence_status": licence_status,
         "disclaimer": "A source-format fit is not a scientific or origin/rights certification.",
         "aggregates": {
-            "valid_fraction": valid_count / len(parsed_rows),
+            "valid_fraction": valid_count / len(parsed_rows) if parsed_rows else 0.0,
             "median_forward_spacing": med_spacing,
             "swir_answer_rate": swir_rate,
             "tir_answer_rate": tir_rate,
@@ -611,6 +724,74 @@ def assess_source_suitability(
     }
 
 
+def validate_source_reference(source_reference: Mapping[str, Any]) -> None:
+    """Validate that a source reference dictionary adheres strictly to schema."""
+    if not isinstance(source_reference, Mapping):
+        raise TypeError(
+            f"source reference must be a mapping, got {type(source_reference)}"
+        )
+    keys = set(source_reference.keys())
+    missing = ALLOWED_REFERENCE_KEYS - keys
+    if missing:
+        raise ValueError(f"source reference missing required keys: {sorted(missing)}")
+    extra = keys - ALLOWED_REFERENCE_KEYS
+    if extra:
+        raise ValueError(f"source reference has unexpected keys: {sorted(extra)}")
+
+    if source_reference.get("version") != 1 or isinstance(
+        source_reference.get("version"), bool
+    ):
+        raise ValueError("source reference version must be integer 1")
+
+    sha = source_reference.get("source_sha256")
+    if (
+        not isinstance(sha, str)
+        or len(sha) != 64
+        or not all(c in "0123456789abcdef" for c in sha.lower())
+    ):
+        raise ValueError(
+            f"source reference source_sha256 must be 64-char hex, got {sha!r}"
+        )
+
+    for count_key in ("source_rows", "usable_rows"):
+        v = source_reference.get(count_key)
+        if not isinstance(v, int) or isinstance(v, bool) or v <= 0:
+            raise ValueError(f"source reference {count_key} must be positive integer")
+
+    for rate_key in ("valid_fraction", "swir_answer_rate", "tir_answer_rate"):
+        r = source_reference.get(rate_key)
+        if (
+            not isinstance(r, (int, float))
+            or isinstance(r, bool)
+            or not math.isfinite(r)
+            or not (0.0 <= r <= 1.0)
+        ):
+            raise ValueError(
+                f"source reference {rate_key} must be finite float in [0, 1]"
+            )
+
+    sp = source_reference.get("median_forward_spacing")
+    if (
+        not isinstance(sp, (int, float))
+        or isinstance(sp, bool)
+        or not math.isfinite(sp)
+        or sp <= 0
+    ):
+        raise ValueError(
+            "source reference median_forward_spacing must be positive finite float"
+        )
+
+    for label_key in ("disclosed_swir_labels", "disclosed_tir_labels"):
+        labels = source_reference.get(label_key)
+        if not isinstance(labels, list) or not all(
+            isinstance(item, str) for item in labels
+        ):
+            raise ValueError(f"source reference {label_key} must be a list of strings")
+
+    if not isinstance(source_reference.get("has_blanks"), bool):
+        raise ValueError("source reference has_blanks must be boolean")
+
+
 def build_source_reference(
     source_path_or_rows: Path | str | Sequence[Any],
     case_def: Mapping[str, Any] | None = None,
@@ -618,22 +799,28 @@ def build_source_reference(
 ) -> dict[str, Any]:
     """Extract bounded source aggregate reference without exposing raw source rows.
 
-    The returned reference contains aggregate statistical parameters and
-    disclosed vocabulary required for recipient verification, but NO
-    individual source measurements or rows.
+    Refuses unsuitable sources early. The returned reference contains aggregate
+    statistical parameters and full code-side disclosed vocabulary required
+    for recipient verification.
     """
     case = case_def or get_case("hylogger_scalar_teaching_v1")
     suit = assess_source_suitability(source_path_or_rows, case, licence_meta)
-    aggs = suit.get("aggregates", {})
+    if not suit["suitable"]:
+        raise ValueError(
+            f"cannot build source reference from unsuitable source: {'; '.join(suit['reasons'])}"
+        )
 
+    aggs = suit.get("aggregates", {})
     source_sha = suit.get("source_sha256")
     if not source_sha and isinstance(source_path_or_rows, (str, Path)):
         source_sha = hashlib.sha256(Path(source_path_or_rows).read_bytes()).hexdigest()
 
-    return {
+    ref = {
         "version": 1,
-        "source_sha256": source_sha,
+        "source_sha256": source_sha.lower() if source_sha else None,
         "source_rows": suit.get("source_rows", 0),
+        "usable_rows": suit.get("usable_rows", 0),
+        "rejected_rows": suit.get("rejected_rows", 0),
         "valid_fraction": aggs.get("valid_fraction", 0.0),
         "median_forward_spacing": aggs.get("median_forward_spacing", 0.0),
         "swir_answer_rate": aggs.get("swir_answer_rate", 0.0),
@@ -642,8 +829,15 @@ def build_source_reference(
         "disclosed_tir_labels": aggs.get("disclosed_tir_labels", []),
         "has_blanks": aggs.get("has_blanks", False),
         "licence_status": suit.get("licence_status", "rights unknown"),
-        "notice": "Bounded aggregate reference only; contains no individual source rows or raw measurements.",
+        "notice": (
+            "Bounded aggregate reference for code-side utility checking and verification. "
+            "Model-disclosed summaries apply a frequency floor (MIN_LABEL_COUNT_FOR_MODEL_VIEW = 2) "
+            "to redact singletons; code-side utility checking uses the full code-side vocabulary "
+            "disclosed in this reference. Contains no raw measurements or individual source rows."
+        ),
     }
+    validate_source_reference(ref)
+    return ref
 
 
 def evaluate_case_utility(
@@ -658,18 +852,32 @@ def evaluate_case_utility(
     access to raw source rows.
 
     Checks computed against contract:
-    - source pin match (if contract declares source_sha256);
+    - strict contract validation and source reference schema validation;
+    - source pin match;
     - output columns exact match;
     - row count exact match;
+    - CSV row width consistency (no extra or truncated values);
     - well-formed rows (finite depth >= 0, binary valid);
     - ordered non-decreasing depth;
-    - median forward spacing relative difference <= 0.01;
+    - median forward spacing relative difference <= 0.01 (even-length averaged);
     - inclusion fraction absolute difference <= 0.02;
     - SWIR and TIR answer rates absolute difference <= 0.02 on included rows;
-    - nonblank labels supported by source vocabulary;
+    - nonblank labels across ALL candidate rows supported by source vocabulary;
     - real downstream filter/group accounting for 100% of rows;
     - structure presence of both inclusion states and blank labels.
     """
+    # 1. Resolve and validate source reference
+    if isinstance(source_reference_or_path, Mapping):
+        source_ref = dict(source_reference_or_path)
+    else:
+        source_ref = build_source_reference(source_reference_or_path)
+    validate_source_reference(source_ref)
+
+    # 2. Strict contract validation
+    case_def = get_case(contract.get("case_id", "hylogger_scalar_teaching_v1"))
+    validate_case_contract(contract, case_def, source_ref)
+
+    # 3. Read candidate payload
     if isinstance(candidate_path_or_bytes, bytes):
         candidate_bytes = candidate_path_or_bytes
     else:
@@ -680,12 +888,6 @@ def evaluate_case_utility(
 
     candidate_sha = hashlib.sha256(candidate_bytes).hexdigest()
 
-    # Resolve source reference
-    if isinstance(source_reference_or_path, Mapping):
-        source_ref = dict(source_reference_or_path)
-    else:
-        source_ref = build_source_reference(source_reference_or_path)
-
     failures: list[str] = []
     measurements: dict[str, Any] = {}
 
@@ -694,52 +896,71 @@ def evaluate_case_utility(
         if not ok:
             failures.append(name)
 
-    # 1. Source pin check
+    # 4. Source pin check
     expected_src_sha = contract.get("source_sha256")
-    if expected_src_sha:
-        ref_sha = source_ref.get("source_sha256")
-        check(
-            "source_pin",
-            ref_sha is not None and ref_sha.lower() == expected_src_sha.lower(),
-            {"expected": expected_src_sha, "reference": ref_sha},
-        )
+    ref_sha = source_ref.get("source_sha256")
+    check(
+        "source_pin",
+        ref_sha is not None and ref_sha.lower() == expected_src_sha.lower(),
+        {"expected": expected_src_sha, "reference": ref_sha},
+    )
 
-    # 2. Candidate CSV parsing
+    # 5. Parse candidate CSV with row-width checking
     text = candidate_bytes.decode("utf-8")
-    reader = csv.DictReader(io.StringIO(text))
-    headers = reader.fieldnames or []
-    out = list(reader)
+    raw_reader = csv.reader(io.StringIO(text))
+    header_row = next(raw_reader, None) or []
 
     expected_cols = contract.get(
         "output_columns", ["depth_m", "valid", "swir_group", "tir_group"]
     )
-    check("output_columns", headers == expected_cols, headers)
+    check("output_columns", header_row == expected_cols, header_row)
 
     target_rows = contract.get("target_rows", 10000)
-    check("row_count", len(out) == target_rows, len(out))
+
+    line_no = 1
+    raw_lines: list[list[str]] = []
+    row_width_ok = True
+    malformed_detail: str | None = None
+    for line in raw_reader:
+        line_no += 1
+        if len(line) != len(expected_cols):
+            row_width_ok = False
+            malformed_detail = (
+                f"malformed CSV row width at line {line_no}: "
+                f"expected {len(expected_cols)} columns, got {len(line)}"
+            )
+            break
+        raw_lines.append(line)
+
+    check("row_count", len(raw_lines) == target_rows, len(raw_lines))
 
     normalized: list[tuple[float, bool, str | None, str | None]] = []
-    well_formed_ok = True
-    for r in out:
+    well_formed_ok = row_width_ok
+    for line in raw_lines:
+        row = dict(zip(header_row, line))
         try:
-            x = float(r.get("depth_m", ""))
-            flag = str(r.get("valid", "")).strip().lower()
+            x = float(row.get("depth_m", ""))
+            flag = str(row.get("valid", "")).strip().lower()
             if flag not in {"true", "false", "0", "1"}:
                 well_formed_ok = False
                 continue
             if not math.isfinite(x) or x < 0:
                 well_formed_ok = False
                 continue
-            sw = r.get("swir_group") or None
-            ti = r.get("tir_group") or None
+            sw = row.get("swir_group") or None
+            ti = row.get("tir_group") or None
             normalized.append((x, flag in {"true", "1"}, sw, ti))
         except (ValueError, TypeError):
             well_formed_ok = False
 
     check(
         "well_formed_rows",
-        well_formed_ok and (len(normalized) == len(out)),
-        {"parsed": len(normalized), "total": len(out)},
+        well_formed_ok and (len(normalized) == len(raw_lines)),
+        {
+            "parsed": len(normalized),
+            "total": len(raw_lines),
+            "malformed_detail": malformed_detail,
+        },
     )
 
     if not normalized:
@@ -748,23 +969,20 @@ def evaluate_case_utility(
             "failures": failures + ["no_usable_rows"],
             "measurements": measurements,
             "candidate_sha256": candidate_sha,
-            "limitations": [
-                "Case-level teaching-table utility only; no scientific, privacy, image or licensing guarantee.",
-                "A source-format fit is not a scientific or origin/rights certification.",
-            ],
+            "limitations": list(case_def.get("limitations", [])),
         }
 
-    # 3. Depth ordering
+    # 6. Depth ordering
     check(
         "ordered_depth",
         all(b[0] >= a[0] for a, b in zip(normalized, normalized[1:])),
         "nondecreasing required",
     )
 
-    # 4. Median forward spacing
+    # 7. Median forward spacing (even-length averaged)
     diffs = [b[0] - a[0] for a, b in zip(normalized, normalized[1:]) if b[0] > a[0]]
     diffs.sort()
-    cand_sp = diffs[len(diffs) // 2] if diffs else None
+    cand_sp = float(statistics.median(diffs)) if diffs else None
     src_sp = source_ref.get("median_forward_spacing")
     spacing_delta = (
         abs(cand_sp - src_sp) / src_sp
@@ -779,11 +997,11 @@ def evaluate_case_utility(
             "candidate": cand_sp,
             "relative_difference": spacing_delta,
             "limit": 0.01,
-            "definition": "median of positive adjacent differences",
+            "definition": "median of positive adjacent differences (averaged for even count)",
         },
     )
 
-    # 5. Inclusion fraction
+    # 8. Inclusion fraction
     src_vf = source_ref.get("valid_fraction", 0.0)
     cand_vf = sum(1 for r in normalized if r[1]) / len(normalized)
     vf_delta = abs(cand_vf - src_vf)
@@ -798,9 +1016,8 @@ def evaluate_case_utility(
         },
     )
 
-    # 6. Channel answer rates and supported vocabulary on valid rows
+    # 9. Channel answer rates (included rows only)
     cvalid = [r for r in normalized if r[1]]
-
     for i, name in ((2, "swir"), (3, "tir")):
         src_rate = source_ref.get(f"{name}_answer_rate")
         cand_rate = (
@@ -822,18 +1039,29 @@ def evaluate_case_utility(
                 "denominator": "included rows only",
             },
         )
-        allowed = set(source_ref.get(f"disclosed_{name}_labels", []))
-        extra = sorted({r[i] for r in cvalid if r[i] is not None} - allowed)
-        check(f"{name}_supported_labels", not extra, {"unknown_labels": extra})
 
-    # 7. Real downstream filter & group accounting for 100% of rows
+    # 10. Nonblank supported vocabulary across ALL rows (neither included nor excluded may hide unknown labels)
+    for i, name in ((2, "swir"), (3, "tir")):
+        allowed = set(source_ref.get(f"disclosed_{name}_labels", []))
+        all_nonblank = {r[i] for r in normalized if r[i] is not None}
+        extra = sorted(all_nonblank - allowed)
+        check(
+            f"{name}_supported_labels",
+            not extra,
+            {
+                "unknown_labels": extra,
+                "population": "all candidate rows (included and excluded)",
+            },
+        )
+
+    # 11. Downstream filter & group accounting for 100% of rows
     grouped = Counter((r[1], r[2] is not None, r[3] is not None) for r in normalized)
     included_count = len(cvalid)
     excluded_count = sum(1 for r in normalized if not r[1])
     accounting_ok = (
-        sum(grouped.values()) == len(out)
-        and (included_count + excluded_count) == len(out)
-        and len(out) == target_rows
+        sum(grouped.values()) == len(raw_lines)
+        and (included_count + excluded_count) == len(raw_lines)
+        and len(raw_lines) == target_rows
     )
     check(
         "downstream_filter_group",
@@ -846,7 +1074,7 @@ def evaluate_case_utility(
         },
     )
 
-    # 8. Structure presence
+    # 12. Structure presence
     src_has_blanks = source_ref.get("has_blanks", True)
     cand_has_blanks = any(r[2] is None or r[3] is None for r in cvalid)
     structure_ok = (
@@ -872,12 +1100,7 @@ def evaluate_case_utility(
         "failures": failures,
         "measurements": measurements,
         "candidate_sha256": candidate_sha,
-        "limitations": [
-            "Case-level teaching-table utility only; no scientific, privacy, image or licensing guarantee.",
-            "A source-format fit is not a scientific or origin/rights certification.",
-            "Scalar classification labels are interpretations, not measured reflectance curves.",
-            "Blank group labels indicate no reported classification label, not absence of physical curves.",
-        ],
+        "limitations": list(case_def.get("limitations", [])),
     }
 
 
