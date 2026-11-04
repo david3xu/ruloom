@@ -99,12 +99,21 @@ Evaluates candidate CSV bytes under a strictly validated case context.
 - **Returns**: Complete utility evaluation result dictionary from `evaluate_case_utility`.
 
 ### 3. `case_check_results(utility_report) -> list[dict]`
-Translates a utility report into engine-compatible check outcome dictionaries.
+Translates an already computed utility report into engine-compatible check outcome dictionaries.
+- **Mapping Role and Authority**:
+  `case_check_results` is a check result mapping adapter for an ALREADY computed evaluator report.
+  It trusts the evaluator's semantic outcomes (recorded in `failures`); actual semantic, target,
+  and contract authority resides in `evaluate_case_context` and `verify_case_candidate` under the
+  canonical case contract. Mapping alone does not and cannot re-evaluate or prove unprovided target
+  row counts or ordered CSV structure.
 - **Invariants**:
   - Emits all 13 namespaced `case.*` check IDs every time, in fixed order.
-  - Early-return, unmeasured, or malformed checks fail closed; no check is omitted.
-  - Validates exact JSON scalar types, finite numeric bounds, denominator accounting,
-    and evaluator measurement shapes.
+  - Validates top-level report schema (`passed` boolean, 64-char lowercase hex `candidate_sha256`,
+    non-empty `limitations` string list, and string list `failures` with defensive handling of unhashable items).
+  - Validates exact keysets and exact JSON scalar types (no bool-as-int, no non-finite numbers,
+    no scalar-for-object) for all 13 measurement objects.
+  - Early-return, unmeasured, or malformed checks fail closed; any malformed report or measurement
+    shape emits all 13 checks failing with diagnostic details and never raises an unhandled exception (e.g. `TypeError` or `KeyError`).
   - Strict typing: `status` is literal `"pass"` or `"fail"` (no numeric or boolean aliases).
   - `kind` is `"constraint"`, `threshold_source` is `"case_contract"`.
 - **Exported Constant**:
@@ -205,7 +214,8 @@ model advisories remain non-authoritative operator recommendations without relea
   Requires `evidence_facts` to be a non-empty list of structured objects
   `{"measurement": <path>, "value": <exact number>}` matching recomputed measurement numbers
   with exact JSON scalar types (rejecting boolean aliases, float aliases for integer paths,
-  unsupported paths, and duplicate paths). Screens `evaluator_opinion` against prohibited
+  unsupported paths, and duplicate paths), raising clean `ValueError` if a path is absent from
+  early-fail reports. Screens `evaluator_opinion` against prohibited
   prose patterns. Returns JSON-native payload.
 
 ## Recheck Commands

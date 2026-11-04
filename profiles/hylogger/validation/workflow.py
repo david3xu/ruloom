@@ -596,7 +596,7 @@ def _lookup_measurement_path(measurements: Mapping[str, Any], path: str) -> int 
     curr: Any = measurements
     for part in parts:
         if not isinstance(curr, Mapping) or part not in curr:
-            raise KeyError(f"path {path!r} not found in measurements")
+            raise ValueError(f"path {path!r} not found in measurements")
         curr = curr[part]
     if (
         not isinstance(curr, (int, float))
@@ -935,14 +935,234 @@ def evaluate_case_context(
     return evaluate_case_utility(c_payload, reference, contract)
 
 
+def _is_finite_num(v: Any) -> bool:
+    """Return True if v is a finite int or float (rejecting booleans)."""
+    return (
+        isinstance(v, (int, float))
+        and not isinstance(v, bool)
+        and not math.isnan(v)
+        and not math.isinf(v)
+    )
+
+
+def _is_non_neg_int(v: Any) -> bool:
+    """Return True if v is a non-negative int (rejecting booleans)."""
+    return type(v) is int and not isinstance(v, bool) and v >= 0
+
+
+def _validate_measurement_shape(key: str, val: Any) -> str | None:
+    """Validate that a measurement object matches the exact schema and types.
+
+    Returns None if valid, or a descriptive reason string if invalid.
+    Never raises an exception.
+    """
+    try:
+        if key == "source_pin_match":
+            if not isinstance(val, Mapping) or isinstance(val, (str, bytes)):
+                return "source_pin_match must be a mapping"
+            expected_keys = {"contract_pin", "reference_pin"}
+            if set(val.keys()) != expected_keys:
+                return f"source_pin_match keys must be exactly {sorted(expected_keys)}, got {sorted(val.keys())}"
+            c_pin = val["contract_pin"]
+            r_pin = val["reference_pin"]
+            if not isinstance(c_pin, str) or not isinstance(r_pin, str):
+                return "source_pin_match pins must be strings"
+            if not c_pin or not r_pin:
+                return "source_pin_match pins cannot be empty"
+            return None
+
+        if key == "output_columns":
+            if not isinstance(val, list):
+                return "output_columns must be a list"
+            if len(val) == 0:
+                return "output_columns list cannot be empty"
+            if not all(isinstance(c, str) and len(c) > 0 for c in val):
+                return "output_columns items must be non-empty strings"
+            return None
+
+        if key == "row_count":
+            if not _is_non_neg_int(val):
+                return f"row_count must be a non-negative integer, got {val!r}"
+            return None
+
+        if key == "well_formed_rows":
+            if not isinstance(val, Mapping) or isinstance(val, (str, bytes)):
+                return "well_formed_rows must be a mapping"
+            expected_keys = {"parsed", "total", "malformed_detail"}
+            if set(val.keys()) != expected_keys:
+                return f"well_formed_rows keys must be exactly {sorted(expected_keys)}, got {sorted(val.keys())}"
+            if not _is_non_neg_int(val["parsed"]):
+                return "well_formed_rows 'parsed' must be a non-negative integer"
+            if not _is_non_neg_int(val["total"]):
+                return "well_formed_rows 'total' must be a non-negative integer"
+            detail = val["malformed_detail"]
+            if detail is not None and not isinstance(detail, str):
+                return "well_formed_rows 'malformed_detail' must be a string or None"
+            return None
+
+        if key == "ordered_depth":
+            if (type(val) is str and val == "nondecreasing required") or type(
+                val
+            ) is bool:
+                return None
+            return f"ordered_depth must be 'nondecreasing required' string or boolean, got {val!r}"
+
+        if key == "depth_spacing":
+            if not isinstance(val, Mapping) or isinstance(val, (str, bytes)):
+                return "depth_spacing must be a mapping"
+            expected_keys = {
+                "source_reference",
+                "candidate",
+                "relative_difference",
+                "limit",
+                "definition",
+            }
+            if set(val.keys()) != expected_keys:
+                return f"depth_spacing keys must be exactly {sorted(expected_keys)}, got {sorted(val.keys())}"
+            for num_k in (
+                "source_reference",
+                "candidate",
+                "relative_difference",
+                "limit",
+            ):
+                if not _is_finite_num(val[num_k]):
+                    return f"depth_spacing {num_k!r} must be a finite number, got {val[num_k]!r}"
+            if (
+                val["source_reference"] <= 0
+                or val["candidate"] <= 0
+                or val["limit"] <= 0
+                or val["relative_difference"] < 0
+            ):
+                return "depth_spacing numbers out of valid ranges"
+            if not isinstance(val["definition"], str) or not val["definition"]:
+                return "depth_spacing 'definition' must be a non-empty string"
+            return None
+
+        if key == "inclusion_fraction":
+            if not isinstance(val, Mapping) or isinstance(val, (str, bytes)):
+                return "inclusion_fraction must be a mapping"
+            expected_keys = {
+                "source_reference",
+                "candidate",
+                "absolute_difference",
+                "limit",
+            }
+            if set(val.keys()) != expected_keys:
+                return f"inclusion_fraction keys must be exactly {sorted(expected_keys)}, got {sorted(val.keys())}"
+            for num_k in expected_keys:
+                if not _is_finite_num(val[num_k]) or not (0.0 <= val[num_k] <= 1.0):
+                    return f"inclusion_fraction {num_k!r} must be a finite number in [0, 1], got {val[num_k]!r}"
+            return None
+
+        if key in ("swir_answer_rate", "tir_answer_rate"):
+            if not isinstance(val, Mapping) or isinstance(val, (str, bytes)):
+                return f"{key} must be a mapping"
+            expected_keys = {
+                "source_reference",
+                "candidate",
+                "absolute_difference",
+                "limit",
+                "denominator",
+            }
+            if set(val.keys()) != expected_keys:
+                return f"{key} keys must be exactly {sorted(expected_keys)}, got {sorted(val.keys())}"
+            if not _is_finite_num(val["source_reference"]) or not (
+                0.0 <= val["source_reference"] <= 1.0
+            ):
+                return f"{key} 'source_reference' must be a finite number in [0, 1]"
+            if not _is_finite_num(val["limit"]) or not (0.0 <= val["limit"] <= 1.0):
+                return f"{key} 'limit' must be a finite number in [0, 1]"
+            cand = val["candidate"]
+            diff = val["absolute_difference"]
+            if cand is not None and (
+                not _is_finite_num(cand) or not (0.0 <= cand <= 1.0)
+            ):
+                return f"{key} 'candidate' must be a finite number in [0, 1] or None"
+            if diff is not None and (
+                not _is_finite_num(diff) or not (0.0 <= diff <= 1.0)
+            ):
+                return f"{key} 'absolute_difference' must be a finite number in [0, 1] or None"
+            if not isinstance(val["denominator"], str) or not val["denominator"]:
+                return f"{key} 'denominator' must be a non-empty string"
+            return None
+
+        if key in ("swir_supported_labels", "tir_supported_labels"):
+            if not isinstance(val, Mapping) or isinstance(val, (str, bytes)):
+                return f"{key} must be a mapping"
+            expected_keys = {"unknown_labels", "population"}
+            if set(val.keys()) != expected_keys:
+                return f"{key} keys must be exactly {sorted(expected_keys)}, got {sorted(val.keys())}"
+            if not isinstance(val["unknown_labels"], list) or not all(
+                isinstance(lbl, str) for lbl in val["unknown_labels"]
+            ):
+                return f"{key} 'unknown_labels' must be a list of strings"
+            if not isinstance(val["population"], str) or not val["population"]:
+                return f"{key} 'population' must be a non-empty string"
+            return None
+
+        if key == "downstream_filter_group":
+            if not isinstance(val, Mapping) or isinstance(val, (str, bytes)):
+                return "downstream_filter_group must be a mapping"
+            expected_keys = {"total_rows", "included", "excluded", "group_count"}
+            if set(val.keys()) != expected_keys:
+                return f"downstream_filter_group keys must be exactly {sorted(expected_keys)}, got {sorted(val.keys())}"
+            for int_k in expected_keys:
+                if not _is_non_neg_int(val[int_k]):
+                    return f"downstream_filter_group {int_k!r} must be a non-negative integer, got {val[int_k]!r}"
+            if val["included"] + val["excluded"] != val["total_rows"]:
+                return f"downstream_filter_group accounting mismatch: included ({val['included']}) + excluded ({val['excluded']}) != total_rows ({val['total_rows']})"
+            return None
+
+        if key == "downstream_structure_both_states_present":
+            if not isinstance(val, Mapping) or isinstance(val, (str, bytes)):
+                return "downstream_structure_both_states_present must be a mapping"
+            expected_keys = {
+                "included_rows",
+                "excluded_rows",
+                "swir_blanks_in_valid",
+                "tir_blanks_in_valid",
+                "swir_answered_in_valid",
+                "tir_answered_in_valid",
+                "structure_detail",
+            }
+            if set(val.keys()) != expected_keys:
+                return f"downstream_structure_both_states_present keys must be exactly {sorted(expected_keys)}, got {sorted(val.keys())}"
+            for count_k in (
+                "included_rows",
+                "excluded_rows",
+                "swir_blanks_in_valid",
+                "tir_blanks_in_valid",
+                "swir_answered_in_valid",
+                "tir_answered_in_valid",
+            ):
+                if not _is_non_neg_int(val[count_k]):
+                    return f"downstream_structure_both_states_present {count_k!r} must be a non-negative integer, got {val[count_k]!r}"
+            s_detail = val["structure_detail"]
+            if not isinstance(s_detail, list) or not all(
+                isinstance(s, str) for s in s_detail
+            ):
+                return "downstream_structure_both_states_present 'structure_detail' must be a list of strings"
+            return None
+
+        return f"unknown measurement key: {key!r}"
+    except Exception as err:
+        return f"exception validating {key!r} shape: {err}"
+
+
 def case_check_results(utility_report: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Convert a case utility report to engine-compatible CheckResult dicts.
+    """Convert an already computed case utility report to engine CheckResult dicts.
 
     Emits ALL 13 namespaced case.* measurement IDs every time.
-    Fails closed for inconsistent passed/failures/measurements reports
-    (e.g. unknown failures, passed=False with no failed measurements,
-    non-list failures, or passed=True with non-empty failures).
-    Validates measurement shape and values; no status alias acceptance.
+    Validates report top-level schema (passed boolean, 64-char lowercase hex
+    candidate_sha256, non-empty limitations list, list of failure strings)
+    and exact keysets and scalar types for all 13 measurement objects.
+    Malformed report or measurement shapes fail closed with all 13 checks failing,
+    never crashing with TypeError or KeyError.
+
+    Note: This helper is a check result mapping adapter for an already computed
+    evaluator report. It trusts the evaluator's semantic outcomes (recorded in
+    failures); actual semantic and contract authority resides in evaluate_case_context
+    and verify_case_candidate under the canonical contract.
     """
     if not isinstance(utility_report, Mapping) or isinstance(
         utility_report, (str, bytes)
@@ -974,29 +1194,61 @@ def case_check_results(utility_report: Mapping[str, Any]) -> list[dict[str, Any]
             f"utility report 'passed' must be boolean, got {type(rep_passed).__name__}"
         )
 
-    # 2. Fail closed if report has unexpected top-level keys
+    # 2. Fail closed if candidate_sha256 is missing or invalid
+    cand_sha = utility_report.get("candidate_sha256")
+    if not is_inconsistent:
+        if not isinstance(cand_sha, str) or not HEX64_LOWERCASE_RE.fullmatch(cand_sha):
+            is_inconsistent = True
+            inconsistent_reason = f"utility report 'candidate_sha256' must be 64-character lowercase hex string, got {cand_sha!r}"
+
+    # 3. Fail closed if limitations is missing or empty
+    limitations = utility_report.get("limitations")
+    if not is_inconsistent:
+        if (
+            not isinstance(limitations, list)
+            or len(limitations) == 0
+            or not all(isinstance(x, str) and len(x.strip()) > 0 for x in limitations)
+        ):
+            is_inconsistent = True
+            inconsistent_reason = "utility report 'limitations' must be a non-empty list of non-empty strings"
+
+    # 4. Fail closed if report has unexpected top-level keys
     allowed_report_keys = frozenset(
-        {"passed", "failures", "measurements", "candidate_sha256", "limitations"}
+        {
+            "passed",
+            "failures",
+            "measurements",
+            "candidate_sha256",
+            "limitations",
+            "detail",
+        }
     )
     extra_report_keys = sorted(set(utility_report.keys()) - allowed_report_keys)
-    if extra_report_keys:
+    if extra_report_keys and not is_inconsistent:
         is_inconsistent = True
         inconsistent_reason = (
             f"utility report has unexpected top-level keys: {extra_report_keys}"
         )
 
-    # 3. Fail closed if failures is not strictly a list of strings
+    # 5. Fail closed if failures is not strictly a list of strings (handling unhashables defensively)
     if not isinstance(failures_raw, list):
         is_inconsistent = True
         inconsistent_reason = f"utility report 'failures' must be a list, got {type(failures_raw).__name__}"
-        failures_set = set()
+        failures_set: set[str] = set()
     else:
-        for item in failures_raw:
+        for idx, item in enumerate(failures_raw):
             if type(item) is not str:
                 is_inconsistent = True
-                inconsistent_reason = f"utility report failures must be strings, got {type(item).__name__}"
+                inconsistent_reason = f"utility report failures[{idx}] must be a string, got {type(item).__name__}"
                 break
-        failures_set = set(failures_raw)
+        try:
+            failures_set = set(failures_raw) if not is_inconsistent else set()
+        except TypeError as err:
+            is_inconsistent = True
+            inconsistent_reason = (
+                f"utility report failures contains unhashable item: {err}"
+            )
+            failures_set = set()
 
     measurements = utility_report.get("measurements")
     if not isinstance(measurements, Mapping) or isinstance(measurements, (str, bytes)):
@@ -1005,7 +1257,7 @@ def case_check_results(utility_report: Mapping[str, Any]) -> list[dict[str, Any]
         measurements = {}
     else:
         extra_meas = sorted(set(measurements.keys()) - set(CASE_MEASUREMENT_KEYS))
-        if extra_meas:
+        if extra_meas and not is_inconsistent:
             is_inconsistent = True
             inconsistent_reason = (
                 f"measurements has unexpected unknown keys: {extra_meas}"
@@ -1026,6 +1278,24 @@ def case_check_results(utility_report: Mapping[str, Any]) -> list[dict[str, Any]
             inconsistent_reason = (
                 "inconsistent report: passed is False but failures list is empty"
             )
+
+    # Validate shape of each measurement present in measurements
+    if not is_inconsistent:
+        if not global_failures:
+            missing_meas = [k for k in CASE_MEASUREMENT_KEYS if k not in measurements]
+            if missing_meas:
+                is_inconsistent = True
+                inconsistent_reason = (
+                    f"measurements missing required measurement keys: {missing_meas}"
+                )
+
+        if not is_inconsistent:
+            for k, raw_v in measurements.items():
+                shape_err = _validate_measurement_shape(k, raw_v)
+                if shape_err is not None:
+                    is_inconsistent = True
+                    inconsistent_reason = f"malformed measurement {k!r}: {shape_err}"
+                    break
 
     is_global_failure = bool(global_failures or is_inconsistent)
 
@@ -1048,153 +1318,43 @@ def case_check_results(utility_report: Mapping[str, Any]) -> list[dict[str, Any]
             raw_measured = measurements[k]
             measured = copy.deepcopy(raw_measured)
 
-            # Validate measurement value validity according to evaluator contracts
-            value_invalid = False
-            invalid_reason = ""
-            if k == "source_pin_match":
-                if (
-                    not isinstance(raw_measured, Mapping)
-                    or not raw_measured.get("contract_pin")
-                    or not raw_measured.get("reference_pin")
-                    or raw_measured.get("contract_pin")
-                    != raw_measured.get("reference_pin")
-                ):
-                    value_invalid = True
-                    invalid_reason = "source_pin_match pins differ or invalid"
-            elif k == "output_columns":
-                if not isinstance(raw_measured, list) or not raw_measured:
-                    value_invalid = True
-                    invalid_reason = "invalid output_columns measurement"
-            elif k == "row_count":
-                if (
-                    type(raw_measured) is not int
-                    or isinstance(raw_measured, bool)
-                    or raw_measured <= 0
-                ):
-                    value_invalid = True
-                    invalid_reason = f"invalid row_count measurement: {raw_measured!r}"
-            elif k == "well_formed_rows":
-                if (
-                    not isinstance(raw_measured, Mapping)
-                    or type(raw_measured.get("parsed")) is not int
-                    or type(raw_measured.get("total")) is not int
-                    or raw_measured.get("parsed") != raw_measured.get("total")
-                    or raw_measured.get("malformed_detail") is not None
-                ):
-                    value_invalid = True
-                    invalid_reason = "well_formed_rows parsed != total or malformed"
-            elif k == "ordered_depth":
-                if not isinstance(raw_measured, (str, bool)):
-                    value_invalid = True
-                    invalid_reason = "invalid ordered_depth measurement"
-            elif k == "depth_spacing":
-                cand_sp = (
-                    raw_measured.get("candidate")
-                    if isinstance(raw_measured, Mapping)
-                    else None
-                )
-                if (
-                    not isinstance(raw_measured, Mapping)
-                    or cand_sp is None
-                    or not isinstance(cand_sp, (int, float))
-                    or isinstance(cand_sp, bool)
-                    or cand_sp <= 0
-                ):
-                    value_invalid = True
-                    invalid_reason = (
-                        "depth_spacing candidate spacing non-positive or invalid"
-                    )
-            elif k == "inclusion_fraction":
-                if isinstance(raw_measured, Mapping):
-                    cand_vf = raw_measured.get("candidate")
-                    if (
-                        cand_vf is None
-                        or not isinstance(cand_vf, (int, float))
-                        or isinstance(cand_vf, bool)
-                        or not (0.0 <= cand_vf <= 1.0)
-                    ):
-                        value_invalid = True
-                        invalid_reason = (
-                            "invalid inclusion_fraction candidate value in mapping"
-                        )
-                elif isinstance(raw_measured, (int, float)) and not isinstance(
-                    raw_measured, bool
-                ):
-                    if not (0.0 <= raw_measured <= 1.0):
-                        value_invalid = True
-                        invalid_reason = (
-                            f"inclusion_fraction out of bounds: {raw_measured}"
-                        )
-                else:
-                    value_invalid = True
-                    invalid_reason = (
-                        f"invalid inclusion_fraction measurement: {raw_measured!r}"
-                    )
-            elif k in ("swir_answer_rate", "tir_answer_rate"):
-                if isinstance(raw_measured, Mapping):
-                    cand_ar = raw_measured.get("candidate")
-                    if cand_ar is not None and (
-                        not isinstance(cand_ar, (int, float))
-                        or isinstance(cand_ar, bool)
-                        or not (0.0 <= cand_ar <= 1.0)
-                    ):
-                        value_invalid = True
-                        invalid_reason = f"invalid {k} candidate rate"
-            elif k in ("swir_supported_labels", "tir_supported_labels"):
-                if not isinstance(raw_measured, Mapping):
-                    value_invalid = True
-                    invalid_reason = f"invalid {k} mapping"
-                else:
-                    unknowns = raw_measured.get("unknown_labels")
-                    if not isinstance(unknowns, list) or len(unknowns) > 0:
-                        value_invalid = True
-                        invalid_reason = f"{k} has non-empty unknown_labels: {unknowns}"
-            elif k == "downstream_filter_group":
-                if not isinstance(raw_measured, Mapping):
-                    value_invalid = True
-                    invalid_reason = "invalid downstream_filter_group mapping"
-                else:
-                    tot = raw_measured.get("total_rows")
-                    inc = raw_measured.get("included")
-                    exc = raw_measured.get("excluded")
-                    if (
-                        type(tot) is not int
-                        or type(inc) is not int
-                        or type(exc) is not int
-                        or (inc + exc != tot)
-                        or tot <= 0
-                    ):
-                        value_invalid = True
-                        invalid_reason = (
-                            "downstream_filter_group accounting totals mismatch"
-                        )
-            elif k == "downstream_structure_both_states_present":
-                if not isinstance(raw_measured, Mapping):
-                    value_invalid = True
-                    invalid_reason = (
-                        "invalid downstream_structure_both_states_present mapping"
-                    )
-                else:
-                    s_detail = raw_measured.get("structure_detail")
-                    inc_r = raw_measured.get("included_rows")
-                    exc_r = raw_measured.get("excluded_rows")
-                    if (
-                        not isinstance(s_detail, list)
-                        or len(s_detail) > 0
-                        or inc_r is None
-                        or exc_r is None
-                        or inc_r <= 0
-                        or exc_r <= 0
-                    ):
-                        value_invalid = True
-                        invalid_reason = f"downstream structure presence missing or details non-empty: {s_detail}"
+            check_failed = (k in failures_set) or (cid in failures_set)
+            fail_reason = ""
 
-            if value_invalid:
+            if not check_failed:
+                if k == "source_pin_match":
+                    if raw_measured.get("contract_pin") != raw_measured.get(
+                        "reference_pin"
+                    ):
+                        check_failed = True
+                        fail_reason = (
+                            "source_pin_match contract_pin and reference_pin differ"
+                        )
+                elif k == "well_formed_rows":
+                    if (
+                        raw_measured.get("parsed") != raw_measured.get("total")
+                        or raw_measured.get("malformed_detail") is not None
+                    ):
+                        check_failed = True
+                        fail_reason = "well_formed_rows parsed != total or malformed"
+                elif k in ("swir_supported_labels", "tir_supported_labels"):
+                    if raw_measured.get("unknown_labels"):
+                        check_failed = True
+                        fail_reason = f"{k} has non-empty unknown_labels"
+                elif k == "downstream_structure_both_states_present":
+                    if raw_measured.get("structure_detail"):
+                        check_failed = True
+                        fail_reason = "downstream structure presence details non-empty"
+                    elif (
+                        raw_measured.get("included_rows", 0) <= 0
+                        or raw_measured.get("excluded_rows", 0) <= 0
+                    ):
+                        check_failed = True
+                        fail_reason = "downstream structure requires both included and excluded rows > 0"
+
+            if check_failed:
                 status = "fail"
-                detail = invalid_reason
-            elif k in failures_set or cid in failures_set:
-                status = "fail"
-                detail = (
+                detail = fail_reason or (
                     json.dumps(measured, sort_keys=True)
                     if isinstance(measured, (dict, list))
                     else str(measured)
