@@ -150,6 +150,29 @@
   "generation": {
     "strategies": ["fitted_gaussian_disclosed"],
     "default_strategy": "fitted_gaussian_disclosed",
-    "outputs": ["scalar"]
+    "outputs": ["scalar"],
+    "request_context": {
+      "description": "Seeded synthetic CSV fitted only to per-column aggregates of the supplied source; no source row is copied. Strategy fitted_gaussian_disclosed: a column whose non-blank source values all parse as numbers draws each value independently from a Gaussian with that column's source mean and standard deviation, rounded to 6 decimals and clamped to the source minimum and maximum; every other column draws independently from its disclosed value rates, so a value seen in fewer than two source rows is never emitted. Every column is generated independently of the others. The same source, seed and row count give identical bytes.",
+      "output_columns": [
+        "Same column names and order as the source CSV header; the names are read from the source at run time and are not known during preparation.",
+        "Numeric columns hold independent clamped Gaussian draws: values need not be integers, unique or present in the source, so numeric identifier columns are not preserved.",
+        "Text columns hold independent draws from values seen in at least two source rows, including blank when blank is that common."
+      ],
+      "supported_requests": [
+        "An exact row count up to max_rows; the plan pins it and row_count checks it.",
+        "Keeping the source column names and order: schema_columns checks it.",
+        "A broad resemblance to the source: the mean_value check compares the mean of the first numeric source column with the source mean under a fixed relative tolerance; if the source has no numeric column it is skipped, and because it is required the run then cannot be accepted.",
+        "Showing which checks passed: after generation, validation-report.json lists every check with pass, fail or skip and its measured detail, and evidence-report.md shows each recorded check with required or optional status. No new data column is needed.",
+        "Fictional, synthetic or practice records: rows are generated from aggregates rather than copied from the source; that wording alone is not a privacy guarantee."
+      ],
+      "limitations": [
+        "No preservation of source identifiers, row identity, uniqueness or row order.",
+        "No cross-column correlations, dependencies, sequences or conditional structure.",
+        "Only the first numeric column's mean is measured for fidelity; other columns' distributions are not checked.",
+        "No new columns, custom thresholds, tolerances or distributions, and no output other than this scalar CSV.",
+        "No privacy, anonymity, non-disclosure or no-matching-row guarantee is made.",
+        "Not an exact reconstruction of the source; check outcomes are known only after generation and any required check can fail."
+      ]
+    }
   }
 }

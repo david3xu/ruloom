@@ -267,6 +267,9 @@ unavailable reviews. It does not manufacture a measured row count from the
 plan. Development attribution and deferred real evaluation are documented in
 [the product workflow](docs/credit-free-product.md).
 
+For the complete user journey, model roles, supported scope and later
+comparison design, read [Request-to-data workflow](docs/product-workflow.md).
+
 ```bash
 .venv/bin/ruloom run --profile tabular <source>.csv --max-attempts 2 \
   --spec docs/spec-example.json
@@ -311,10 +314,11 @@ scalars and the common tabular profile): seeded generation from
 statistics, deterministic checks, and a human-gated release. Image
 support is fixture-proven machinery that renders procedural schematics
 from statistics; it is not registered core photography and proves no
-sample-to-image alignment. There is no dispatch, lease, or publication
-service in this tree — the CLI runs one local lifecycle. The CLI takes
-a source file and options, not a plain-language requirement, and there
-is no requirement-clarification step. Statistics-only prompts limit
+sample-to-image alignment. The engine has local durable dispatch and
+separate publication contracts; no hosted job or publication service is
+provided. The CLI runs one local lifecycle. `prepare` interprets a
+plain-language request into a bounded draft for review; it supports scalar
+CSV only and has no requirement-clarification dialogue. Statistics-only prompts limit
 what a model sees; they are not an anonymity guarantee. Output terms
 are recorded per release (`provenance.md` plus the release manifest);
 no blanket licence promise is made here. Historical results in

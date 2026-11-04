@@ -367,6 +367,86 @@ def _check_release(release: Any, manifest_id: str) -> dict[str, Any]:
     return {"members": members}
 
 
+#: Keys of the optional ``generation.request_context`` capability brief.
+#: All four are required when the brief is present; nothing else is
+#: accepted, so a misspelt or invented key fails closed at load.
+REQUEST_CONTEXT_KEYS = (
+    "description",
+    "output_columns",
+    "supported_requests",
+    "limitations",
+)
+
+#: Upper bound on the brief's ``description`` text (characters).
+REQUEST_CONTEXT_MAX_DESCRIPTION = 1500
+
+#: Upper bound on each list entry of the brief (characters).
+REQUEST_CONTEXT_MAX_ITEM = 600
+
+#: Upper bound on the number of entries in each list of the brief.
+REQUEST_CONTEXT_MAX_ITEMS = 16
+
+
+def _bounded_text(value: Any, limit: int, where: str) -> str:
+    """A non-blank single-line string of at most ``limit`` characters."""
+    if not isinstance(value, str) or not value.strip():
+        raise ManifestError(f"{where} must be a non-empty string")
+    if len(value) > limit:
+        raise ManifestError(f"{where} exceeds {limit} characters")
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ManifestError(f"{where} must not contain control characters")
+    return value
+
+
+def _check_request_context(context: Any, where: str) -> dict[str, Any]:
+    """Validate the optional profile-owned capability brief (fail-closed).
+
+    The brief tells request interpretation, in the profile's own words,
+    what its implemented generation and checks actually do: a
+    ``description`` string plus ``output_columns``, ``supported_requests``
+    and ``limitations`` lists. Every field is required once the brief
+    is present; each string is non-blank, single-line and bounded; each
+    list is non-empty, bounded and free of duplicates. Unknown keys or
+    malformed values are refused at load, before any model contact.
+    The engine never interprets the wording; it only bounds its shape.
+    """
+    where = f"{where} 'request_context'"
+    if not isinstance(context, dict):
+        raise ManifestError(f"{where} must be an object")
+    extra = set(context) - set(REQUEST_CONTEXT_KEYS)
+    if extra:
+        raise ManifestError(f"{where}: unknown keys {sorted(extra)}")
+    missing = [key for key in REQUEST_CONTEXT_KEYS if key not in context]
+    if missing:
+        raise ManifestError(f"{where}: missing required keys {missing}")
+    brief: dict[str, Any] = {
+        "description": _bounded_text(
+            context["description"],
+            REQUEST_CONTEXT_MAX_DESCRIPTION,
+            f"{where} 'description'",
+        )
+    }
+    for key in REQUEST_CONTEXT_KEYS[1:]:
+        items = context[key]
+        if (
+            not isinstance(items, list)
+            or not items
+            or len(items) > REQUEST_CONTEXT_MAX_ITEMS
+        ):
+            raise ManifestError(
+                f"{where} {key!r} must be a list of 1 to "
+                f"{REQUEST_CONTEXT_MAX_ITEMS} strings"
+            )
+        checked = [
+            _bounded_text(item, REQUEST_CONTEXT_MAX_ITEM, f"{where} {key!r}[{index}]")
+            for index, item in enumerate(items)
+        ]
+        if len(set(checked)) != len(checked):
+            raise ManifestError(f"{where} {key!r} contains duplicate entries")
+        brief[key] = checked
+    return brief
+
+
 def _check_generation(generation: Any, manifest_id: str) -> dict[str, Any]:
     """Validate the optional ``generation`` declaration (fail-closed).
 
@@ -375,9 +455,13 @@ def _check_generation(generation: Any, manifest_id: str) -> dict[str, Any]:
     which of them a default run uses (``default_strategy``, defaulting
     to the first listed), and the output modalities the profile can
     produce (``outputs``, a non-empty subset of ``GENERATION_OUTPUTS``).
-    A manifest without the block declares nothing: no named strategies
-    and scalar output only. Unknown keys, an empty strategy list, a
-    default outside the list, or an unknown output are refused at load.
+    An optional ``request_context`` capability brief describes, for
+    request interpretation only, what the implemented generation and
+    checks do (see :func:`_check_request_context`); a manifest without
+    it keeps working unchanged. A manifest without the block declares
+    nothing: no named strategies and scalar output only. Unknown keys,
+    an empty strategy list, a default outside the list, an unknown
+    output, or a malformed brief are refused at load.
     """
     where = f"manifest {manifest_id!r} 'generation'"
     if generation is None:
@@ -410,14 +494,24 @@ def _check_generation(generation: Any, manifest_id: str) -> dict[str, Any]:
             f"{where}: 'outputs' must be a non-empty list drawn from "
             f"{list(GENERATION_OUTPUTS)!r}, got {outputs!r}"
         )
-    extra = set(generation) - {"strategies", "default_strategy", "outputs"}
+    extra = set(generation) - {
+        "strategies",
+        "default_strategy",
+        "outputs",
+        "request_context",
+    }
     if extra:
         raise ManifestError(f"{where}: unknown keys {sorted(extra)}")
-    return {
+    checked: dict[str, Any] = {
         "strategies": list(strategies),
         "default_strategy": default,
         "outputs": list(outputs),
     }
+    if "request_context" in generation:
+        checked["request_context"] = _check_request_context(
+            generation["request_context"], where
+        )
+    return checked
 
 
 def validate_manifest(payload: Mapping[str, Any]) -> Manifest:
