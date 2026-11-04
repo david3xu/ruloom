@@ -177,6 +177,50 @@ def test_installed_wheel_help(installed_wheel: dict[str, Path], tmp_path: Path) 
     assert "run" in proc.stdout
 
 
+def test_installed_wheel_request_context(installed_wheel, tmp_path):
+    """The new request module and profile briefs ship in the real wheel."""
+    work = tmp_path / "request-work"
+    work.mkdir()
+    driver = work / "request.py"
+    driver.write_text(
+        "import json\nfrom pathlib import Path\n"
+        "import engine.cli.request_context as context\n"
+        "from engine.cli import main\n"
+        "from models.base import Completion, Usage\n"
+        "class Fixture:\n"
+        " def complete(self, prompt, schema):\n"
+        "  assert 'private-wheel-canary' not in prompt\n"
+        "  assert 'release_members' in prompt\n"
+        "  return Completion({'summary':'Wheel fixture only.', 'unsupported':[],"
+        "'n_rows':20,'seed':8,'outputs':['scalar'],"
+        "'strategy':'fitted_gaussian_disclosed'},Usage(model='fixture-only'))\n"
+        "Path('source.csv').write_text('id,value\\nprivate-wheel-canary,1\\n')\n"
+        "assert main(['prepare','source.csv','--profile','tabular','--request',"
+        "'Create 20 rows.','--max-attempts','1','--out','draft',"
+        "'--role-adapter','planner=glimmer_local'],model=Fixture()) == 0\n"
+        "r=json.loads(Path('draft/request.json').read_text())\n"
+        "assert r['capability_context']['profile_brief']\n"
+        "assert r['capability_context_sha256']\n"
+        "print('CONTEXT_FILE='+str(Path(context.__file__).resolve()))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, str(driver)],
+        cwd=work,
+        env=_outside_env(installed_wheel["root"]),
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT_S,
+        check=False,
+    )
+    assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
+    location = next(
+        line.split("=", 1)[1]
+        for line in proc.stdout.splitlines()
+        if line.startswith("CONTEXT_FILE=")
+    )
+    assert Path(location).is_relative_to(installed_wheel["root"])
+
+
 def test_installed_wheel_fake_model_run(
     installed_wheel: dict[str, Path], tmp_path: Path
 ) -> None:

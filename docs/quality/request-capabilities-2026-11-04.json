@@ -1,0 +1,297 @@
+{
+  "implementation_revision": "b206e5ca8f84c3a002829d2d41f18aac2bff80d8",
+  "scope": "Request capability metadata and local scalar CLI workflow; independent Sonnet review and fresh live AGY interpretation pending.",
+  "observed_fixture_suite": {
+    "passed": 770,
+    "source_dependent_skipped": 14
+  },
+  "mandatory_gate": {
+    "exit_code": 0,
+    "enforced_pass": 43,
+    "planned_stubs_not_executed": 4
+  },
+  "development": {
+    "agy_implementation": {
+      "requested_model": "claude-opus-5-5-high",
+      "effort": "high",
+      "session": "af5c6229-0874-407e-9c39-1a31c162183d",
+      "result": "partial implementation; stopped by individual quota"
+    },
+    "codex": "completed implementation, tests, docs and independent checks",
+    "independent_review": {
+      "requested_model": "claude-sonnet-5-5-high",
+      "effort": "high",
+      "session": "fbe62bf5-e2c5-4de6-9f4b-d7380f289443",
+      "result": "quota refusal before review; no verdict",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "reported_reset_at_attempt": "4h19m42s"
+    }
+  },
+  "real_source_offline_trial": {
+    "status": "failed",
+    "interpretation_mode": "deterministic fixture; live AGY quota unavailable; no model performance evidence",
+    "request": "I need 10,000 fictional drill-sample records for a data-checking lesson. Keep the depth spacing, blank result labels and inclusion flags similar to this source, and show which checks passed.",
+    "code_revision": "b206e5ca8f84c3a002829d2d41f18aac2bff80d8",
+    "working_tree_clean": true,
+    "source_name": "HD012-scalars.csv",
+    "source_sha256": "8d9afb0120f9a82182f4689109a6c97c96bcc869a555ba77fdece0f98b4cb1bf",
+    "muse_calls": 0,
+    "scope": "Fixed seed 42 plan through fixture request interpretation and offline real-source generation; no live model calls.",
+    "stages": {
+      "prepare": {
+        "exit_code": 0,
+        "wall_seconds": 0.034
+      },
+      "generate": {
+        "exit_code": 2,
+        "wall_seconds": 0.255
+      }
+    },
+    "plan": {
+      "n_rows": 10000,
+      "seed": 42,
+      "strategy": "fitted_markov_joint"
+    },
+    "error": "RuntimeError: generate failed profile or independent lesson-quality contract",
+    "wall_seconds": 0.29,
+    "provider_clients": [],
+    "provider_calls": [],
+    "source_unchanged": true
+  },
+  "measured_quality": {
+    "pass": false,
+    "source_metrics": {
+      "n": 10260,
+      "tir_persistence": 0.724789,
+      "spacing_median_m": 0.00754,
+      "repeated_depth_fraction": 0.137928,
+      "backward_steps": 0,
+      "valid_fraction": 0.750682,
+      "swir_answer_rate": 0.849,
+      "tir_answer_rate": 0.988834,
+      "repeated_valid_fraction": 0.001979
+    },
+    "synthetic_metrics": {
+      "n": 10000,
+      "tir_persistence": 0.717895,
+      "spacing_median_m": 0.00754,
+      "repeated_depth_fraction": 0.19772,
+      "backward_steps": 0,
+      "valid_fraction": 0.7768,
+      "swir_answer_rate": 0.852343,
+      "tir_answer_rate": 0.989186,
+      "repeated_valid_fraction": 0.0
+    },
+    "differences": {
+      "spacing_relative_difference": 0.0,
+      "valid_fraction_difference": 0.026118000000000086,
+      "swir_blank_fraction_difference": 0.003342999999999985,
+      "tir_blank_fraction_difference": 0.00035200000000001896
+    },
+    "acceptance_checks": {
+      "exact_rows": true,
+      "spacing_similarity": true,
+      "flag_similarity": false,
+      "swir_blank_similarity": true,
+      "swir_source_supported_labels": true,
+      "tir_blank_similarity": true,
+      "tir_source_supported_labels": true,
+      "ordered_finite_nonnegative": true,
+      "profile_required_checks": true,
+      "source_unchanged": true
+    },
+    "profile_report": {
+      "artifact_name": "HD012-scalars:attempt-1",
+      "artifact_sha256": "5ab6908428e69acc07438b857c36a745b48b93dacd7b8bd68452e799088b4007",
+      "results": [
+        {
+          "band_position": null,
+          "detail": "10000 rows, header ok",
+          "name": "csv_schema",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "10000 rows",
+          "name": "has_rows",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "0 backward steps",
+          "name": "backward_steps",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "depths never decrease",
+          "name": "depth_non_decreasing",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "all depths finite",
+          "name": "depth_finite",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "all depths use the documented nonnegative convention",
+          "name": "depth_nonnegative",
+          "status": "pass"
+        },
+        {
+          "band_position": 0.7497235532620715,
+          "detail": "0.00754 in [0.003472, 0.008898]",
+          "name": "spacing_median",
+          "status": "pass"
+        },
+        {
+          "band_position": 0.5630321496710995,
+          "detail": "0.19772 in [0.0, 0.35117]",
+          "name": "repeated_depth_fraction",
+          "status": "pass"
+        },
+        {
+          "band_position": 0.5322266641362043,
+          "detail": "0.7768 in [0.602929, 0.929615]",
+          "name": "valid_fraction",
+          "status": "pass"
+        },
+        {
+          "band_position": 0.0,
+          "detail": "0.0 in [0.0, 0.157337]",
+          "name": "repeated_depths_masked_out",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "invalid-label rate 0.000000 <= source 0.000000",
+          "name": "invalid_label_rate",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "band vacuous [0.0, 1.0]",
+          "name": "swir_answer_rate",
+          "status": "skip"
+        },
+        {
+          "band_position": 0.7428360799980974,
+          "detail": "0.989186 in [0.957949, 1.0]",
+          "name": "tir_answer_rate",
+          "status": "pass"
+        },
+        {
+          "band_position": 0.0049356640947079205,
+          "detail": "answer-rate drift 0.003343 <= 0.677315",
+          "name": "swir_answer_fidelity",
+          "status": "pass"
+        },
+        {
+          "band_position": 0.008521117357261314,
+          "detail": "answer-rate drift 0.000352 <= 0.041309",
+          "name": "tir_answer_fidelity",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "10 swir groups in vocabulary",
+          "name": "swir_vocabulary",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "18 tir groups in vocabulary",
+          "name": "tir_vocabulary",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "10 swir groups answered by the source",
+          "name": "swir_source_vocabulary",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "10 swir groups answer",
+          "name": "swir_label_richness",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "18 tir groups answered by the source",
+          "name": "tir_source_vocabulary",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "18 tir groups answer",
+          "name": "tir_label_richness",
+          "status": "pass"
+        },
+        {
+          "band_position": 0.03523985712806984,
+          "detail": "TVD 0.025385 <= 0.720345",
+          "name": "swir_fidelity",
+          "status": "pass"
+        },
+        {
+          "band_position": 0.07264316191157304,
+          "detail": "TVD 0.028098 <= 0.386789",
+          "name": "tir_fidelity",
+          "status": "pass"
+        },
+        {
+          "band_position": 0.023548976766335918,
+          "detail": "TIR persistence drift 0.006894 <= 0.292752",
+          "name": "tir_persistence_fidelity",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "10000 rows as requested",
+          "name": "row_count_match",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "start 0.004 as requested",
+          "name": "depth_start_match",
+          "status": "pass"
+        },
+        {
+          "band_position": null,
+          "detail": "end 60.48987999999318 within requested extent 75.396461",
+          "name": "depth_end_within_requested",
+          "status": "pass"
+        },
+        {
+          "band_position": 0.0,
+          "detail": "median spacing 0.00754 matches requested step 0.00754 (drift 0.000000 <= 0.000249)",
+          "name": "spacing_step_match",
+          "status": "pass"
+        },
+        {
+          "band_position": 6.821210263296962e-06,
+          "detail": "end 60.48987999999318 matches requested span 60.48988 with 1977 masked repeats",
+          "name": "depth_span_match",
+          "status": "pass"
+        }
+      ],
+      "verdict": "pass"
+    },
+    "data_sha256": "5ab6908428e69acc07438b857c36a745b48b93dacd7b8bd68452e799088b4007"
+  },
+  "release_produced": false,
+  "product_ready": false,
+  "comparative_model_performance": "not established",
+  "source_rows_committed": false,
+  "final_fixture_suite": {
+    "passed": 771,
+    "source_dependent_skipped": 14,
+    "wall_seconds": 28.73,
+    "installed_wheel_request_test": "passed; new request context module and profile briefs imported outside repo"
+  }
+}
