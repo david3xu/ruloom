@@ -25,6 +25,7 @@ return (never ``None``) means every check passed.
 from __future__ import annotations
 
 import json
+import math
 import tempfile
 import zipfile
 import zlib
@@ -47,6 +48,26 @@ REPORT_MEMBER = "validation-report.json"
 #: The image evidence members, present only when the imaging branch ran.
 IMAGE_MEMBER = "synthetic.png"
 IMAGE_REPORT_MEMBER = "image-validation.json"
+VISION_ADVISORY_MEMBER = "vision-advisory.json"
+
+
+def _receipt_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject duplicate receipt keys before digest or semantic verification."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ReleaseVerificationError(
+                "duplicate key in vision advisory receipt: refusing"
+            )
+        result[key] = value
+    return result
+
+
+def _receipt_constant(value: str) -> None:
+    raise ReleaseVerificationError(
+        "non-finite number in vision advisory receipt: refusing"
+    )
+
 
 #: Required fields of a validation report (each with its expected shape).
 REPORT_REQUIRED_FIELDS = ("artifact_name", "artifact_sha256", "verdict", "results")
@@ -191,6 +212,220 @@ def _check_report(member: str, payload: Any, *, members: dict[str, bytes]) -> st
     return bound
 
 
+def _check_vision_advisory(payload: Any, *, members: dict[str, bytes]) -> None:
+    """Validate versioned advisory integrity and code-fact binding, never AI truth."""
+    required = {
+        "version",
+        "status",
+        "artifact_sha256",
+        "deterministic_checks",
+        "model",
+        "provider",
+        "adapter",
+        "evidence_kind",
+        "usage",
+        "cost",
+        "observations",
+        "note",
+        "cited_check_ids",
+        "disclaimer",
+        "receipt_sha256",
+    }
+
+    def refuse(reason: str) -> None:
+        raise ReleaseVerificationError(f"{VISION_ADVISORY_MEMBER}: {reason}: refusing")
+
+    def digest_value(value: Any) -> bool:
+        return (
+            isinstance(value, str)
+            and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value)
+        )
+
+    if not isinstance(payload, Mapping) or set(payload) != required:
+        refuse("invalid versioned receipt fields")
+    if type(payload["version"]) is not int or payload["version"] != 1:
+        refuse("unsupported receipt version")
+    bound = payload["artifact_sha256"]
+    if (
+        not digest_value(bound)
+        or IMAGE_MEMBER not in members
+        or sha256_bytes(members[IMAGE_MEMBER]) != bound
+    ):
+        refuse("shipped image hashes differently from advisory binding")
+    digest = payload["receipt_sha256"]
+    unsigned = {k: v for k, v in payload.items() if k != "receipt_sha256"}
+    if (
+        not digest_value(digest)
+        or sha256_bytes(json.dumps(unsigned, sort_keys=True).encode("utf-8")) != digest
+    ):
+        refuse("receipt digest mismatch")
+    if IMAGE_REPORT_MEMBER not in members:
+        refuse("missing deterministic image report")
+    report = json.loads(members[IMAGE_REPORT_MEMBER].decode("utf-8"))
+    if not isinstance(report, Mapping) or report.get("artifact_sha256") != bound:
+        refuse("deterministic report artifact binding mismatch")
+    results = report.get("results")
+    if not isinstance(results, list) or not results:
+        refuse("missing deterministic check facts")
+    facts = []
+    for entry in results:
+        if not isinstance(entry, Mapping):
+            refuse("invalid deterministic check fact")
+        name, status, detail = (
+            entry.get("name"),
+            entry.get("status"),
+            entry.get("detail", ""),
+        )
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(status, str)
+            or status not in {"pass", "fail", "skip"}
+            or not isinstance(detail, str)
+        ):
+            refuse("invalid deterministic check fields")
+        facts.append({"check_id": name, "status": status, "detail": detail})
+    ids = [fact["check_id"] for fact in facts]
+    if len(set(ids)) != len(ids) or payload["deterministic_checks"] != facts:
+        refuse("deterministic check facts mismatch")
+    citations = payload["cited_check_ids"]
+    if (
+        not isinstance(citations, list)
+        or len(citations) > 20
+        or any(not isinstance(c, str) or c not in ids for c in citations)
+    ):
+        refuse("unknown check citations")
+    if len(set(citations)) != len(citations):
+        refuse("duplicate check citations")
+    for key, maximum in (("note", 2000), ("disclaimer", 2000)):
+        value = payload[key]
+        if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+            refuse(f"invalid {key}")
+    cost = payload["cost"]
+    if not isinstance(cost, Mapping):
+        refuse("missing cost availability")
+    if cost.get("status") == "reported":
+        if set(cost) != {"status", "amount", "currency", "source"}:
+            refuse("invalid cost fields")
+        amount = cost.get("amount")
+        try:
+            finite = (
+                type(amount) in (int, float)
+                and math.isfinite(float(amount))
+                and amount >= 0
+            )
+        except (OverflowError, ValueError):
+            finite = False
+        if not finite:
+            refuse("invalid monetary cost")
+        if any(
+            not isinstance(cost.get(k), str)
+            or not cost[k].strip()
+            or len(cost[k]) > 120
+            for k in ("currency", "source")
+        ):
+            refuse("invalid cost provenance")
+    elif cost.get("status") == "unavailable":
+        if set(cost) != {"status", "reason"}:
+            refuse("invalid unavailable cost fields")
+        if (
+            not isinstance(cost.get("reason"), str)
+            or not cost["reason"].strip()
+            or len(cost["reason"]) > 500
+        ):
+            refuse("missing unavailable cost reason")
+    else:
+        refuse("unknown cost status")
+    status = payload["status"]
+    kind = payload["evidence_kind"]
+    if not isinstance(status, str) or status not in {
+        "ok",
+        "unavailable",
+        "advisory-failed",
+    }:
+        refuse("unknown advisory status")
+    if not isinstance(kind, str) or kind not in {
+        "provider_reported",
+        "injected",
+        "unverified",
+        "not_dispatched",
+    }:
+        refuse("invalid evidence kind")
+    for key in ("model", "provider", "adapter"):
+        value = payload[key]
+        if value is not None and (
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > 120
+            or value == "unknown"
+        ):
+            refuse(f"invalid observed {key}")
+    if (
+        kind == "provider_reported"
+        and {"meta": "meta_cli", "azure": "azure_foundry"}.get(payload["provider"])
+        != payload["adapter"]
+    ):
+        refuse("provider and adapter mismatch")
+    if kind == "injected" and (
+        payload["provider"] != "fixture" or payload["adapter"] != "injected"
+    ):
+        refuse("injected provenance mismatch")
+    usage = payload["usage"]
+    if usage is not None:
+        fields = {
+            "model",
+            "input_tokens",
+            "cached_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+            "calls",
+        }
+        if (
+            not isinstance(usage, Mapping)
+            or set(usage) != fields
+            or usage["model"] != payload["model"]
+            or payload["model"] is None
+        ):
+            refuse("invalid observed usage")
+        if any(
+            type(usage[k]) is not int or usage[k] < (1 if k == "calls" else 0)
+            for k in fields - {"model"}
+        ):
+            refuse("invalid usage counters")
+    if status == "ok":
+        if (
+            kind == "not_dispatched"
+            or usage is None
+            or any(payload[k] is None for k in ("model", "provider", "adapter"))
+        ):
+            refuse("successful advisory has no invocation provenance")
+        observations = payload["observations"]
+        if not isinstance(observations, Mapping) or not 1 <= len(observations) <= 32:
+            refuse("missing advisory observations")
+        if any(
+            not isinstance(k, str)
+            or not k
+            or len(k) > 120
+            or not isinstance(v, str)
+            or not v.strip()
+            or len(v) > 1000
+            for k, v in observations.items()
+        ):
+            refuse("invalid advisory observation")
+    else:
+        if payload["observations"] != {} or citations:
+            refuse("failure receipt carries opinions")
+        if usage is None:
+            if (
+                any(payload[k] is not None for k in ("model", "provider", "adapter"))
+                or cost.get("status") != "unavailable"
+            ):
+                refuse("unreported failure identity and usage must remain unknown")
+        elif status != "advisory-failed" or kind == "not_dispatched":
+            refuse("failure receipt fabricates dispatched usage")
+
+
 def verify_release(
     zip_path: str | Path,
     *,
@@ -304,7 +539,17 @@ def verify_release(
         if not name.endswith(".json"):
             continue
         try:
-            parsed[name] = json.loads(payload.decode("utf-8"))
+            parsed[name] = json.loads(
+                payload.decode("utf-8"),
+                **(
+                    {
+                        "object_pairs_hook": _receipt_object,
+                        "parse_constant": _receipt_constant,
+                    }
+                    if name == VISION_ADVISORY_MEMBER
+                    else {}
+                ),
+            )
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ReleaseVerificationError(
                 f"member {name!r} is not valid JSON: refusing"
@@ -314,6 +559,8 @@ def verify_release(
     artifact_sha = _check_report(REPORT_MEMBER, parsed[REPORT_MEMBER], members=members)
     if IMAGE_REPORT_MEMBER in parsed:
         _check_report(IMAGE_REPORT_MEMBER, parsed[IMAGE_REPORT_MEMBER], members=members)
+    if VISION_ADVISORY_MEMBER in parsed:
+        _check_vision_advisory(parsed[VISION_ADVISORY_MEMBER], members=members)
 
     case_report: dict[str, Any] | None = None
     case_members_present = {name for name in members if name in CASE_MEMBER_NAMES}

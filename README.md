@@ -100,6 +100,9 @@ inventoried at intake but carry no statistics (no stdlib JPEG decoder);
 only PNG is decoded, statistics are computed by code, the synthetic
 render is seeded code fitted to those statistics, and a vision model may
 look at the synthetic render as an advisory critic only.
+The structured vision extension and its separate scope are documented in
+[`docs/vision-workflow.md`](docs/vision-workflow.md). Vision opinions remain
+advisory; unavailable calls are recorded explicitly.
 
 A second, text-only critic seat is bound to a local Muse Glimmer model
 served over an OpenAI-compatible endpoint. It reads the run's validation

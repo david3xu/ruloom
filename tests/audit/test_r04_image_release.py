@@ -24,11 +24,12 @@ import pytest
 from engine.artifacts.consumer import verify_release
 from engine.core.manifest import load_manifest
 from engine.core.runner import EXIT_FAILED, EXIT_OK, execute
-from models.base import Completion, Usage
+from models.base import Completion, ModelCapabilities, Usage
 from profiles.hylogger import capabilities as hy_capabilities
 from profiles.hylogger.generation.plan import provider_schema
 from profiles.hylogger.imaging.critic import CRITIC_SCHEMA
 from profiles.hylogger.imaging.generate import make_fixture_png
+from tests.profiles.hylogger.test_critic import vision_answer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = load_manifest(REPO_ROOT / "profiles" / "hylogger" / "profile.json")
@@ -60,11 +61,17 @@ IMAGE_MEMBERS = [
     "synthetic.png",
     "image-statistics.json",
     "image-validation.json",
+    "vision-advisory.json",
 ]
 
 
 class FakePlanner:
     """A planner double replaying one queued plan."""
+
+    capabilities = ModelCapabilities(
+        input_modalities=("text",),
+        structured_output=True,
+    )
 
     def __init__(self, plan: Mapping[str, Any]) -> None:
         self._plan = dict(plan)
@@ -81,6 +88,14 @@ class FakePlanner:
 class FakeVisionClient:
     """A vision-role double returning one queued advisory note."""
 
+    capabilities = ModelCapabilities(
+        input_modalities=("text", "image"),
+        structured_output=True,
+        image_media_types=("image/png",),
+        max_image_bytes=10_000_000,
+        max_image_pixels=10_000_000,
+    )
+
     def __init__(self, note: str = "looks plausibly banded") -> None:
         self.note = note
 
@@ -89,9 +104,14 @@ class FakeVisionClient:
     ) -> Completion:
         assert dict(schema) == CRITIC_SCHEMA
         return Completion(
-            data={"note": self.note},
+            data=vision_answer(prompt, self.note),
             usage=Usage(model="fake-vision", input_tokens=7, output_tokens=3, calls=1),
-            meta={"model": "fake-vision"},
+            meta={
+                "model": "fake-vision",
+                "provider": "fixture",
+                "adapter": "injected",
+                "evidence_kind": "injected",
+            },
         )
 
 
@@ -205,12 +225,18 @@ def test_image_run_releases_image_members(
         )
         shipped_image = archive.read("synthetic.png")
         image_report = json.loads(archive.read("image-validation.json"))
+        advisory_receipt = json.loads(archive.read("vision-advisory.json"))
     assert shipped_image[:8] == b"\x89PNG\r\n\x1a\n"
     # The registration and check evidence bind the shipped image bytes.
     assert image_report["verdict"] == "pass"
+    assert advisory_receipt["status"] == "ok"
     import hashlib as _hashlib
 
     assert image_report["artifact_sha256"] == _hashlib.sha256(shipped_image).hexdigest()
+    assert (
+        advisory_receipt["artifact_sha256"]
+        == _hashlib.sha256(shipped_image).hexdigest()
+    )
     manifest = json.loads((artifact / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["artifact_sha256"] == result["artifact_sha256"]
     with zipfile.ZipFile(artifact / "release.zip") as archive:

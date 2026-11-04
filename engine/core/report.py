@@ -131,6 +131,15 @@ def render_evidence_report(evidence: Mapping[str, Any]) -> str:
                 f"| {_short(invocation.get('model', 'unknown'))} "
                 f"| {_short(invocation.get('returned_model', 'unknown'))} |"
             )
+        for call in calls:
+            img = call.get("attached_image")
+            if isinstance(img, Mapping):
+                lines.append(
+                    f"- Attached image artifact for {_short(call.get('role'))}: "
+                    f"sha256 {_short(img.get('artifact_sha256'))} "
+                    f"({img.get('media_type')}, {img.get('bytes')} bytes, "
+                    f"{img.get('width')}x{img.get('height')}, produced by {_short(img.get('produced_by'))})"
+                )
     else:
         lines.append("No successful model invocations recorded for this run.")
     for denial in get("model_denials") or []:
@@ -143,6 +152,19 @@ def render_evidence_report(evidence: Mapping[str, Any]) -> str:
         )
     for advisory in get("advisories") or []:
         lines.append(f"- Advisory record (not acceptance): {_short(advisory, 500)}")
+        payload = advisory.get("payload") if isinstance(advisory, Mapping) else None
+        if (
+            isinstance(payload, Mapping)
+            and payload.get("version") == 1
+            and "receipt_sha256" in payload
+        ):
+            lines.append(
+                f"- Image advisory status: {_short(payload.get('status'))}; "
+                f"evidence: {_short(payload.get('evidence_kind'))}; "
+                f"provider: {_short(payload.get('provider'))}; "
+                f"model: {_short(payload.get('model'))}; "
+                f"cost: {_short(payload.get('cost'), 250)}."
+            )
     lines.append(
         "Seeded code generates data; checks determine eligibility; a human decides acceptance."
     )

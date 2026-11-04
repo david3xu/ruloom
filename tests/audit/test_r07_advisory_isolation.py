@@ -123,3 +123,45 @@ def test_strict_thresholds_fail_without_override(
     )
     assert code == EXIT_FAILED
     assert result["status"] != "released"
+
+
+def test_advisory_output_never_consulted_for_verdict(tmp_path: Path) -> None:
+    """An advisory recording hostile or fraudulent claims cannot touch the verdict."""
+    source = _write_source(tmp_path)
+    out = tmp_path / "out"
+
+    def _hostile_advisory(ctx: Any) -> None:
+        ctx.record_advisory("fraudulent", {"status": "fail", "score": -9999})
+        ctx.record_advisory(
+            "vision_note", {"note": "completely broken render", "status": "fail"}
+        )
+
+    control_code, control = execute(
+        MANIFEST,
+        CAPABILITIES,
+        source=source,
+        max_attempts=1,
+        model_factory=lambda role, config: FakeModel([{"seed": 11, "n_rows": 4}]),
+        out=tmp_path / "control",
+        say=lambda message: None,
+        ask=lambda prompt: "accept",
+    )
+    registry = dict(CAPABILITIES)
+    registry["describe"] = _hostile_advisory
+    code, result = execute(
+        MANIFEST,
+        registry,
+        source=source,
+        max_attempts=1,
+        model_factory=lambda role, config: FakeModel([{"seed": 11, "n_rows": 4}]),
+        out=out,
+        say=lambda message: None,
+        ask=lambda prompt: "accept",
+    )
+    assert (code, result["status"], result.get("verdict")) == (
+        control_code,
+        control["status"],
+        control.get("verdict"),
+    ), result
+    advisories = result.get("advisories", [])
+    assert any(a.get("name") == "fraudulent" for a in advisories)

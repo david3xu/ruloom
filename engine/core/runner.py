@@ -170,6 +170,10 @@ class _BudgetedClient:
 
     def _check_budget(self) -> None:
         self._runner.check_model_policy(self._role)
+        if getattr(self._runner, "_vision_usage_uncertain", False):
+            raise BudgetExceeded(
+                "prior image call has unknown usage; refusing further model calls"
+            )
         budget = self._runner.model_budget
         if budget is not None and self._runner.model_tokens >= budget:
             raise BudgetExceeded(
@@ -179,7 +183,12 @@ class _BudgetedClient:
             )
 
     def _complete(
-        self, method: str, prompt: str, schema: Mapping[str, Any], *args: Any
+        self,
+        method: str,
+        prompt: str,
+        schema: Mapping[str, Any],
+        *args: Any,
+        attached_info: Any = None,
     ) -> Any:
         target_fn = getattr(self._client, method, None)
         if target_fn is None or not callable(target_fn):
@@ -187,23 +196,65 @@ class _BudgetedClient:
                 f"{type(self._client).__name__!r} object has no method {method!r}"
             )
         self._check_budget()
-        self._runner.log.append("model_call_started", "started", {"role": self._role})
+        start_details: dict[str, Any] = {"role": self._role}
+        if attached_info is not None:
+            start_details["attached_image"] = {
+                "artifact_sha256": attached_info.sha256,
+                "produced_by": attached_info.produced_by,
+                "media_type": attached_info.media_type,
+                "bytes": attached_info.byte_size,
+                "width": attached_info.width,
+                "height": attached_info.height,
+            }
+        self._runner.log.append("model_call_started", "started", start_details)
         try:
             completion = target_fn(prompt, schema, *args)
+            if attached_info is not None:
+                usage = getattr(completion, "usage", None)
+                for key in (
+                    "input_tokens",
+                    "cached_tokens",
+                    "output_tokens",
+                    "reasoning_tokens",
+                    "calls",
+                ):
+                    value = getattr(usage, key, None)
+                    if type(value) is not int or value < (1 if key == "calls" else 0):
+                        raise RunnerError("image response has invalid usage counters")
+                observed = getattr(usage, "model", None)
+                if (
+                    not isinstance(observed, str)
+                    or not observed.strip()
+                    or observed == "unknown"
+                ):
+                    raise RunnerError("image response has no observed model identity")
         except Exception as exc:
+            failure = {
+                "role": self._role,
+                "error": f"{type(exc).__name__}: {exc}",
+                "returned_model": "unknown",
+            }
+            if attached_info is not None:
+                self._runner._vision_usage_uncertain = True
+                failure.update(
+                    {
+                        "error": f"image call failed ({type(exc).__name__}); provider details withheld",
+                        "usage": None,
+                        "cost": {"status": "unavailable", "reason": "call failed"},
+                        "attached_image": start_details["attached_image"],
+                    }
+                )
             self._runner.log.append(
                 "model_call_failed",
                 "error",
-                {
-                    "role": self._role,
-                    "error": f"{type(exc).__name__}: {exc}",
-                    "returned_model": "unknown",
-                },
+                failure,
             )
             raise
         self._runner.record_model_usage(completion.usage, role=self._role)
         self._runner.note_model_call(completion.usage)
-        self._runner.note_model_invocation(self._role, self._client, completion)
+        self._runner.note_model_invocation(
+            self._role, self._client, completion, attached_info=attached_info
+        )
         return completion
 
     def complete(self, prompt: str, schema: Mapping[str, Any]) -> Any:
@@ -212,7 +263,27 @@ class _BudgetedClient:
     def complete_with_image(
         self, prompt: str, schema: Mapping[str, Any], image_path: Any
     ) -> Any:
-        return self._complete("complete_with_image", prompt, schema, image_path)
+        self._check_budget()
+        capabilities = getattr(self._client, "capabilities", None)
+        if capabilities is None or not getattr(capabilities, "supports_image", False):
+            from ..artifacts.images import ImageSecurityError
+
+            raise ImageSecurityError(
+                f"model client for role {self._role!r} does not admit image input "
+                f"(capabilities={capabilities})"
+            )
+        from ..artifacts.images import staged_image_attachment
+
+        with staged_image_attachment(
+            image_path, self._runner, capabilities
+        ) as attached:
+            return self._complete(
+                "complete_with_image",
+                prompt,
+                schema,
+                attached.staged_path,
+                attached_info=attached,
+            )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.__dict__["_client"], name)
@@ -309,6 +380,15 @@ class RunContext:
         """Return the raw source bytes (guarded by ``reads_raw_source``)."""
         self._deny_unless_raw("raw source bytes")
         return self._engine.source_bytes
+
+    def register_source_artifact(self, sha256: str, name: str = "") -> None:
+        """Register a source artifact hash to exclude source copies from model attachment."""
+        self._deny_unless_raw("source artifact registration")
+        self._engine.register_source_hash(sha256)
+
+    def register_source_hash(self, sha256: str) -> None:
+        """Alias for register_source_artifact."""
+        self.register_source_artifact(sha256)
 
     def model(self, role: str) -> Any:
         """Return the model client for ``role`` (guarded by ``calls_model``)."""
@@ -724,6 +804,11 @@ class _Runner:
             if not images_dir.is_dir():
                 raise RunnerError(f"images directory not found: {images_dir}")
         self.images_dir = images_dir
+        if images_dir is not None and self._spec.get("case") is not None:
+            if "imaging" not in self._spec.get("outputs", []):
+                raise RunnerError(
+                    "image inputs are outside the selected case output scope"
+                )
         self.local_critic_enabled = bool(local_critic)
         self.max_attempts = max_attempts
         self.model_factory = model_factory
@@ -826,7 +911,11 @@ class _Runner:
             self.log.append("source_intake", "error", {"error": failure})
             self.store.update_run("error", error=failure)
             raise RunnerError(failure) from exc
+        from ..artifacts.hashing import sha256_bytes
+
+        self._source_hashes: set[str] = {sha256_bytes(self.source_bytes)}
         self._models: dict[str, Any] = {}
+        self._vision_usage_uncertain = False
         self._requirements: dict[str, Any] | None = None
         self._first_plan_seed: Any = None
 
@@ -882,11 +971,32 @@ class _Runner:
         )
         self.model_tokens += usage_tokens(usage, adapter=effective_adapter)
 
+    def register_source_hash(self, sha256: str) -> None:
+        """Record one source hash to exclude source bytes from model vision attachment."""
+        if (
+            not isinstance(sha256, str)
+            or len(sha256) != 64
+            or any(ch not in "0123456789abcdef" for ch in sha256)
+        ):
+            raise RunnerError("source hash must be 64 lowercase hexadecimal characters")
+        self._source_hashes.add(sha256)
+
+    @property
+    def source_hashes(self) -> frozenset[str]:
+        """Immutable view of recorded source hashes."""
+        return frozenset(self._source_hashes)
+
     def note_model_call(self, usage: Any) -> None:
         """Remember the latest model usage for the attempt log entry."""
         self._last_usage = usage
 
-    def note_model_invocation(self, role: str, client: Any, completion: Any) -> None:
+    def note_model_invocation(
+        self,
+        role: str,
+        client: Any,
+        completion: Any,
+        attached_info: Any = None,
+    ) -> None:
         """Record one model call's effective invocation to the run log.
 
         The hosted adapter exposes its restricted invocation (argv,
@@ -913,7 +1023,32 @@ class _Runner:
             "client": type(client).__name__,
             "adapter": self.role_bindings.get(role, {}).get("adapter", HOSTED_ADAPTER),
         }
+        if attached_info is not None:
+            details["attached_image"] = {
+                "artifact_sha256": attached_info.sha256,
+                "produced_by": attached_info.produced_by,
+                "media_type": attached_info.media_type,
+                "bytes": attached_info.byte_size,
+                "width": attached_info.width,
+                "height": attached_info.height,
+            }
         meta = getattr(completion, "meta", None)
+        if attached_info is not None:
+            vision_meta = meta if isinstance(meta, Mapping) else {}
+            details["vision"] = {
+                "provider": vision_meta.get("provider", "unverified"),
+                "adapter": vision_meta.get("adapter", "unverified"),
+                "evidence_kind": vision_meta.get("evidence_kind", "unverified"),
+                "cost": _copy(
+                    vision_meta.get(
+                        "cost",
+                        {
+                            "status": "unavailable",
+                            "reason": "adapter reports no monetary cost",
+                        },
+                    )
+                ),
+            }
         meta_models: Any = meta.get("models") if isinstance(meta, Mapping) else None
         models_copy = (
             [dict(entry) for entry in meta_models if isinstance(entry, Mapping)]

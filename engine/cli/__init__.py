@@ -578,10 +578,11 @@ def default_client(role: str, config: Mapping[str, Any]) -> StructuredModel:
         )
     from models.meta_cli import MuseCLIModel
 
+    contributor = role != "critic"
     return MuseCLIModel(
         model=str(config.get("model", "muse-spark-1.3")),
         effort=str(config.get("reasoning_effort", "max")),
-        contributor=True,
+        contributor=contributor,
     )
 
 

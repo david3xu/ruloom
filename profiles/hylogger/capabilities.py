@@ -49,7 +49,15 @@ from .generation.generate import generate as generate_artifact
 from .generation.plan import propose, provider_schema, validate_plan
 from .generation.repair import build_repair_prompt
 from .imaging.checks import run_image_checks
-from .imaging.critic import critique_synthetic
+from .imaging.critic import (
+    EVIDENCE_NOT_DISPATCHED,
+    STATUS_UNAVAILABLE,
+    CriticError,
+    build_failure_receipt,
+    critique_synthetic,
+    failure_receipt_for,
+    validate_receipt,
+)
 from .imaging.generate import synthesize as synthesize_image
 from .imaging.intake import inventory_images
 from .imaging.scene import build_schematic_scene
@@ -640,19 +648,52 @@ def case_candidate_review(ctx: Any) -> None:
     ctx.event("case_candidate_review", "ok", {"case_id": advisory.get("case_id")})
 
 
+class ImageIntakeError(ValueError):
+    """``--images`` was requested but cannot yield usable image statistics."""
+
+
 def image_intake(ctx: Any) -> None:
     """Hash and attribute the optional image directory (no-op without it).
 
     With ``--images DIR`` every PNG/JPEG is hashed, typed, and
-    attributed from its sibling manifest, and code-only statistics are
-    computed for each PNG. Without the flag this step returns silently
-    so the default run is byte-identical to a run without image steps.
+    attributed from its sibling manifest, its source hash is registered
+    with the engine (so no copy of it can ever be attached to a model
+    call), and code-only statistics are computed for each PNG. Without
+    the flag this step returns silently so the default run is
+    byte-identical to a run without image steps.
+
+    The image extension is separate from the admitted scalar teaching
+    case: a run selecting a scalar case together with ``--images`` is
+    refused. An image request that yields no images, or no decodable
+    PNG statistics, fails loudly instead of degrading to a scalar-only
+    success.
     """
     images_dir = ctx.images_dir
     if images_dir is None:
         return
+    spec = ctx.spec_record()
+    if isinstance(spec, Mapping) and spec.get("case") is not None:
+        raise ImageIntakeError(
+            "image-enabled runs are a separate extension: a selected scalar "
+            "teaching case cannot be combined with --images"
+        )
     records = inventory_images(images_dir)
+    if not records:
+        raise ImageIntakeError(
+            "--images was requested but the directory holds no PNG/JPEG images"
+        )
+    for record in records:
+        ctx.register_source_artifact(record.sha256, record.name)
     stats, skipped = read_statistics(images_dir)
+    if not stats:
+        raise ImageIntakeError(
+            "--images was requested but no image yielded decodable PNG statistics"
+        )
+    inventoried = {record.name: record.sha256 for record in records}
+    for item in stats:
+        ctx.register_source_artifact(item.sha256, item.name)
+        if inventoried.get(item.name) != item.sha256:
+            raise ImageIntakeError("source image changed during statistics derivation")
     ctx.set_companion(
         {
             "records": [record.to_dict() for record in records],
@@ -740,15 +781,28 @@ def image_validate(ctx: Any) -> None:
     ctx.say(f"[image_validate] verdict={report.verdict}")
 
 
+def _record_vision_receipt(
+    ctx: Any, bundle: dict[str, Any], receipt: Mapping[str, Any]
+) -> None:
+    """Store one sealed receipt in the companion bundle and advisory log."""
+    bundle["vision_advisory"] = dict(receipt)
+    ctx.set_companion(bundle)
+    ctx.record_advisory("vision_note", dict(receipt))
+
+
 def image_critique(ctx: Any) -> None:
     """Advisory vision note on the synthetic PNG (never a verdict).
 
-    The vision role sees the rendered synthetic artifact only. Any
-    failure here -- including budget exhaustion -- propagates to the
-    engine, which applies the manifest ``critic_policy`` for this
-    capability (``optional``: recorded visibly as an advisory failure
-    and the run continues; ``required``: the run fails loudly). The
-    run verdict is untouched either way: it never reads advisories.
+    The vision role sees the rendered synthetic artifact only. Every
+    outcome is recorded as a sealed version-1 receipt: ``ok`` for a
+    strictly validated answer, ``unavailable`` / ``advisory-failed``
+    otherwise. A failure receipt is recorded first and the original
+    exception is then re-raised unchanged (``BudgetExceeded`` keeps its
+    class), so the engine applies the manifest ``critic_policy``
+    (``optional``: recorded and the run continues; ``required``: the run
+    fails loudly). Offline policy is refused by the engine's model
+    policy, never treated as a success. The run verdict is untouched
+    either way: it never reads advisories.
     """
     import tempfile
 
@@ -757,18 +811,71 @@ def image_critique(ctx: Any) -> None:
     reference = bundle.get("reference")
     if sha is None or reference is None:
         return
+    report_data = bundle.get("report")
+    if not isinstance(report_data, Mapping):
+        raise CriticError("image validation report missing before critique")
+    deterministic_checks = report_data.get("results")
+
+    try:
+        client = ctx.model("critic")
+    except Exception as exc:
+        receipt = failure_receipt_for(sha, deterministic_checks, exc, dispatched=False)
+        _record_vision_receipt(ctx, bundle, receipt)
+        ctx.event(
+            "image_critique",
+            receipt["status"],
+            {"reason": type(exc).__name__, "receipt_sha256": receipt["receipt_sha256"]},
+        )
+        if type(exc).__name__ in {
+            "BudgetExceeded",
+            "PermissionDenied",
+            "ModelPolicyError",
+        }:
+            raise
+        raise CriticError(
+            f"vision adapter unavailable ({type(exc).__name__})"
+        ) from None
+
     payload = ctx.artifact_payload(sha)
     summary = summarize_for_prompt(ImageStats.from_dict(reference))
     with tempfile.NamedTemporaryFile(
         suffix=".png", prefix="ruloom-synthetic-", delete=False
     ) as handle:
         handle.write(payload)
-        synthetic_path = Path(handle.name)
+        synthetic_path = Path(handle.name).resolve()
     try:
-        client = ctx.model("critic")
-        note = critique_synthetic(client, synthetic_path, summary)
-        ctx.record_advisory("vision_note", note)
-        ctx.say("[image_critique] advisory vision note recorded")
+        try:
+            receipt = critique_synthetic(
+                client,
+                synthetic_path,
+                summary,
+                artifact_sha256=sha,
+                deterministic_checks=deterministic_checks,
+            )
+        except Exception as exc:
+            failure = failure_receipt_for(
+                sha, deterministic_checks, exc, dispatched=True
+            )
+            _record_vision_receipt(ctx, bundle, failure)
+            ctx.event(
+                "image_critique",
+                failure["status"],
+                {
+                    "reason": type(exc).__name__,
+                    "receipt_sha256": failure["receipt_sha256"],
+                },
+            )
+            if type(exc).__name__ in {
+                "BudgetExceeded",
+                "PermissionDenied",
+                "ModelPolicyError",
+            }:
+                raise
+            raise CriticError(
+                f"vision advisory failed ({type(exc).__name__})", dispatched=True
+            ) from None
+        _record_vision_receipt(ctx, bundle, receipt)
+        ctx.say("[image_critique] advisory vision receipt recorded")
     finally:
         synthetic_path.unlink(missing_ok=True)
 
@@ -857,6 +964,20 @@ def package_artifact(ctx: Any) -> None:
                 json.dumps(bundle["report"], indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
+        vision_note = bundle.get("vision_advisory") or ctx.advisory("vision_note")
+        if vision_note is None:
+            vision_note = build_failure_receipt(
+                bundle["image_artifact_sha"],
+                bundle["report"]["results"],
+                status=STATUS_UNAVAILABLE,
+                evidence_kind=EVIDENCE_NOT_DISPATCHED,
+                note="Vision advisory unavailable: no review receipt was recorded.",
+            )
+        validate_receipt(vision_note)
+        (artifact_dir / "vision-advisory.json").write_text(
+            json.dumps(vision_note, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     note = ctx.advisory("local_critique_note")
     if note is not None:
         (artifact_dir / "critic-note.json").write_text(

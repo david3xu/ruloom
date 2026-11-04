@@ -1,0 +1,43 @@
+{
+  "id": "F-ENGINE-VISION",
+  "title": "Registered synthetic image requests and advisory receipts",
+  "owner": "Codex",
+  "status": "implemented",
+  "audit_ref": null,
+  "code": [
+    "models/base.py",
+    "models/image_input.py",
+    "models/meta_cli.py",
+    "models/azure_foundry.py",
+    "engine/artifacts/images.py",
+    "engine/artifacts/consumer.py",
+    "engine/core/runner.py",
+    "engine/core/report.py",
+    "engine/cli/__init__.py",
+    "profiles/hylogger/imaging/critic.py",
+    "profiles/hylogger/capabilities.py",
+    "profiles/hylogger/profile.json"
+  ],
+  "docs": [
+    "docs/vision-workflow.md",
+    "docs/model-families.md"
+  ],
+  "tests": [
+    "tests/engine/test_vision.py",
+    "tests/models/test_model_capabilities.py",
+    "tests/models/test_image_input.py",
+    "tests/models/test_model_cost.py",
+    "tests/models/test_azure_foundry.py",
+    "tests/models/test_meta_cli_restrictions.py",
+    "tests/profiles/hylogger/test_critic.py",
+    "tests/audit/test_r04_image_release.py"
+  ],
+  "required_rules": [
+    "FP-CODE-2",
+    "FP-CODE-6",
+    "Q-MODEL-CALL-POLICY",
+    "Q-RELEASE-COMPLETE",
+    "Q-CODE-HYGIENE"
+  ],
+  "proof": "Controlled fixture tests exercise attachment/provenance/limits, strict structured responses, budget and cost accounting, advisory isolation and recipient evidence. Injected checks do not establish live provider behavior or real-image suitability; revision-specific live and review receipts are retained separately."
+}

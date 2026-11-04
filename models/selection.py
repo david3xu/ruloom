@@ -13,10 +13,10 @@ def model_family(adapter: str, model: str) -> str:
     if adapter in {"meta_cli", "glimmer_local"}:
         return "meta"
     if adapter == "azure_foundry":
-        if model == "muse-spark-1.3":
+        if model in {"muse-spark-1.3", "muse-glimmer-30b"}:
             return "meta"
         raise ValueError(
-            f"unknown azure_foundry model {model!r} (expected 'muse-spark-1.3')"
+            f"unknown azure_foundry model {model!r} (expected 'muse-spark-1.3' or 'muse-glimmer-30b')"
         )
     if adapter == "agy_cli":
         for family in AGY_FAMILY_DEFAULTS:
@@ -48,9 +48,9 @@ def validate_selection(adapter: str, model: str, family: str, effort: str) -> No
             )
         if effort not in {"minimal", "low", "medium", "high", "xhigh"}:
             raise ValueError(f"unsupported azure_foundry effort {effort!r}")
-        if model != "muse-spark-1.3":
+        if model not in {"muse-spark-1.3", "muse-glimmer-30b"}:
             raise ValueError(
-                f"unsupported azure_foundry model {model!r} (expected 'muse-spark-1.3')"
+                f"unsupported azure_foundry model {model!r} (expected 'muse-spark-1.3' or 'muse-glimmer-30b')"
             )
     if adapter == "agy_cli":
         if effort not in {"low", "medium", "high", "xhigh", "max"}:

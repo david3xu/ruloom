@@ -20,7 +20,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
-from models.base import UNKNOWN_MODEL, Completion, Usage
+import pytest
+
+from models.base import UNKNOWN_MODEL, Completion, ModelError, Usage
 from models.glimmer import GlimmerLocalModel
 from models.meta_cli import MuseCLIModel
 
@@ -429,3 +431,130 @@ def test_runner_records_unknown_when_transport_supplies_none(
     runner.note_model_invocation("planner", PlainClient(), completion)
     details = runner.log.events[-1]["details"]
     assert details["returned_model"] == "unknown"
+
+
+# --- Vision model identity tests (complete_with_image fails closed) ---
+
+
+def _make_identity_test_png(width: int = 2, height: int = 2) -> bytes:
+    import struct
+    import zlib
+
+    magic = b"\x89PNG\r\n\x1a\n"
+    ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    ihdr_crc = zlib.crc32(b"IHDR" + ihdr_data) & 0xFFFFFFFF
+    ihdr = struct.pack(">I4s", 13, b"IHDR") + ihdr_data + struct.pack(">I", ihdr_crc)
+    raw = b"".join(b"\x00" + (b"\xff\x00\x00\xff" * width) for _ in range(height))
+    compressed = zlib.compress(raw)
+    idat_crc = zlib.crc32(b"IDAT" + compressed) & 0xFFFFFFFF
+    idat = (
+        struct.pack(">I4s", len(compressed), b"IDAT")
+        + compressed
+        + struct.pack(">I", idat_crc)
+    )
+    iend_crc = zlib.crc32(b"IEND") & 0xFFFFFFFF
+    iend = struct.pack(">I4s", 0, b"IEND") + struct.pack(">I", iend_crc)
+    return magic + ihdr + idat + iend
+
+
+def test_vision_complete_with_image_succeeds_on_exact_identity_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    img_path = tmp_path / "test.png"
+    img_path.write_bytes(_make_identity_test_png(2, 2))
+
+    model = MuseCLIModel(model="muse-spark-1.3")
+    events = [
+        _usage_event(
+            [
+                {
+                    "model": "muse-spark-1.3",
+                    "input_tokens": 120,
+                    "output_tokens": 40,
+                    "calls": 1,
+                }
+            ]
+        ),
+        _terminal_event(json.dumps({"seed": 99})),
+    ]
+    _stub_run(monkeypatch, _Proc("\n".join(events)))
+
+    completion = model.complete_with_image("critique prompt", SCHEMA, img_path)
+
+    assert completion.usage.model == "muse-spark-1.3"
+    assert completion.meta["model"] == "muse-spark-1.3"
+    assert completion.meta["requested_model"] == "muse-spark-1.3"
+    assert model.last_invocation["model"] == "muse-spark-1.3"
+    assert model.last_invocation["returned_model"] == "muse-spark-1.3"
+
+
+def test_vision_complete_with_image_fails_closed_on_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    img_path = tmp_path / "test.png"
+    img_path.write_bytes(_make_identity_test_png(2, 2))
+
+    model = MuseCLIModel(model="muse-spark-1.3")
+    events = [
+        _usage_event(
+            [
+                {
+                    "model": "different-spark-variant",
+                    "input_tokens": 120,
+                    "output_tokens": 40,
+                    "calls": 1,
+                }
+            ]
+        ),
+        _terminal_event(json.dumps({"seed": 99})),
+    ]
+    _stub_run(monkeypatch, _Proc("\n".join(events)))
+
+    with pytest.raises(ModelError, match="muse exec vision model mismatch"):
+        model.complete_with_image("critique prompt", SCHEMA, img_path)
+
+
+def test_vision_complete_with_image_fails_closed_on_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    img_path = tmp_path / "test.png"
+    img_path.write_bytes(_make_identity_test_png(2, 2))
+
+    model = MuseCLIModel(model="muse-spark-1.3")
+    events = [_terminal_event(json.dumps({"seed": 101}))]
+    _stub_run(monkeypatch, _Proc("\n".join(events)))
+
+    with pytest.raises(ModelError, match="reported no usage models"):
+        model.complete_with_image("critique prompt", SCHEMA, img_path)
+
+
+def test_vision_complete_with_image_fails_closed_on_multiple_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    img_path = tmp_path / "test.png"
+    img_path.write_bytes(_make_identity_test_png(2, 2))
+
+    model = MuseCLIModel(model="muse-spark-1.3")
+    events = [
+        _usage_event(
+            [
+                {
+                    "model": "muse-spark-1.3",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "calls": 1,
+                },
+                {
+                    "model": "model-beta",
+                    "input_tokens": 20,
+                    "output_tokens": 15,
+                    "calls": 1,
+                },
+            ]
+        ),
+        _terminal_event(json.dumps({"seed": 102})),
+    ]
+    _stub_run(monkeypatch, _Proc("\n".join(events)))
+
+    with pytest.raises(ModelError, match="reported multiple models"):
+        model.complete_with_image("critique prompt", SCHEMA, img_path)

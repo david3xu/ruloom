@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from .base import UNKNOWN_MODEL, Completion, ModelError, Usage
+from .base import UNKNOWN_MODEL, Completion, ModelCapabilities, ModelError, Usage
 from .local_transport import local_opener, require_loopback_url
 
 #: Default base URL of the local ``llama-server`` instance.
@@ -119,6 +119,16 @@ class GlimmerLocalModel:
     timeout_s: float = 1200.0
     extra_headers: Mapping[str, str] = field(default_factory=dict)
     local_only: bool = False
+    capabilities: ModelCapabilities = field(
+        default_factory=lambda: ModelCapabilities(
+            input_modalities=("text",),
+            structured_output=True,
+            image_media_types=(),
+            max_image_bytes=0,
+            max_image_pixels=0,
+        ),
+        init=False,
+    )
 
     def endpoint(self) -> str:
         """The chat-completions URL this adapter POSTs to."""

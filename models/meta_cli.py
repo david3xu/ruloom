@@ -24,6 +24,7 @@ observed effective permissions on every call.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -33,7 +34,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .base import UNKNOWN_MODEL, Completion, ModelError, Usage
+import jsonschema
+
+from .base import (
+    UNKNOWN_MODEL,
+    Completion,
+    ModelCapabilities,
+    ModelError,
+    Usage,
+    monetary_cost,
+    structured_image_schema,
+)
+from .image_input import read_validated_image
+
+#: Verified model identity for the Muse vision fallback.
+SUPPORTED_VISION_MODEL = "muse-spark-1.3"
+
+#: Base URL for Meta API provider calls.
+META_API_BASE_URL = "https://api.meta.ai/v1"
 
 #: Environment keys the child process may inherit (explicit allowlist).
 #: Everything else -- including every ``RULOOM_*`` setting, API tokens,
@@ -104,7 +122,17 @@ DENIED_SPAWN_FLAG_PREFIXES = (
 )
 
 #: Options of the ``muse exec`` argv that take no value.
-_SPAWN_NO_VALUE_OPTIONS = frozenset({"--json"})
+_SPAWN_NO_VALUE_OPTIONS = frozenset(
+    {
+        "--json",
+        "--disable-shell",
+        "--disable-write",
+        "--disable-web-tools",
+        "--no-foreign-personal-context",
+        "--disable-reminders",
+        "--disable-request-user-input",
+    }
+)
 
 #: Options of the ``muse exec`` argv that consume exactly one following
 #: argv element as their value (see :meth:`MuseCLIModel._argv`). A value
@@ -117,8 +145,27 @@ _SPAWN_SINGLE_VALUE_OPTIONS = frozenset(
         "--image",
         "--workspace",
         "--contributor-mode",
+        "--provider",
+        "--base-url",
+        "--preset",
+        "--max-model-steps",
     }
 )
+
+
+def _reject_constant(val: str) -> None:
+    """Reject NaN, Infinity, -Infinity in JSON content."""
+    raise ValueError(f"non-finite number literal forbidden: {val}")
+
+
+def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject duplicate object keys in JSON content."""
+    d: dict[str, Any] = {}
+    for k, v in pairs:
+        if k in d:
+            raise ValueError(f"duplicate key in JSON object: {k}")
+        d[k] = v
+    return d
 
 
 def requested_permissions(allowed_root: str | Path | None) -> dict[str, str]:
@@ -188,8 +235,9 @@ def enforce_spawn_policy(argv: list[str]) -> None:
       the ``=``), raising :class:`ModelError` before anything spawns;
     * the single value following a known single-value option
       (``--effort``, ``--model``, ``--output-schema``, ``--image``,
-      ``--workspace``, ``--contributor-mode``) is never scanned, so a
-      flag-like path or value cannot trip the gate;
+      ``--workspace``, ``--contributor-mode``, ``--provider``,
+      ``--base-url``, ``--preset``, ``--max-model-steps``) is never
+      scanned, so a flag-like path or value cannot trip the gate;
     * the prompt -- the final element of a ``muse exec`` shaped argv,
       recognised only by the real ``--contributor-mode <on|off>``
       tail :meth:`MuseCLIModel._argv` always emits -- is never
@@ -272,24 +320,77 @@ class MuseCLIModel:
     cli: str = "muse"
     timeout_s: float = 1200.0
 
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        """Declared adapter capabilities scoped strictly to verified model identity."""
+        if self.model == SUPPORTED_VISION_MODEL:
+            return ModelCapabilities(
+                input_modalities=("text", "image"),
+                structured_output=True,
+                image_media_types=("image/png",),
+                max_image_bytes=4 * 1024 * 1024,
+                max_image_pixels=4_000_000,
+            )
+        return ModelCapabilities(
+            input_modalities=("text",),
+            structured_output=True,
+            image_media_types=(),
+            max_image_bytes=0,
+            max_image_pixels=0,
+        )
+
     def _argv(
         self,
         schema_file: str,
         prompt: str,
         image_paths: list[str | Path] | None = None,
     ) -> list[str]:
+        if not image_paths:
+            argv = [
+                self.cli,
+                "exec",
+                "--json",
+                "--effort",
+                self.effort,
+                "--model",
+                self.model,
+                "--output-schema",
+                schema_file,
+            ]
+            if self.allowed_root is not None:
+                argv += ["--workspace", str(self.allowed_root)]
+            argv += ["--contributor-mode", "on" if self.contributor else "off", prompt]
+            return argv
+
+        # Vision invocation: explicitly select meta provider, set base URL and empty preset,
+        # bound to 1 model step, and disable shell, write, web tools, foreign context,
+        # reminders, and request-user-input.
         argv = [
             self.cli,
             "exec",
             "--json",
+            "--provider",
+            "meta",
+            "--base-url",
+            META_API_BASE_URL,
+            "--preset",
+            "empty",
             "--effort",
             self.effort,
             "--model",
             self.model,
             "--output-schema",
             schema_file,
+            "--max-model-steps",
+            "1",
+            "--disable-shell",
+            "--disable-write",
+            "--disable-web-tools",
+            "--no-foreign-personal-context",
+            "--disable-reminders",
+            "--disable-request-user-input",
         ]
-        for image_path in image_paths or []:
+        for image_path in image_paths:
             argv += ["--image", str(image_path)]
         if self.allowed_root is not None:
             argv += ["--workspace", str(self.allowed_root)]
@@ -348,6 +449,35 @@ class MuseCLIModel:
         except OSError as exc:
             raise ModelError(f"muse exec failed to start: {exc}") from exc
 
+    def _run_vision(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
+        """Run vision child invocation with generic/redacted errors."""
+        enforce_spawn_policy(list(argv))
+        env = restricted_env()
+        cwd = resolve_cwd(self.allowed_root)
+        self.last_invocation = {
+            "argv": list(argv),
+            "cwd": cwd,
+            "env_keys": sorted(env),
+            "contributor": self.contributor,
+            "model": self.model,
+            "requested_permissions": requested_permissions(self.allowed_root),
+            "observed_permissions": observed_permissions(cwd, sorted(env)),
+        }
+        try:
+            return subprocess.run(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=self.timeout_s,
+                env=env,
+                cwd=cwd,
+            )
+        except subprocess.TimeoutExpired:
+            raise ModelError("muse exec vision call timed out") from None
+        except OSError:
+            raise ModelError("muse exec failed to start") from None
+
     def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
         """Run ``prompt`` under ``schema`` and return the structured answer."""
         schema_dict = dict(schema)
@@ -376,34 +506,64 @@ class MuseCLIModel:
     ) -> Completion:
         """Run ``prompt`` with one attached image under ``schema``.
 
-        The image is attached with ``muse exec --image <PATH>``; callers
-        must only ever attach rendered synthetic artifacts, never raw
-        source imagery. Parsing, usage, and errors match :meth:`complete`.
+        The caller's image is strictly validated against capability limits, then
+        the immutable validated payload is staged to a private temporary directory
+        before invocation. Fails closed on any model mismatch, invalid schema,
+        malformed output, or unverified counters.
         """
-        if not Path(image_path).is_file():
-            raise ModelError(f"image file not found: {image_path}")
-        schema_dict = dict(schema)
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as handle:
-            json.dump(schema_dict, handle)
-            schema_file = handle.name
-        try:
-            proc = self._run(self._argv(schema_file, prompt, [image_path]))
-        finally:
-            Path(schema_file).unlink(missing_ok=True)
-        completion = self._parse(proc, schema_dict)
+        if self.model != SUPPORTED_VISION_MODEL or not self.capabilities.supports_image:
+            raise ModelError(
+                f"model {self.model!r} does not support vision capability; "
+                f"verified vision model is {SUPPORTED_VISION_MODEL!r}"
+            )
+
+        payload, media_type, width, height = read_validated_image(
+            image_path, self.capabilities
+        )
+        digest = hashlib.sha256(payload).hexdigest()
+
+        schema_dict = structured_image_schema(schema)
+        with tempfile.TemporaryDirectory(prefix="ruloom-staged-img-") as staged_dir:
+            staged_path = Path(staged_dir) / f"staged-{digest[:16]}.png"
+            staged_path.write_bytes(payload)
+            try:
+                staged_path.chmod(0o400)
+            except OSError:
+                pass
+
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False
+            ) as handle:
+                json.dump(schema_dict, handle)
+                schema_file = handle.name
+            try:
+                argv = self._argv(schema_file, prompt, [staged_path])
+                proc = self._run_vision(argv)
+            finally:
+                Path(schema_file).unlink(missing_ok=True)
+
+            completion = self._parse_vision(proc, schema_dict)
+
+        media_meta = {
+            "digest": f"sha256:{digest}",
+            "media_type": media_type,
+            "size_bytes": len(payload),
+            "width": width,
+            "height": height,
+        }
         self.last_invocation = {
             **self.last_invocation,
             "returned_model": completion.usage.model,
+            "media": media_meta,
         }
         completion.meta["invocation"] = dict(self.last_invocation)
+        completion.meta["media"] = media_meta
         return completion
 
     def _parse(
         self, proc: subprocess.CompletedProcess[str], schema_dict: dict
     ) -> Completion:
-        """Parse ``muse exec`` JSONL output into a structured Completion.
+        """Parse ``muse exec`` JSONL output into a structured Completion (scalar path).
 
         Model identity policy: ``Usage.model`` and ``meta["model"]`` carry
         the *observed* identity the transport reported -- ``UNKNOWN_MODEL``
@@ -520,5 +680,192 @@ class MuseCLIModel:
             "effort": self.effort,
             "contributor": self.contributor,
             "output_schema": schema_dict,
+        }
+        return Completion(data=answer, usage=usage, meta=meta)
+
+    def _parse_vision(
+        self, proc: subprocess.CompletedProcess[str], schema_dict: dict
+    ) -> Completion:
+        """Parse ``muse exec`` JSONL output strictly for vision calls.
+
+        Enforces exact observed model identity matching requested model,
+        strict JSON syntax without non-finite numbers or duplicates,
+        jsonschema validation, complete non-negative token usage counters,
+        and redacted generic provider errors.
+        """
+        if proc.returncode != 0:
+            raise ModelError(
+                f"muse exec vision call failed with exit code {proc.returncode}"
+            )
+
+        structured: Any = None
+        terminal_text: str | None = None
+        terminal_kind: str | None = None
+        usage_models: list[dict[str, Any]] = []
+        raw_cost: Any = None
+
+        for line in (proc.stdout or "").splitlines():
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(
+                    line,
+                    parse_constant=_reject_constant,
+                    object_pairs_hook=_reject_duplicates,
+                )
+            except ValueError:
+                raise ModelError(
+                    "muse exec emitted malformed JSONL in vision call"
+                ) from None
+            if not isinstance(event, dict):
+                raise ModelError("muse exec emitted a non-object event in vision call")
+            payload_type = str(event.get("payload_type", ""))
+            payload = event.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            kind = str(payload.get("kind", ""))
+            if payload_type == "run.usage" or kind == "run_usage":
+                models = payload.get("models")
+                if isinstance(models, list):
+                    if not all(isinstance(m, dict) for m in models):
+                        raise ModelError("invalid vision usage model entries")
+                    usage_models.extend(models)
+                if "cost" in payload:
+                    raw_cost = payload["cost"]
+                elif "total_cost" in payload:
+                    raw_cost = payload["total_cost"]
+            if (
+                "struct" in payload_type.lower()
+                or "struct" in kind.lower()
+                or "structuredOutput" in payload
+                or "structured_output" in payload
+            ):
+                structured = payload.get(
+                    "structuredOutput", payload.get("structured_output")
+                )
+                if structured is None:
+                    structured = payload.get("output", payload.get("text"))
+            if payload_type == "run.terminal.completed" or kind == "run_terminal":
+                terminal_kind = payload.get("terminal")
+                text = payload.get("text")
+                if isinstance(text, str):
+                    terminal_text = text
+
+        if terminal_kind != "completed":
+            raise ModelError("vision model run did not complete")
+
+        raw_answer = structured if structured is not None else terminal_text
+        if raw_answer is None or (
+            isinstance(raw_answer, str) and not raw_answer.strip()
+        ):
+            raise ModelError("muse exec produced no structured answer for vision call")
+
+        if isinstance(raw_answer, str):
+            try:
+                answer = json.loads(
+                    raw_answer,
+                    parse_constant=_reject_constant,
+                    object_pairs_hook=_reject_duplicates,
+                )
+            except ValueError:
+                raise ModelError("vision structured answer is not valid JSON") from None
+        elif isinstance(raw_answer, dict):
+            try:
+                answer = json.loads(
+                    json.dumps(raw_answer),
+                    parse_constant=_reject_constant,
+                    object_pairs_hook=_reject_duplicates,
+                )
+            except ValueError:
+                raise ModelError("vision structured answer is invalid") from None
+        else:
+            raise ModelError(
+                f"vision structured answer is not a JSON object: {type(raw_answer).__name__}"
+            )
+
+        if not isinstance(answer, dict):
+            raise ModelError(
+                f"vision structured answer is not a JSON object: {type(answer).__name__}"
+            )
+
+        # Strict schema validation
+        try:
+            jsonschema.validate(instance=answer, schema=schema_dict)
+        except jsonschema.ValidationError:
+            raise ModelError("vision output violates requested schema") from None
+        except Exception:
+            raise ModelError("vision response schema could not be resolved") from None
+
+        # Model identity verification: must report exactly the requested model
+        if not usage_models:
+            raise ModelError("muse exec reported no usage models for vision call")
+
+        per_model: list[dict[str, Any]] = []
+        for entry in usage_models:
+            name = entry.get("model")
+            if (
+                not isinstance(name, str)
+                or not name.strip()
+                or name.strip().lower() == UNKNOWN_MODEL
+            ):
+                raise ModelError(
+                    "muse exec reported missing or unknown model identity in vision call"
+                )
+            observed_name = name.strip()
+
+            counts: dict[str, Any] = {"model": observed_name}
+            for key in ("input_tokens", "output_tokens", "calls"):
+                val = entry.get(key)
+                if type(val) is not int or isinstance(val, bool) or val < 0:
+                    raise ModelError(
+                        f"missing or negative token usage counter {key!r} in vision call"
+                    )
+                counts[key] = val
+            if counts["calls"] < 1:
+                raise ModelError("token usage calls must be >= 1 in vision call")
+
+            for key in ("cached_tokens", "reasoning_tokens"):
+                val = entry.get(key, 0)
+                if type(val) is not int or isinstance(val, bool) or val < 0:
+                    raise ModelError(
+                        f"invalid token usage counter {key!r} in vision call"
+                    )
+                counts[key] = val
+
+            per_model.append(counts)
+
+        distinct = list(dict.fromkeys(entry["model"] for entry in per_model))
+        if len(distinct) != 1:
+            raise ModelError(
+                f"muse exec vision call reported multiple models: {distinct}"
+            )
+        observed = distinct[0]
+        if observed != self.model:
+            raise ModelError(
+                f"muse exec vision model mismatch: requested {self.model!r}"
+            )
+
+        totals = {
+            "input_tokens": sum(e["input_tokens"] for e in per_model),
+            "cached_tokens": sum(e["cached_tokens"] for e in per_model),
+            "output_tokens": sum(e["output_tokens"] for e in per_model),
+            "reasoning_tokens": sum(e["reasoning_tokens"] for e in per_model),
+            "calls": sum(e["calls"] for e in per_model),
+        }
+        usage = Usage(model=observed, **totals)
+
+        cost_meta = monetary_cost(raw_cost, source="cli")
+
+        meta = {
+            "model": observed,
+            "requested_model": self.model,
+            "models": per_model,
+            "effort": self.effort,
+            "contributor": self.contributor,
+            "output_schema": schema_dict,
+            "cost": cost_meta,
+            "provider": "meta",
+            "adapter": "meta_cli",
+            "evidence_kind": "provider_reported",
         }
         return Completion(data=answer, usage=usage, meta=meta)
