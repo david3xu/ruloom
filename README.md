@@ -269,6 +269,11 @@ plan. Development attribution and deferred real evaluation are documented in
 
 For the complete user journey, model roles, supported scope and later
 comparison design, read [Request-to-data workflow](docs/product-workflow.md).
+For the implemented bounded scalar teaching case, use the
+[operator guide](docs/research-workflow-user-guide.md) and
+[installed-wheel acceptance instructions](docs/full-workflow-acceptance.md).
+The [combined scalar validation record](docs/quality/scalar-workflow-2026-11-05.md)
+describes the reviewed revision, engineering controls and remaining limits.
 
 ```bash
 .venv/bin/ruloom run --profile tabular <source>.csv --max-attempts 2 \
