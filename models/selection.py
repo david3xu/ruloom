@@ -13,10 +13,14 @@ def model_family(adapter: str, model: str) -> str:
     if adapter in {"meta_cli", "glimmer_local"}:
         return "meta"
     if adapter == "azure_foundry":
-        if model in {"muse-spark-1.3", "muse-glimmer-30b"}:
+        if model in {
+            "muse-spark-1.3",
+            "muse-glimmer-30b",
+            "meta-models--muse-glimmer-30b",
+        }:
             return "meta"
         raise ValueError(
-            f"unknown azure_foundry model {model!r} (expected 'muse-spark-1.3' or 'muse-glimmer-30b')"
+            f"unknown azure_foundry model {model!r} (expected 'muse-spark-1.3', 'muse-glimmer-30b' or 'meta-models--muse-glimmer-30b')"
         )
     if adapter == "agy_cli":
         for family in AGY_FAMILY_DEFAULTS:
@@ -41,17 +45,23 @@ def validate_selection(adapter: str, model: str, family: str, effort: str) -> No
     if family != observed:
         raise ValueError(f"model {model!r} belongs to {observed!r}, not {family!r}")
     if adapter == "azure_foundry":
-        if effort == "max":
-            raise ValueError(
-                "Azure Foundry rejects reasoning_effort 'max'; "
-                "supported values: minimal, low, medium, high, xhigh"
-            )
-        if effort not in {"minimal", "low", "medium", "high", "xhigh"}:
-            raise ValueError(f"unsupported azure_foundry effort {effort!r}")
-        if model not in {"muse-spark-1.3", "muse-glimmer-30b"}:
-            raise ValueError(
-                f"unsupported azure_foundry model {model!r} (expected 'muse-spark-1.3' or 'muse-glimmer-30b')"
-            )
+        if model == "meta-models--muse-glimmer-30b":
+            if effort != "none":
+                raise ValueError(
+                    f"managed azure_foundry model {model!r} requires reasoning_effort 'none', got {effort!r}"
+                )
+        else:
+            if effort == "max":
+                raise ValueError(
+                    "Azure Foundry rejects reasoning_effort 'max'; "
+                    "supported values: minimal, low, medium, high, xhigh"
+                )
+            if effort not in {"minimal", "low", "medium", "high", "xhigh"}:
+                raise ValueError(f"unsupported azure_foundry effort {effort!r}")
+            if model not in {"muse-spark-1.3", "muse-glimmer-30b"}:
+                raise ValueError(
+                    f"unsupported azure_foundry model {model!r} (expected 'muse-spark-1.3' or 'muse-glimmer-30b')"
+                )
     if adapter == "agy_cli":
         if effort not in {"low", "medium", "high", "xhigh", "max"}:
             raise ValueError(f"unsupported AGY effort {effort!r}")

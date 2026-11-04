@@ -1,7 +1,8 @@
 """Azure AI Foundry structured-model adapter for Meta Muse models.
 
 The adapter POSTs ``{base_url}chat/completions`` against an explicit verified
-Azure OpenAI v1 endpoint (``https://<account>.openai.azure.com/openai/v1/``)
+Azure endpoint (the existing OpenAI v1 route or the explicitly selected managed
+Glimmer route on ``<account>.services.ai.azure.com/openai/v1/``)
 using Entra ID bearer tokens acquired via the Azure CLI (``az account
 get-access-token``) scoped to a mandatory canonical subscription UUID.
 
@@ -65,6 +66,13 @@ AZURE_MODEL_CAPABILITIES: dict[str, ModelCapabilities] = {
         max_image_bytes=4 * 1024 * 1024,
         max_image_pixels=4_000_000,
     ),
+    "meta-models--muse-glimmer-30b": ModelCapabilities(
+        input_modalities=("text", "image"),
+        structured_output=True,
+        image_media_types=("image/png",),
+        max_image_bytes=4 * 1024 * 1024,
+        max_image_pixels=4_000_000,
+    ),
 }
 
 #: Exact default model identifier supported by this Azure deployment slice.
@@ -115,6 +123,12 @@ ACCOUNT_LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 
 #: Verified Azure OpenAI host suffix.
 AZURE_OPENAI_HOST_SUFFIX = ".openai.azure.com"
+
+#: Verified Azure Managed Compute host suffix.
+AZURE_MANAGED_HOST_SUFFIX = ".services.ai.azure.com"
+
+#: Exact managed Glimmer model deployment alias.
+MANAGED_GLIMMER_MODEL = "meta-models--muse-glimmer-30b"
 
 #: Resource audience for Azure OpenAI / Cognitive Services.
 COGNITIVE_SERVICES_RESOURCE = "https://cognitiveservices.azure.com"
@@ -220,10 +234,12 @@ def validate_subscription_id(value: str) -> str:
     return value.strip().lower()
 
 
-def validate_azure_base_url(value: str) -> str:
-    """Validate and normalize a verified Azure OpenAI v1 base URL.
+def validate_azure_base_url(value: str, *, model: str | None = None) -> str:
+    """Validate and normalize a verified Azure base URL.
 
-    Admitted route: ``https://<account>.openai.azure.com/openai/v1/``
+    The default contract admits only ``<account>.openai.azure.com/openai/v1/``.
+    Only the exact managed deployment alias admits the separate
+    ``<account>.services.ai.azure.com/openai/v1/`` route.
     Arbitrary HTTPS hosts, custom ports, userinfo, query, fragment, and
     unverified paths (e.g. services.ai/models) are strictly refused.
     """
@@ -246,12 +262,15 @@ def validate_azure_base_url(value: str) -> str:
         raise ValueError("Azure base URL cannot contain a URL fragment")
 
     hostname = (url.hostname or "").lower()
-    if not hostname.endswith(AZURE_OPENAI_HOST_SUFFIX):
-        raise ValueError(
-            f"Azure base URL host {hostname!r} must end with {AZURE_OPENAI_HOST_SUFFIX!r}"
-        )
+    suffix = (
+        AZURE_MANAGED_HOST_SUFFIX
+        if model == MANAGED_GLIMMER_MODEL
+        else AZURE_OPENAI_HOST_SUFFIX
+    )
+    if not hostname.endswith(suffix):
+        raise ValueError(f"Azure base URL host {hostname!r} must end with {suffix!r}")
 
-    account = hostname[: -len(AZURE_OPENAI_HOST_SUFFIX)]
+    account = hostname[: -len(suffix)]
     if not account or not ACCOUNT_LABEL_RE.match(account):
         raise ValueError(f"Azure base URL account label {account!r} is invalid")
 
@@ -340,7 +359,7 @@ class AzureFoundryModel(StructuredModel):
         timeout: float = 60.0,
         token_provider: Callable[[str], str] | None = None,
     ) -> None:
-        self.base_url = validate_azure_base_url(base_url)
+        self.base_url = validate_azure_base_url(base_url, model=model)
         self.subscription_id = validate_subscription_id(subscription_id)
 
         if model not in SUPPORTED_MODELS:
@@ -350,15 +369,21 @@ class AzureFoundryModel(StructuredModel):
         self.model = model
         self.capabilities = AZURE_MODEL_CAPABILITIES[model]
 
-        if effort == "max":
-            raise ValueError(
-                "Azure Foundry rejects reasoning_effort 'max'; supported values: minimal, low, medium, high, xhigh"
-            )
-        if effort not in SUPPORTED_EFFORTS:
-            raise ValueError(
-                f"unsupported azure_foundry reasoning effort {effort!r}; "
-                f"supported values: {sorted(SUPPORTED_EFFORTS)}"
-            )
+        if model == MANAGED_GLIMMER_MODEL:
+            if effort != "none":
+                raise ValueError(
+                    f"Azure managed model {model!r} requires reasoning_effort 'none', got {effort!r}"
+                )
+        else:
+            if effort == "max":
+                raise ValueError(
+                    "Azure Foundry rejects reasoning_effort 'max'; supported values: minimal, low, medium, high, xhigh"
+                )
+            if effort not in SUPPORTED_EFFORTS:
+                raise ValueError(
+                    f"unsupported azure_foundry reasoning effort {effort!r}; "
+                    f"supported values: {sorted(SUPPORTED_EFFORTS)}"
+                )
         self.effort = effort
 
         if (
@@ -400,11 +425,9 @@ class AzureFoundryModel(StructuredModel):
 
         token = _validate_bearer_token(self._get_token())
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "reasoning_effort": self.effort,
-            "max_completion_tokens": self.max_completion_tokens,
             "stream": False,
             "response_format": {
                 "type": "json_schema",
@@ -415,6 +438,11 @@ class AzureFoundryModel(StructuredModel):
                 },
             },
         }
+        if self.model == MANAGED_GLIMMER_MODEL:
+            payload["max_tokens"] = self.max_completion_tokens
+        else:
+            payload["max_completion_tokens"] = self.max_completion_tokens
+            payload["reasoning_effort"] = self.effort
 
         endpoint = f"{self.base_url}chat/completions"
         try:
@@ -655,6 +683,13 @@ class AzureFoundryModel(StructuredModel):
             "request_id": request_id,
             "timing_s": elapsed,
         }
+        if self.model == MANAGED_GLIMMER_MODEL:
+            meta.update(
+                deployment_type="GlobalManagedCompute",
+                reasoning_effort=None,
+                requested_reasoning_effort=self.effort,
+                output_limit_parameter="max_tokens",
+            )
         if "cost" in resp_dict or "cost" in usage_raw:
             meta["_raw_cost"] = resp_dict.get("cost") or usage_raw.get("cost")
 

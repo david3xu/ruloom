@@ -34,7 +34,8 @@ and `reasoning_effort`.
 | `meta_cli` | `meta` | `muse-spark-1.3` | `high` | text, image |
 | `glimmer_local` | `meta` | `muse-glimmer-30B` | server dependent | text |
 | `azure_foundry` | `meta` | `muse-spark-1.3` | `xhigh` | text |
-| `azure_foundry` | `meta` | `muse-glimmer-30b` | `xhigh` | text, image (unverified capacity) |
+| `azure_foundry` | `meta` | `muse-glimmer-30b` | `xhigh` | text, image (unverified original route) |
+| `azure_foundry` | `meta` | `meta-models--muse-glimmer-30b` | `none` | text, image (managed route; live evidence separate) |
 
 The AGY aliases were listed by the installed `agy models` on 4 November
 2026. Defaults are convenience mappings, not promises about another account
@@ -80,8 +81,27 @@ The `azure_foundry` deployment `muse-spark-1.3` is strictly text-only; image inp
 and vision critic roles (`complete_with_image`) are refused pre-call before Entra
 token acquisition or network dispatch.
 Multimodal protocol support for `muse-glimmer-30b` (text + base64 PNG `image_url` parts)
-is implemented on the `azure_foundry` adapter, but current retained capacity evidence reports
-no deployable SKU or capacity, and structured vision on Azure remains unverified. No automatic provider fallback is permitted.
+is implemented on the `azure_foundry` adapter. The original account/SKU capacity
+receipt reports no deployable original-route Glimmer; it does not describe the
+separate managed-compute route. No automatic provider fallback is permitted.
+
+The explicitly selected managed deployment `meta-models--muse-glimmer-30b` uses
+`https://<account>.services.ai.azure.com/openai/v1/`. This exact deployment alias
+and route must be paired; Spark and the original Glimmer name cannot use it.
+Select `--role-effort critic=none`: the adapter omits `reasoning_effort` and uses
+bounded `max_tokens` for this runtime. Existing Spark requests retain their
+`reasoning_effort` and `max_completion_tokens` fields. The shared strict response,
+observed-model identity, local schema, authentication, image bounds, usage and
+failure checks remain in force. An unexpected returned model identity fails.
+
+Read-only Azure metadata on 5 November confirms this managed deployment at model
+registry version 2, SKU `GlobalManagedCompute`, with four A100 accelerators. A
+Succeeded deployment is not live image validation. Managed compute bills running
+accelerator hours; a request budget does not cap idle deployment charges. Exact
+startup-credit coverage and charge deduction for this route are unconfirmed;
+receipts must not label it free or borrow Spark's credit eligibility. See
+[Microsoft managed compute documentation](https://learn.microsoft.com/en-us/azure/foundry/concepts/managed-compute-overview)
+and [startup credit policy](https://learn.microsoft.com/en-us/startups/build/getting-started/foundry-model-sponsorship-coverage).
 
 To enforce that only Azure Foundry is contacted and prohibit any Meta account
 fallback, pass `--model-policy azure-only`. Any role attempting to use a

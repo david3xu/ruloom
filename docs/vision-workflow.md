@@ -43,10 +43,20 @@ Python profiles and model adapters remain trusted code, without OS confinement.
 
 Azure Glimmer is preferred when a deployment is available. The 5 November capacity
 evidence (`runs/azure-vision-20261105/capacity-20261104T170936Z.json`, retained
-locally) reports no SKU, empty capacity queries and no deployment. The Azure adapter
-implements image content parts and strict structured-response validation for the
-Glimmer configuration, but this is protocol support with no live Azure vision proof.
-Azure Spark remains text-only and refuses images before authentication or networking.
+locally) reports no original-route SKU or capacity. Later read-only management
+metadata confirms a separate `meta-models--muse-glimmer-30b` managed deployment,
+model registry version 2, SKU `GlobalManagedCompute`. Use its explicit
+`https://<account>.services.ai.azure.com/openai/v1/` base URL and
+`--role-effort critic=none`. The adapter sends image content parts and a strict
+structured response request with bounded `max_tokens`; this runtime receives no
+assumed reasoning-effort parameter. Spark remains text-only on the original
+OpenAI route and refuses images before authentication or networking.
+
+Managed compute bills accelerator running hours, including idle time. This
+four-A100 deployment's startup-credit coverage and observed credit deduction are
+unconfirmed; do not call it free or infer coverage from Succeeded. Management
+metadata, injected transport tests, and genuine live image receipts are separate
+evidence. See [model configuration](model-families.md) for route and policy details.
 
 Muse API access through the existing `meta_cli` adapter is explicitly authorized for
 vision. Select it directly; there is no automatic provider switch:
