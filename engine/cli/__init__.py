@@ -161,6 +161,42 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="UUID",
         help="explicit Azure subscription ID (canonical UUID)",
     )
+    prepare.add_argument(
+        "--case",
+        default=None,
+        metavar="ID@VERSION",
+        help="pin case id and version in the drafted spec",
+    )
+    verify = sub.add_parser("verify", help="verify a release bundle")
+    verify.add_argument("release_zip", help="path to release ZIP archive")
+    verify.add_argument(
+        "--profile",
+        default=None,
+        help="explicit profile ID to verify against",
+    )
+    verify.add_argument(
+        "--require-case",
+        default=None,
+        metavar="ID@VERSION",
+        help="require specific case binding (e.g. hylogger_scalar_teaching_v1@1)",
+    )
+    verify.add_argument(
+        "--source",
+        default=None,
+        help="optional path to raw source file to verify source derivation",
+    )
+    verify.add_argument(
+        "--expect-contract-sha256",
+        default=None,
+        metavar="HEX",
+        help="expected canonical SHA-256 of the case contract",
+    )
+    verify.add_argument(
+        "--expect-catalogue-sha256",
+        default=None,
+        metavar="HEX",
+        help="expected SHA-256 of the installed cases catalogue",
+    )
     return parser
 
 
@@ -179,6 +215,27 @@ def load_registry(profile_id: str) -> Mapping[str, Any]:
     if not isinstance(capabilities, Mapping) or not capabilities:
         raise ManifestError(f"profile {profile_id!r} exposes no CAPABILITIES registry")
     return capabilities
+
+
+def load_case_preparation_hooks(profile_id: str) -> Any:
+    """Resolve the profile's case-preparation checks (fail closed when absent).
+
+    The profile module names them in ``CASE_PREPARATION_HOOKS``; the engine
+    only sequences them. A profile that declares a case but exposes no
+    complete table is refused before any model call.
+    """
+    from .request import CasePreparationHooks
+
+    profiles_package.profile_dir(profile_id)
+    module = importlib.import_module(f"profiles.{profile_id}.capabilities")
+    table = getattr(module, "CASE_PREPARATION_HOOKS", None)
+    names = ("preflight", "check_target", "confirm_unchanged")
+    if not isinstance(table, Mapping) or not all(callable(table.get(n)) for n in names):
+        raise ValueError(
+            f"profile {profile_id!r} exposes no complete CASE_PREPARATION_HOOKS: "
+            "refusing before any model call"
+        )
+    return CasePreparationHooks(**{n: table[n] for n in names})
 
 
 #: Engine defaults applied when neither CLI, environment, nor manifest
@@ -568,6 +625,148 @@ def main(
     from ..core.spec import SpecError, load_spec_file
 
     args = build_parser().parse_args(list(argv) if argv is not None else None)
+    if args.command == "verify":
+        import json as _json
+        import zipfile as _zipfile
+
+        from ..artifacts.consumer import ReleaseVerificationError, verify_release
+
+        archive_path = Path(args.release_zip)
+        if not archive_path.is_file():
+            print(f"error: release archive not found: {archive_path}", file=sys.stderr)
+            return 1
+
+        manifest_json: dict[str, Any] | None = None
+        adj_manifest = archive_path.parent / "manifest.json"
+        if adj_manifest.is_file():
+            try:
+                manifest_json = _json.loads(adj_manifest.read_text(encoding="utf-8"))
+            except Exception as exc:
+                print(
+                    f"error: cannot parse adjacent manifest.json: {exc}",
+                    file=sys.stderr,
+                )
+                return 1
+        else:
+            try:
+                with _zipfile.ZipFile(archive_path) as zf:
+                    if "manifest.json" in zf.namelist():
+                        manifest_json = _json.loads(
+                            zf.read("manifest.json").decode("utf-8")
+                        )
+            except Exception as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+
+        profile_id: str | None = None
+        if args.profile:
+            profile_id = str(args.profile).strip()
+            if not profile_id or not profile_id.replace("_", "").isalnum():
+                print(f"error: invalid profile id: {args.profile!r}", file=sys.stderr)
+                return 1
+            if profile_id not in profiles_package.available_profiles():
+                print(f"error: unknown profile: {profile_id!r}", file=sys.stderr)
+                return 1
+        elif manifest_json is not None:
+            profile_id = manifest_json.get("profile_id")
+            if not isinstance(profile_id, str) or not profile_id:
+                profile_id = (
+                    manifest_json.get("acceptance", {})
+                    .get("request_identity", {})
+                    .get("profile")
+                )
+            if not isinstance(profile_id, str) or not profile_id:
+                profile_id = manifest_json.get("profile")
+            if profile_id and profile_id not in profiles_package.available_profiles():
+                print(
+                    f"error: manifest declares unknown profile {profile_id!r}",
+                    file=sys.stderr,
+                )
+                return 1
+
+        case_verifier = None
+        if profile_id is not None:
+            try:
+                profiles_package.profile_dir(profile_id)
+                module = importlib.import_module(f"profiles.{profile_id}.capabilities")
+                case_verifier = getattr(module, "verify_case_members", None)
+                if case_verifier is None and args.profile:
+
+                    def _refusing_case_verifier(*_args: Any, **_kwargs: Any) -> Any:
+                        raise ReleaseVerificationError(
+                            f"profile {profile_id!r} cannot verify case members: "
+                            "profile exposes no case verifier hook"
+                        )
+
+                    case_verifier = _refusing_case_verifier
+            except Exception as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+
+        expected_case = None
+        if args.require_case:
+            from .request import parse_case_spec
+
+            try:
+                cid, cver = parse_case_spec(
+                    args.require_case, flag_name="--require-case"
+                )
+            except ValueError as err:
+                print(f"error: {err}", file=sys.stderr)
+                return 1
+            expected_case = {"id": cid, "version": cver}
+
+        try:
+            res = verify_release(
+                archive_path,
+                manifest=manifest_json,
+                case_verifier=case_verifier,
+                expected_case=expected_case,
+                source_path=args.source,
+            )
+            if args.profile and res.get("case") is not None:
+                p_manifest = load_manifest(profiles_package.manifest_path(profile_id))
+                declared_cases = (
+                    p_manifest.generation.get("cases", [])
+                    if isinstance(p_manifest.generation, Mapping)
+                    else []
+                )
+                declared_ids = {
+                    c.get("id") for c in declared_cases if isinstance(c, Mapping)
+                }
+                archive_case_id = (
+                    (res.get("case") or {}).get("binding", {}).get("case_id")
+                )
+                if archive_case_id and archive_case_id not in declared_ids:
+                    raise ReleaseVerificationError(
+                        f"profile {profile_id!r} cannot verify case {archive_case_id!r}: "
+                        "not declared by profile"
+                    )
+            if args.expect_contract_sha256:
+                contract_sha = (
+                    (res.get("case") or {}).get("binding", {}).get("contract_sha256")
+                )
+                if contract_sha != args.expect_contract_sha256:
+                    raise ReleaseVerificationError(
+                        f"expected contract sha256 {args.expect_contract_sha256!r} differs from {contract_sha!r}"
+                    )
+            if args.expect_catalogue_sha256:
+                cat_sha = (
+                    (res.get("case") or {}).get("binding", {}).get("catalogue_sha256")
+                )
+                if cat_sha != args.expect_catalogue_sha256:
+                    raise ReleaseVerificationError(
+                        f"expected catalogue sha256 {args.expect_catalogue_sha256!r} differs from {cat_sha!r}"
+                    )
+            print(_json.dumps(res, indent=2))
+            return 0
+        except ReleaseVerificationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
     if args.command == "prepare":
         from .request import prepare_request
 
@@ -585,6 +784,13 @@ def main(
             )
             config = dict(resolved["planner"])
             config["local_only"] = args.model_policy == "local-only"
+            # Only a selected case brings the profile's own preparation checks;
+            # without --case nothing is loaded and the legacy path is untouched.
+            case_hooks = (
+                load_case_preparation_hooks(profile_id)
+                if getattr(args, "case", None)
+                else None
+            )
             return prepare_request(
                 args,
                 manifest,
@@ -592,6 +798,7 @@ def main(
                 lambda: (
                     model if model is not None else default_client("planner", config)
                 ),
+                case_hooks=case_hooks,
             )
         except (ValueError, ManifestError, KeyError, OSError) as exc:
             print(f"error: {exc}", file=sys.stderr)

@@ -180,6 +180,21 @@ def _check_graph(
             on_fail = node.get("on_fail")
             if not isinstance(on_fail, str) or on_fail not in capabilities:
                 raise ManifestError(f"{where}: loop needs an 'on_fail' capability")
+            on_fail_by_condition = node.get("on_fail_by_condition")
+            if on_fail_by_condition is not None:
+                if not isinstance(on_fail_by_condition, dict):
+                    raise ManifestError(
+                        f"{where}: 'on_fail_by_condition' must be an object"
+                    )
+                for cond_name, cap_name in on_fail_by_condition.items():
+                    if cond_name not in CHECK_CONDITIONS:
+                        raise ManifestError(
+                            f"{where}: unknown condition {cond_name!r} in 'on_fail_by_condition'"
+                        )
+                    if not isinstance(cap_name, str) or cap_name not in capabilities:
+                        raise ManifestError(
+                            f"{where}: unknown capability {cap_name!r} in 'on_fail_by_condition'"
+                        )
             bound = node.get("max_attempts")
             if bound != MAX_ATTEMPTS_BINDING:
                 raise ManifestError(
@@ -192,9 +207,8 @@ def _check_graph(
 
 #: Conditions a check entry may name in ``applicable_when``. The engine
 #: resolves them against its own run facts before the run decides; an
-#: unknown condition is refused at load. Only ``images_present`` exists
-#: today (true once image reference statistics are registered).
-CHECK_CONDITIONS = ("images_present",)
+#: unknown condition is refused at load.
+CHECK_CONDITIONS = ("images_present", "case_selected")
 
 
 def _check_checks(checks: Any, manifest_id: str) -> list[dict[str, Any]]:
@@ -499,6 +513,7 @@ def _check_generation(generation: Any, manifest_id: str) -> dict[str, Any]:
         "default_strategy",
         "outputs",
         "request_context",
+        "cases",
     }
     if extra:
         raise ManifestError(f"{where}: unknown keys {sorted(extra)}")
@@ -511,6 +526,42 @@ def _check_generation(generation: Any, manifest_id: str) -> dict[str, Any]:
         checked["request_context"] = _check_request_context(
             generation["request_context"], where
         )
+    if "cases" in generation:
+        cases_raw = generation["cases"]
+        if not isinstance(cases_raw, list):
+            raise ManifestError(f"{where}: 'cases' must be a list")
+        checked_cases: list[dict[str, Any]] = []
+        seen_cases: set[tuple[str, int]] = set()
+        for idx, item in enumerate(cases_raw):
+            c_where = f"{where} case {idx}"
+            if not isinstance(item, dict):
+                raise ManifestError(f"{c_where}: must be an object")
+            cid = item.get("id")
+            cver = item.get("version")
+            csha = item.get("catalogue_sha256")
+            if not isinstance(cid, str) or not cid:
+                raise ManifestError(f"{c_where}: needs a non-empty string 'id'")
+            if not isinstance(cver, int) or isinstance(cver, bool) or cver < 1:
+                raise ManifestError(f"{c_where}: needs a positive integer 'version'")
+            if (
+                not isinstance(csha, str)
+                or len(csha) != 64
+                or not all(c in "0123456789abcdefABCDEF" for c in csha)
+            ):
+                raise ManifestError(
+                    f"{c_where}: needs a 64-character hexadecimal 'catalogue_sha256'"
+                )
+            extra_c = set(item) - {"id", "version", "catalogue_sha256"}
+            if extra_c:
+                raise ManifestError(f"{c_where}: unknown keys {sorted(extra_c)}")
+            key = (cid, cver)
+            if key in seen_cases:
+                raise ManifestError(f"{c_where}: duplicate case {cid!r} v{cver}")
+            seen_cases.add(key)
+            checked_cases.append(
+                {"id": cid, "version": cver, "catalogue_sha256": csha.lower()}
+            )
+        checked["cases"] = checked_cases
     return checked
 
 

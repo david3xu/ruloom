@@ -66,10 +66,11 @@ from .records import (
 )
 from .runstore import RunStore, record_refusal
 from .verdict import (
+    CONDITION_CASE_SELECTED,
     CONDITION_IMAGES_PRESENT,
     applicable_required_ids,
     decide,
-    unconditional_required_ids,
+    loop_required_ids,
 )
 
 #: Status values the runner assigns to loop attempts.
@@ -455,6 +456,26 @@ class RunContext:
             _must_json(dict(bundle), "companion bundle", self.capability_id)
         )
 
+    def requirements(self) -> dict[str, Any] | None:
+        """Immutable copy of the run-level requirements record, if stored."""
+        return _copy(self._engine.requirements_record())
+
+    def set_requirements(self, record: Mapping[str, Any]) -> None:
+        """Store write-once run-level requirements for the run."""
+        if not isinstance(record, Mapping):
+            raise RunnerError(
+                f"capability {self.capability_id!r} supplied requirements "
+                "that are not a mapping"
+            )
+        self._engine.store_requirements(
+            _must_json(dict(record), "requirements", self.capability_id)
+        )
+
+    @property
+    def model_policy(self) -> str:
+        """The run's model call policy."""
+        return self._engine.model_policy
+
     def latest_report(self) -> Any:
         """The most recently recorded validation report."""
         return self._engine.read_latest_report()
@@ -806,6 +827,8 @@ class _Runner:
             self.store.update_run("error", error=failure)
             raise RunnerError(failure) from exc
         self._models: dict[str, Any] = {}
+        self._requirements: dict[str, Any] | None = None
+        self._first_plan_seed: Any = None
 
     def say(self, message: str) -> None:
         self._say(message)
@@ -1089,7 +1112,37 @@ class _Runner:
             raise RunnerError(
                 f"plan rows {plan.get('n_rows')} differ from requested target_rows {target}"
             )
+        if self._spec.get("case") is not None and "seed" in plan:
+            if self._first_plan_seed is None:
+                self._first_plan_seed = plan["seed"]
+            elif plan["seed"] != self._first_plan_seed:
+                raise RunnerError(
+                    f"plan seed {plan['seed']} differs from initial plan seed "
+                    f"{self._first_plan_seed}; seed rerolls are forbidden for case-selected runs"
+                )
         self._plan = copy.deepcopy(dict(plan))
+
+    def requirements_record(self) -> dict[str, Any] | None:
+        """The run-level requirements record (possibly None)."""
+        return (
+            copy.deepcopy(self._requirements)
+            if self._requirements is not None
+            else None
+        )
+
+    def store_requirements(self, requirements: dict[str, Any]) -> None:
+        """Store run-level requirements record (write-once)."""
+        if self._requirements is not None:
+            raise RunnerError("requirements record is write-once; already stored")
+        self._requirements = copy.deepcopy(dict(requirements))
+        from ..artifacts.hashing import sha256_canonical
+
+        req_hash = sha256_canonical(self._requirements)
+        self.log.append(
+            "intake",
+            "ok",
+            {"event": "requirements_stored", "requirements_sha256": req_hash},
+        )
 
     def reference_stats_record(self) -> dict[str, Any]:
         """The source-derived reference statistics (possibly empty)."""
@@ -1344,10 +1397,8 @@ class _Runner:
                 "is selected: refusing (no release)"
             )
         run_dir = Path(self._artifact_dir)
-        images_present = self.run_conditions()["images_present"]
-        specs = _package.selected_release_members(
-            self.manifest, images_present=images_present
-        )
+        conditions = self.run_conditions()
+        specs = _package.selected_release_members(self.manifest, conditions=conditions)
         # Strict only under a declared release contract: manifests that
         # declare no release block (test-only shapes) snapshot whatever
         # candidates exist, and packaging -- if the flow packs at all --
@@ -1459,7 +1510,7 @@ class _Runner:
             refs["frozen"] = "frozen-manifest.json"
         if self._decision is not None:
             refs["decision"] = "decision.json"
-        return {
+        out = {
             "run_id": self.log.run_id,
             "profile_id": self.manifest.id,
             "profile_version": self.manifest.version,
@@ -1506,6 +1557,10 @@ class _Runner:
             "images_present": bool(conditions.get("images_present", False)),
             "refs": refs,
         }
+        if conditions.get(CONDITION_CASE_SELECTED):
+            out["case_selected"] = True
+            out["case"] = copy.deepcopy(self._spec.get("case"))
+        return out
 
     def pack_recorded_release(self, capability_id: str) -> tuple[Path, str]:
         """Write the reproducible release ZIP from the frozen snapshot.
@@ -1560,10 +1615,8 @@ class _Runner:
         from .report import render_evidence_report as _render
 
         run_dir = Path(self._artifact_dir)
-        images_present = self.run_conditions()["images_present"]
-        specs = _package.selected_release_members(
-            self.manifest, images_present=images_present
-        )
+        conditions = self.run_conditions()
+        specs = _package.selected_release_members(self.manifest, conditions=conditions)
         report_bytes = _render(self.evidence_inputs()).encode("utf-8")
         (run_dir / ENGINE_REPORT_MEMBER).write_text(
             report_bytes.decode("utf-8"), encoding="utf-8"
@@ -1630,6 +1683,11 @@ class _Runner:
                                 self._source_meta.get("source_sha256", "")
                             ),
                             "spec_digest": str(self._spec_digest),
+                            **(
+                                {"case": copy.deepcopy(self._spec.get("case"))}
+                                if conditions.get(CONDITION_CASE_SELECTED)
+                                else {}
+                            ),
                         },
                     },
                 },
@@ -1652,6 +1710,7 @@ class _Runner:
         """Resolve the applicability conditions for the final verdict."""
         return {
             CONDITION_IMAGES_PRESENT: (self._companion.get("reference") is not None),
+            CONDITION_CASE_SELECTED: (self._spec.get("case") is not None),
         }
 
     def final_decision(self) -> tuple[str, list[str]]:
@@ -1885,7 +1944,9 @@ class _Runner:
         bound = node.get(MAX_ATTEMPTS_BINDING)
         if bound != MAX_ATTEMPTS_BINDING:
             raise RunnerError("loop nodes bind max_attempts to the caller supply only")
-        required = unconditional_required_ids(self.manifest.checks)
+        required = loop_required_ids(
+            self.manifest.checks, conditions=self.run_conditions()
+        )
         best: Attempt | None = None
         previous_failed: int | None = None
         self._in_loop = True
@@ -1969,7 +2030,18 @@ class _Runner:
                     self.say(f"[{stage}] no improvement across two attempts: stopping")
                     break
                 previous_failed = len(failed)
-                repair_role = self.manifest.capabilities[on_fail].get("calls_model")
+                on_fail_target = on_fail
+                on_fail_by_condition = node.get("on_fail_by_condition")
+                if isinstance(on_fail_by_condition, Mapping):
+                    conditions = self.run_conditions()
+                    for cond_name, cap_name in on_fail_by_condition.items():
+                        if conditions.get(cond_name, False):
+                            on_fail_target = cap_name
+                            break
+
+                repair_role = self.manifest.capabilities[on_fail_target].get(
+                    "calls_model"
+                )
                 if repair_role:
                     from .model_policy import ModelPolicyError
 
@@ -1980,7 +2052,7 @@ class _Runner:
                             f"[{stage}] repair unavailable: {exc}; failing checks retained"
                         )
                         break
-                self.run_capability(on_fail)
+                self.run_capability(on_fail_target)
         finally:
             self._in_loop = False
         assert best is not None

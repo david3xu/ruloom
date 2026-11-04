@@ -67,6 +67,28 @@
       "critic_policy": "required",
       "stage": "local_critique"
     },
+    "case_source_assess": {
+      "impl": "hylogger.capabilities",
+      "calls_model": "source_assessor",
+      "advisory": true,
+      "stage": "case_source_assess"
+    },
+    "case_research": {
+      "impl": "hylogger.capabilities",
+      "calls_model": "case_researcher",
+      "advisory": true,
+      "stage": "case_research"
+    },
+    "case_repair": {
+      "impl": "hylogger.capabilities",
+      "stage": "case_repair"
+    },
+    "case_candidate_review": {
+      "impl": "hylogger.capabilities",
+      "calls_model": "case_reviewer",
+      "advisory": true,
+      "stage": "case_candidate_review"
+    },
     "package_artifact": {
       "impl": "hylogger.capabilities",
       "stage": "artifact"
@@ -81,7 +103,13 @@
       "step": "intake"
     },
     {
+      "step": "case_source_assess"
+    },
+    {
       "step": "profile_source"
+    },
+    {
+      "step": "case_research"
     },
     {
       "step": "plan"
@@ -92,8 +120,14 @@
         "validate"
       ],
       "on_fail": "repair",
+      "on_fail_by_condition": {
+        "case_selected": "case_repair"
+      },
       "max_attempts": "max_attempts",
       "stage": "generate_validate_repair"
+    },
+    {
+      "step": "case_candidate_review"
     },
     {
       "step": "image_intake"
@@ -413,6 +447,123 @@
       "required": true,
       "applicable_when": "images_present",
       "note": "Shared schematic scene record validates with no missing/out-of-bounds/duplicate/order defect and matches reference/candidate geometry; R03 schematic-only, never a real core-photo claim."
+    },
+    {
+      "id": "case.source_pin_match",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
+    },
+    {
+      "id": "case.output_columns",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
+    },
+    {
+      "id": "case.row_count",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
+    },
+    {
+      "id": "case.well_formed_rows",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
+    },
+    {
+      "id": "case.ordered_depth",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
+    },
+    {
+      "id": "case.depth_spacing",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
+    },
+    {
+      "id": "case.inclusion_fraction",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
+    },
+    {
+      "id": "case.swir_answer_rate",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
+    },
+    {
+      "id": "case.tir_answer_rate",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
+    },
+    {
+      "id": "case.swir_supported_labels",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
+    },
+    {
+      "id": "case.tir_supported_labels",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
+    },
+    {
+      "id": "case.downstream_filter_group",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
+    },
+    {
+      "id": "case.downstream_structure_both_states_present",
+      "kind": "constraint",
+      "threshold": {
+        "source": "case_contract"
+      },
+      "required": true,
+      "applicable_when": "case_selected"
     }
   ],
   "release": {
@@ -461,6 +612,31 @@
         "name": "image-validation.json",
         "required": true,
         "when": "images_present"
+      },
+      {
+        "name": "case-binding.json",
+        "required": true,
+        "when": "case_selected"
+      },
+      {
+        "name": "case-contract.json",
+        "required": true,
+        "when": "case_selected"
+      },
+      {
+        "name": "case-reference.json",
+        "required": true,
+        "when": "case_selected"
+      },
+      {
+        "name": "case-utility.json",
+        "required": true,
+        "when": "case_selected"
+      },
+      {
+        "name": "case-evidence.json",
+        "required": true,
+        "when": "case_selected"
       }
     ]
   },
@@ -489,6 +665,27 @@
           "open_weight": true
         }
       },
+      "case_researcher": {
+        "provider": "meta-api",
+        "model": "muse-spark-1.3",
+        "adapter": "meta_cli",
+        "reasoning_effort": "max",
+        "structured_output": true
+      },
+      "source_assessor": {
+        "provider": "meta-api",
+        "model": "muse-spark-1.3",
+        "adapter": "meta_cli",
+        "reasoning_effort": "max",
+        "structured_output": true
+      },
+      "case_reviewer": {
+        "provider": "meta-api",
+        "model": "muse-spark-1.3",
+        "adapter": "meta_cli",
+        "reasoning_effort": "max",
+        "structured_output": true
+      },
       "reporter": {
         "provider": "meta-api",
         "model": "muse-wonder-1.0",
@@ -514,6 +711,13 @@
     "outputs": [
       "scalar",
       "imaging"
+    ],
+    "cases": [
+      {
+        "id": "hylogger_scalar_teaching_v1",
+        "version": 1,
+        "catalogue_sha256": "26b083a521447b4fa4bfce22c812da9ba9d6d5aa19a6d381e06a55fd87ac6ab3"
+      }
     ],
     "request_context": {
       "description": "Seeded synthetic HyLogger scalar table fitted only to aggregate Profile statistics of the supplied source; no source row is copied and the planner sees disclosed statistics only. Strategies: fitted_markov_joint simulates a two-state Markov chain whose stay probabilities match source valid/invalid mean run lengths (inclusion-flag count is approximate); selectable fitted_markov_balanced fits source valid fraction into an exact integer valid-row target and allocates positive alternating runs exhausting valid and invalid targets by construction. Recommend fitted_markov_balanced when preserving the source inclusion fraction is requested; the integer count is fitted from rounded aggregate fraction, not a scientific or privacy guarantee. Depths begin at source start depth (rounded to 3 decimals) and advance by median forward spacing, repeating only between consecutive invalid rows so repeats stay masked. Invalid rows carry no group labels. Each valid row draws joint answer pattern at source rates, then draws answered labels through source transitions with at least two outgoing pairs support (fallback to source label rates or joint counts). Same source, seed and row count give identical bytes.",

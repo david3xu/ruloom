@@ -83,6 +83,11 @@ def test_valid_release_verifies(tmp_path: Path) -> None:
     assert outcome["artifact_sha256"] == hashlib.sha256(_payload()).hexdigest()
     assert outcome["members"] == sorted(_files())
     assert outcome["zip_sha256"] == hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    # A ZIP-only legacy recipient gets an explicit scope result even when
+    # there is no adjacent manifest or selected profile.
+    bare_outcome = verify_release(zip_path)
+    assert bare_outcome["case"]["verified"] is False
+    assert bare_outcome["case"]["status"] == "not case-checked"
 
 
 def test_byte_flip_fails(tmp_path: Path) -> None:

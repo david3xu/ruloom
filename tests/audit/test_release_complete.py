@@ -186,11 +186,16 @@ def _write_images(path: Path) -> Path:
     return images
 
 
-def _declared_names(manifest: Any, *, images: bool) -> list[str]:
+def _declared_names(
+    manifest: Any, *, images: bool, case_selected: bool = False
+) -> list[str]:
     """Release-declared member names applicable to this run."""
     names: list[str] = []
     for member in manifest.release.get("members", []):
-        if member.get("when") == "images_present" and not images:
+        when = member.get("when")
+        if when == "images_present" and not images:
+            continue
+        if when == "case_selected" and not case_selected:
             continue
         names.append(member["name"])
     return names

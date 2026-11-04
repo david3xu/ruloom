@@ -27,6 +27,10 @@ packages = ["engine", "models", "profiles"]
 # hatchling.build with no isolation and no index access.
 dev = ["pytest>=8.0", "hatchling"]
 
+[tool.pytest.ini_options]
+# Evidence copies in ignored runs/ are not additional product test suites.
+testpaths = ["tests"]
+
 [tool.ruff]
 # GP-03 (G7 hygiene): pinned lint/format contract. `target-version`
 # matches requires-python so pyupgrade fixes are runtime-safe; the

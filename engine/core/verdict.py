@@ -31,8 +31,14 @@ from .records import VALID_CHECK_STATUSES, EngineCheckResult
 #: Applicability condition: image reference statistics were registered.
 CONDITION_IMAGES_PRESENT = "images_present"
 
+#: Applicability condition: case was selected in spec.
+CONDITION_CASE_SELECTED = "case_selected"
+
 #: Every applicability condition the engine resolves.
-APPLICABILITY_CONDITIONS = (CONDITION_IMAGES_PRESENT,)
+APPLICABILITY_CONDITIONS = (CONDITION_IMAGES_PRESENT, CONDITION_CASE_SELECTED)
+
+#: Conditions known at spec time that participate in per-attempt loop verdicts.
+SPEC_TIME_CONDITIONS = (CONDITION_CASE_SELECTED,)
 
 
 def is_required(entry: Mapping[str, Any]) -> bool:
@@ -83,6 +89,30 @@ def unconditional_required_ids(
         for entry in checks
         if is_required(entry) and applicability(entry) is None
     ]
+
+
+def loop_required_ids(
+    checks: Sequence[Mapping[str, Any]],
+    *,
+    conditions: Mapping[str, bool] | None = None,
+) -> list[str]:
+    """Ids of required checks that participate in per-attempt loop decisions.
+
+    Includes all unconditional required checks, plus required checks
+    whose applicability condition is known at spec time (such as
+    'case_selected') and resolves to True under ``conditions``.
+    """
+    conds = conditions or {}
+    ids: list[str] = []
+    for entry in checks:
+        if not is_required(entry):
+            continue
+        condition = applicability(entry)
+        if condition is None:
+            ids.append(str(entry["id"]))
+        elif condition in SPEC_TIME_CONDITIONS and conds.get(condition, False):
+            ids.append(str(entry["id"]))
+    return ids
 
 
 def _declared_by_id(
