@@ -112,6 +112,15 @@ invocation evidence in `request.json`. Runs keep their own invocation records.
 Receipts distinguish Codex development work, live model proposals, seeded
 generation, deterministic checks and operator decisions.
 
+### Receipt and failure compatibility
+
+Unsupported-method failures now refuse before model-start logging, and prepare
+receipts omit absent config fields and include configured endpoint and
+subscription fields. Legacy generated scalar, data, and report member bytes are
+unchanged; do not promise all receipt or event bytes are identical across
+revisions. These narrow failure and receipt-format changes are accepted as
+documented, not silent.
+
 ## Opt-in live smoke test
 
 This command spends provider quota; CI never runs it:
