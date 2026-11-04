@@ -416,3 +416,10 @@ def test_brief_is_contract_metadata_not_a_quality_verdict():
     with pytest.raises(ManifestError):
         payload["generation"]["request_context"] = None
         validate_manifest(payload)
+
+
+def test_request_prompt_explains_strategy_selection_over_default():
+    from engine.cli.request import INTERPRETATION_RULES
+
+    assert "default strategy is a fallback" in INTERPRETATION_RULES
+    assert "user to know its internal name" in INTERPRETATION_RULES

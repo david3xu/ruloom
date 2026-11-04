@@ -417,16 +417,51 @@
   ],
   "release": {
     "members": [
-      {"name": "data.csv", "required": true},
-      {"name": "plan.json", "required": true},
-      {"name": "validation-report.json", "required": true},
-      {"name": "seed.txt", "required": true},
-      {"name": "provenance.md", "required": true},
-      {"name": "run.jsonl", "required": true, "source": "engine-log"},
-      {"name": "evidence-report.md", "required": true, "source": "engine-report"},
-      {"name": "synthetic.png", "required": true, "when": "images_present"},
-      {"name": "image-statistics.json", "required": true, "when": "images_present"},
-      {"name": "image-validation.json", "required": true, "when": "images_present"}
+      {
+        "name": "data.csv",
+        "required": true
+      },
+      {
+        "name": "plan.json",
+        "required": true
+      },
+      {
+        "name": "validation-report.json",
+        "required": true
+      },
+      {
+        "name": "seed.txt",
+        "required": true
+      },
+      {
+        "name": "provenance.md",
+        "required": true
+      },
+      {
+        "name": "run.jsonl",
+        "required": true,
+        "source": "engine-log"
+      },
+      {
+        "name": "evidence-report.md",
+        "required": true,
+        "source": "engine-report"
+      },
+      {
+        "name": "synthetic.png",
+        "required": true,
+        "when": "images_present"
+      },
+      {
+        "name": "image-statistics.json",
+        "required": true,
+        "when": "images_present"
+      },
+      {
+        "name": "image-validation.json",
+        "required": true,
+        "when": "images_present"
+      }
     ]
   },
   "models": {
@@ -476,9 +511,12 @@
       "fitted_markov_balanced"
     ],
     "default_strategy": "fitted_markov_joint",
-    "outputs": ["scalar", "imaging"],
+    "outputs": [
+      "scalar",
+      "imaging"
+    ],
     "request_context": {
-      "description": "Seeded synthetic HyLogger scalar table fitted only to aggregate Profile statistics of the supplied source; no source row is copied and the planner sees disclosed statistics only. Strategies: fitted_markov_joint simulates a two-state Markov chain whose stay probabilities match source valid/invalid mean run lengths (inclusion-flag count is approximate); opt-in fitted_markov_balanced fits source valid fraction into an exact integer valid-row target and allocates positive alternating runs exhausting valid and invalid targets by construction. Recommend fitted_markov_balanced when preserving the source inclusion fraction is requested; the integer count is fitted from rounded aggregate fraction, not a scientific or privacy guarantee. Depths begin at source start depth (rounded to 3 decimals) and advance by median forward spacing, repeating only between consecutive invalid rows so repeats stay masked. Invalid rows carry no group labels. Each valid row draws joint answer pattern at source rates, then draws answered labels through source transitions with at least two outgoing pairs support (fallback to source label rates or joint counts). Same source, seed and row count give identical bytes.",
+      "description": "Seeded synthetic HyLogger scalar table fitted only to aggregate Profile statistics of the supplied source; no source row is copied and the planner sees disclosed statistics only. Strategies: fitted_markov_joint simulates a two-state Markov chain whose stay probabilities match source valid/invalid mean run lengths (inclusion-flag count is approximate); selectable fitted_markov_balanced fits source valid fraction into an exact integer valid-row target and allocates positive alternating runs exhausting valid and invalid targets by construction. Recommend fitted_markov_balanced when preserving the source inclusion fraction is requested; the integer count is fitted from rounded aggregate fraction, not a scientific or privacy guarantee. Depths begin at source start depth (rounded to 3 decimals) and advance by median forward spacing, repeating only between consecutive invalid rows so repeats stay masked. Invalid rows carry no group labels. Each valid row draws joint answer pattern at source rates, then draws answered labels through source transitions with at least two outgoing pairs support (fallback to source label rates or joint counts). Same source, seed and row count give identical bytes.",
       "output_columns": [
         "depth_m: generated depth in metres, finite, nonnegative and non-decreasing from the fitted source start",
         "valid: true/false inclusion flag whose run pattern is fitted to the source's supplied validity flag; it is not a measure of instrument or scientific reliability",
@@ -489,7 +527,7 @@
         "An exact row count up to max_rows; the plan pins it and row_count_match checks it.",
         "Depth spacing similar to the source: generation uses the source start and median forward step; depth_start_match, spacing_step_match, depth_span_match and depth_end_within_requested check the generated geometry against that fitted plan, and spacing_median, depth_non_decreasing, depth_finite, depth_nonnegative and backward_steps apply fixed bands or literal rules.",
         "Blank group labels similar to the source: valid-row answer and blank patterns are fitted; swir_answer_fidelity and tir_answer_fidelity compare each answer rate with the source's own rate within its split-half tolerance, invalid_label_rate fails if invalid rows carry labels more often than in the source, and tir_answer_rate applies a calibrated band.",
-        "Inclusion (valid) flags similar to the source: valid and invalid run lengths are fitted from the source; valid_fraction, repeated_depth_fraction and repeated_depths_masked_out compare against fixed bands. For fitted_markov_balanced, valid_fraction also requires the actual valid row count to match the fitted integer target round(n_rows * valid_fraction) exactly alongside the calibrated band.",
+        "Inclusion (valid) flags similar to the source: choose fitted_markov_balanced for this wording even without a request for an exact count. It fits the rounded aggregate valid fraction to an integer count and valid_fraction checks actual count equals target plus the unchanged calibrated band. The legacy default fitted_markov_joint fits run lengths but its total included fraction can drift. The operator reviews the proposed strategy; repeated_depth_fraction and repeated_depths_masked_out still apply.",
         "Group labels similar to the source: swir_source_vocabulary, tir_source_vocabulary, swir_label_richness and tir_label_richness compare with the labels the source answers; swir_fidelity, tir_fidelity and tir_persistence_fidelity compare label distribution and TIR run persistence with the source within split-half tolerances; swir_vocabulary and tir_vocabulary check a fixed known vocabulary.",
         "Showing which checks passed: after generation, validation-report.json lists every check with pass, fail or skip and its measured detail, and evidence-report.md shows each recorded check with required or optional status. No new data column is needed.",
         "Fictional, synthetic or practice records: rows are generated from aggregates rather than copied from the source; that wording alone is not a privacy guarantee."
