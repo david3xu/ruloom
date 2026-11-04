@@ -1,35 +1,43 @@
-"""Admitted case records, provenance validation and practical-use checking.
+"""Admitted use case definitions, primary evidence records and consumer verification.
 
 This module provides profile-owned case logic for the research-led workflow:
 - validates installed case definitions and reviewed local evidence pack;
-- verifies tamper-evident snapshot hashes, primary URLs and admission reviews;
-- compiles and strictly validates typed case contracts with bounded target rows
-  and source pins;
+- verifies tamper-evident snapshot hashes, safe primary URLs and admission reviews;
+- compiles and strictly validates typed case contracts with bounded target rows,
+  integer interval feasibility and source pins;
 - enforces deterministic source suitability pre-flight before any model call;
 - builds bounded source aggregate references without shipping raw source rows;
+- separates full code-side reference from rare-label-redacted model summaries;
 - enforces downstream practical-use checking (read/filter/group, row accounting,
-  structure presence, and fixed lesson tolerances from agreement);
-- provides independent consumer recomputation for recipient verification.
+  per-channel structure presence, and fixed lesson tolerances from agreement);
+- provides independent consumer recomputation and full measurement verification.
 
 This is a profile foundation for the research-led workflow, not a runtime CLI
 or publication integration (which bind into execute and package in subsequent slices).
+Provenance reviewer names and admission notes are recorded metadata claims in
+the catalogue, not cryptographic proofs or external certifications of independence.
+Catalogue integrity relies on local file hash self-attestation; manifest digest
+pinning is future integration.
 This module imports no engine and no model code (FP-CODE-2).
 """
 
 from __future__ import annotations
 
 import csv
+import datetime
 import hashlib
 import io
 import json
 import math
+import re
 import statistics
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from ..intake.reader import normalize_group, parse_depth, parse_valid
+from ..intake.reader import normalize_group, parse_depth
 
 ALLOWED_TOP_KEYS = frozenset({"version", "evidence_pack", "cases"})
 
@@ -63,6 +71,43 @@ ALLOWED_CASE_KEYS = frozenset(
         "source_requirements",
         "contract_template",
         "limitations",
+    }
+)
+
+ALLOWED_DESIGN_CHOICE_KEYS = frozenset(
+    {
+        "activity",
+        "min_satisfiable_rows",
+        "max_supported_rows",
+        "default_target_rows",
+        "spacing_tolerance_relative_max",
+        "valid_fraction_tolerance_absolute_max",
+        "answer_rate_tolerance_absolute_max",
+        "spacing_definition",
+        "answer_rate_denominator",
+    }
+)
+
+ALLOWED_SOURCE_REQUIREMENT_KEYS = frozenset(
+    {
+        "required_columns",
+        "min_source_rows",
+        "require_ordered_finite_depth",
+        "require_positive_median_spacing",
+        "require_both_inclusion_states",
+        "require_both_label_states_in_included",
+        "admitted_example_source",
+    }
+)
+
+ALLOWED_TEMPLATE_KEYS = frozenset(
+    {
+        "output_columns",
+        "recommended_strategy",
+        "checks",
+        "denominators",
+        "flag_encoding",
+        "spacing_definition",
     }
 )
 
@@ -101,42 +146,86 @@ ALLOWED_REFERENCE_KEYS = frozenset(
     }
 )
 
-
-def compute_expected_valid_count(stats_profile: Any, plan: Any) -> int | None:
-    """Compute exact expected valid count for balanced strategy, or None."""
-    if isinstance(plan, dict) and plan.get("strategy") == "fitted_markov_balanced":
-        stats = getattr(stats_profile, "stats", None)
-        validity = stats.get("validity") if isinstance(stats, dict) else None
-        vf = validity.get("valid_fraction") if isinstance(validity, dict) else None
-        n_rows = plan.get("n_rows")
-        if (
-            isinstance(n_rows, int)
-            and not isinstance(n_rows, bool)
-            and isinstance(vf, (int, float))
-            and not isinstance(vf, bool)
-        ):
-            return round(n_rows * vf)
-    return None
+ADMITTED_PRIMARY_DOMAINS = frozenset(
+    {"www.auscope.org.au", "github.com", "wapims.dmp.wa.gov.au"}
+)
 
 
 def _cases_json_path() -> Path:
-    """Path to the sibling cases.json catalogue file."""
     return Path(__file__).resolve().parent.parent / "cases.json"
 
 
+def _validate_safe_url(url: Any) -> None:
+    """Validate that evidence URL uses secure https and belongs to admitted primary hosts."""
+    if type(url) is not str:
+        raise ValueError(f"URL must be string, got {type(url)}")
+    if not url.startswith("https://"):
+        raise ValueError(f"URL must use secure https protocol, got {url!r}")
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"URL scheme must be https, got {parsed.scheme!r}")
+    if not parsed.netloc or parsed.netloc not in ADMITTED_PRIMARY_DOMAINS:
+        raise ValueError(
+            f"URL domain {parsed.netloc!r} not in admitted primary domain allowlist: "
+            f"{sorted(ADMITTED_PRIMARY_DOMAINS)}"
+        )
+
+
+def _parse_iso_date(d_str: Any) -> datetime.date:
+    """Validate and parse ISO 8601 date YYYY-MM-DD."""
+    if type(d_str) is not str or not re.match(r"^\d{4}-\d{2}-\d{2}$", d_str):
+        raise ValueError(f"date must be ISO format YYYY-MM-DD, got {d_str!r}")
+    try:
+        return datetime.date.fromisoformat(d_str)
+    except ValueError as err:
+        raise ValueError(f"invalid ISO date {d_str!r}: {err}") from err
+
+
+def _deep_numeric_match(
+    a: Any, b: Any, rel_tol: float = 1e-9, abs_tol: float = 1e-7
+) -> bool:
+    """Deep equality check with explicit numeric tolerance policy for floats."""
+    if type(a) is not type(b):
+        if (
+            isinstance(a, (int, float))
+            and isinstance(b, (int, float))
+            and not isinstance(a, bool)
+            and not isinstance(b, bool)
+        ):
+            return math.isclose(float(a), float(b), rel_tol=rel_tol, abs_tol=abs_tol)
+        return False
+    if isinstance(a, float):
+        return math.isclose(a, b, rel_tol=rel_tol, abs_tol=abs_tol)
+    if isinstance(a, Mapping):
+        if set(a.keys()) != set(b.keys()):
+            return False
+        return all(_deep_numeric_match(a[k], b[k], rel_tol, abs_tol) for k in a)
+    if isinstance(a, (list, tuple)):
+        if len(a) != len(b):
+            return False
+        return all(_deep_numeric_match(x, y, rel_tol, abs_tol) for x, y in zip(a, b))
+    return a == b
+
+
 def load_cases_catalogue() -> dict[str, Any]:
-    """Load and validate the profile's admitted cases catalogue.
+    """Load and strictly validate the profile's admitted cases catalogue.
 
     Enforces code-checkable provenance for every evidence entry:
-    - strict schema with no unexpected top-level or entry keys;
-    - required fields: id, url, title, section, verbatim_passage,
+    - strict schema with no unexpected top-level, evidence, or case keys;
+    - top-level version must be integer 1;
+    - required evidence fields: id, url, title, section, verbatim_passage,
       passage_sha256, supports, does_not_establish, retrieved_date,
       reviewed_date, admission_reviewer, admission_kind;
-    - passage_sha256 must match hashlib.sha256 of verbatim_passage;
-    - admission_reviewer must be recorded and cannot be implementer;
-    - cases must separate researched_facts, source_licence_evidence and
-      design_choices;
-    - primary evidence citations must exist in evidence_pack.
+    - URLs must be secure HTTPS from admitted primary domains;
+    - ISO dates must be valid YYYY-MM-DD and reviewed_date >= retrieved_date;
+    - passage_sha256 must match sha256 of verbatim_passage;
+    - admission_reviewer cannot be implementer;
+    - entry id must match its dictionary key;
+    - case id must match its dictionary key and version must be integer 1;
+    - cases must separate researched_facts, source_licence_evidence,
+      design_choices, source_requirements, and contract_template with full typed schemas;
+    - primary evidence citations must exist in evidence_pack;
+    - tolerance keys in design_choices and contract_template must match frozen bounds.
     """
     path = _cases_json_path()
     if not path.is_file():
@@ -149,6 +238,17 @@ def load_cases_catalogue() -> dict[str, Any]:
     if extra_top:
         raise ValueError(
             f"cases catalogue has unexpected top-level keys: {sorted(extra_top)}"
+        )
+    missing_top = ALLOWED_TOP_KEYS - set(raw.keys())
+    if missing_top:
+        raise ValueError(
+            f"cases catalogue missing required top-level keys: {sorted(missing_top)}"
+        )
+
+    cat_version = raw.get("version")
+    if type(cat_version) is not int or cat_version != 1:
+        raise ValueError(
+            f"cases catalogue version must be integer 1, got {cat_version!r}"
         )
 
     evidence_pack = raw.get("evidence_pack")
@@ -163,35 +263,70 @@ def load_cases_catalogue() -> dict[str, Any]:
             raise ValueError(
                 f"evidence entry {eid!r} has unexpected keys: {sorted(extra_e)}"
             )
-        for req in (
-            "id",
-            "url",
-            "title",
-            "section",
-            "verbatim_passage",
-            "passage_sha256",
-            "supports",
-            "does_not_establish",
-            "retrieved_date",
-            "reviewed_date",
-            "admission_reviewer",
-            "admission_kind",
-        ):
-            if req not in entry or not entry[req]:
+        missing_e = ALLOWED_EVIDENCE_KEYS - set(entry.keys())
+        if missing_e:
+            raise ValueError(
+                f"evidence entry {eid!r} missing required keys: {sorted(missing_e)}"
+            )
+
+        if entry.get("id") != eid:
+            raise ValueError(
+                f"evidence key {eid!r} differs from entry id {entry.get('id')!r}"
+            )
+
+        _validate_safe_url(entry["url"])
+
+        for str_field in ("title", "section", "supports", "admission_kind"):
+            val = entry.get(str_field)
+            if type(val) is not str or not val.strip():
                 raise ValueError(
-                    f"evidence entry {eid!r} missing required field: {req}"
+                    f"evidence entry {eid!r} {str_field} must be non-empty string, got {val!r}"
                 )
-        actual_hash = hashlib.sha256(
-            entry["verbatim_passage"].encode("utf-8")
-        ).hexdigest()
-        if actual_hash != entry["passage_sha256"]:
+
+        passage = entry.get("verbatim_passage")
+        if type(passage) is not str or not passage.strip():
+            raise ValueError(
+                f"evidence entry {eid!r} verbatim_passage must be non-empty string, got {type(passage)}"
+            )
+
+        dne = entry.get("does_not_establish")
+        if (
+            not isinstance(dne, list)
+            or not dne
+            or not all(type(x) is str and x.strip() for x in dne)
+        ):
+            raise ValueError(
+                f"evidence entry {eid!r} does_not_establish must be non-empty list of non-empty strings"
+            )
+
+        actual_hash = hashlib.sha256(passage.encode("utf-8")).hexdigest()
+        sha_field = entry.get("passage_sha256")
+        if (
+            type(sha_field) is not str
+            or len(sha_field) != 64
+            or not all(c in "0123456789abcdef" for c in sha_field)
+            or sha_field != actual_hash
+        ):
             raise ValueError(
                 f"tampered evidence passage for {eid!r}: hash mismatch "
-                f"(expected {entry['passage_sha256']}, got {actual_hash})"
+                f"(expected {sha_field}, got {actual_hash})"
             )
-        if entry["admission_reviewer"] == "Gemini":
+
+        ret_d = _parse_iso_date(entry.get("retrieved_date"))
+        rev_d = _parse_iso_date(entry.get("reviewed_date"))
+        if rev_d < ret_d:
             raise ValueError(
-                f"evidence entry {eid!r} reviewer must differ from implementer"
+                f"evidence entry {eid!r} reviewed_date ({rev_d}) cannot be before retrieved_date ({ret_d})"
+            )
+
+        reviewer = entry.get("admission_reviewer")
+        if type(reviewer) is not str or not reviewer.strip():
+            raise ValueError(
+                f"evidence entry {eid!r} admission_reviewer must be non-empty string"
+            )
+        if "gemini" in reviewer.lower():
+            raise ValueError(
+                f"evidence entry {eid!r} reviewer cannot be implementer: {reviewer!r}"
             )
 
     cases = raw.get("cases")
@@ -204,29 +339,159 @@ def load_cases_catalogue() -> dict[str, Any]:
         extra_c = set(case_data.keys()) - ALLOWED_CASE_KEYS
         if extra_c:
             raise ValueError(f"case {cid!r} has unexpected keys: {sorted(extra_c)}")
+        missing_c = ALLOWED_CASE_KEYS - set(case_data.keys())
+        if missing_c:
+            raise ValueError(f"case {cid!r} missing required keys: {sorted(missing_c)}")
+
+        if case_data.get("id") != cid:
+            raise ValueError(
+                f"case key {cid!r} differs from case id {case_data.get('id')!r}"
+            )
+
+        c_version = case_data.get("version")
+        if type(c_version) is not int or c_version != 1:
+            raise ValueError(
+                f"case {cid!r} version must be integer 1, got {c_version!r}"
+            )
+
+        c_title = case_data.get("title")
+        if type(c_title) is not str or not c_title.strip():
+            raise ValueError(f"case {cid!r} title must be non-empty string")
+
+        # Researched facts
+        rf = case_data.get("researched_facts")
+        if not isinstance(rf, dict):
+            raise ValueError(f"case {cid!r} researched_facts must be an object")
+        citations = rf.get("primary_evidence_ids")
         if (
-            "researched_facts" not in case_data
-            or "source_licence_evidence" not in case_data
-            or "design_choices" not in case_data
+            not isinstance(citations, list)
+            or not citations
+            or not all(type(x) is str and x.strip() for x in citations)
         ):
             raise ValueError(
-                f"case {cid!r} must separate researched_facts, "
-                "source_licence_evidence and design_choices"
+                f"case {cid!r} primary_evidence_ids must be non-empty list of strings"
             )
-        citations = case_data.get("researched_facts", {}).get(
-            "primary_evidence_ids", []
-        )
         for cite_id in citations:
             if cite_id not in evidence_pack:
                 raise ValueError(
                     f"case {cid!r} cites unadmitted evidence id: {cite_id!r}"
                 )
 
+        # Design choices
+        dc = case_data.get("design_choices")
+        if not isinstance(dc, dict):
+            raise ValueError(f"case {cid!r} design_choices must be an object")
+        extra_dc = set(dc.keys()) - ALLOWED_DESIGN_CHOICE_KEYS
+        missing_dc = ALLOWED_DESIGN_CHOICE_KEYS - set(dc.keys())
+        if extra_dc or missing_dc:
+            raise ValueError(
+                f"case {cid!r} design_choices schema mismatch: extra={sorted(extra_dc)}, missing={sorted(missing_dc)}"
+            )
+        if (
+            type(dc["min_satisfiable_rows"]) is not int
+            or dc["min_satisfiable_rows"] != 25
+        ):
+            raise ValueError(f"case {cid!r} min_satisfiable_rows must be integer 25")
+        if (
+            type(dc["max_supported_rows"]) is not int
+            or dc["max_supported_rows"] != 200000
+        ):
+            raise ValueError(f"case {cid!r} max_supported_rows must be integer 200000")
+        if (
+            type(dc["valid_fraction_tolerance_absolute_max"]) is not float
+            or dc["valid_fraction_tolerance_absolute_max"] != 0.02
+        ):
+            raise ValueError(
+                f"case {cid!r} valid_fraction_tolerance_absolute_max must be 0.02"
+            )
+        if (
+            type(dc["answer_rate_tolerance_absolute_max"]) is not float
+            or dc["answer_rate_tolerance_absolute_max"] != 0.02
+        ):
+            raise ValueError(
+                f"case {cid!r} answer_rate_tolerance_absolute_max must be 0.02"
+            )
+        if (
+            type(dc["spacing_tolerance_relative_max"]) is not float
+            or dc["spacing_tolerance_relative_max"] != 0.01
+        ):
+            raise ValueError(
+                f"case {cid!r} spacing_tolerance_relative_max must be 0.01"
+            )
+
+        # Source requirements
+        sr = case_data.get("source_requirements")
+        if not isinstance(sr, dict):
+            raise ValueError(f"case {cid!r} source_requirements must be an object")
+        extra_sr = set(sr.keys()) - ALLOWED_SOURCE_REQUIREMENT_KEYS
+        missing_sr = ALLOWED_SOURCE_REQUIREMENT_KEYS - set(sr.keys())
+        if extra_sr or missing_sr:
+            raise ValueError(
+                f"case {cid!r} source_requirements schema mismatch: extra={sorted(extra_sr)}, missing={sorted(missing_sr)}"
+            )
+        for bool_key in (
+            "require_ordered_finite_depth",
+            "require_positive_median_spacing",
+            "require_both_inclusion_states",
+            "require_both_label_states_in_included",
+        ):
+            if type(sr[bool_key]) is not bool:
+                raise ValueError(
+                    f"case {cid!r} source_requirements {bool_key} must be bool"
+                )
+
+        # Contract template
+        ct = case_data.get("contract_template")
+        if not isinstance(ct, dict):
+            raise ValueError(f"case {cid!r} contract_template must be an object")
+        extra_ct = set(ct.keys()) - ALLOWED_TEMPLATE_KEYS
+        missing_ct = ALLOWED_TEMPLATE_KEYS - set(ct.keys())
+        if extra_ct or missing_ct:
+            raise ValueError(
+                f"case {cid!r} contract_template schema mismatch: extra={sorted(extra_ct)}, missing={sorted(missing_ct)}"
+            )
+        checks = ct.get("checks")
+        if not isinstance(checks, dict):
+            raise ValueError(f"case {cid!r} contract_template checks must be an object")
+        for ck, expected_t, expected_val in (
+            ("exact_rows", bool, True),
+            ("valid_binary", bool, True),
+            ("depth_finite_ordered_nonnegative", bool, True),
+            ("relative_median_spacing_difference_max", float, 0.01),
+            ("absolute_valid_fraction_difference_max", float, 0.02),
+            ("absolute_answer_rate_difference_max", float, 0.02),
+            ("nonblank_labels_source_supported", bool, True),
+            ("downstream_read_filter_group_accounts_for_rows", bool, True),
+            ("downstream_structure_both_states_present", bool, True),
+        ):
+            if ck not in checks:
+                raise ValueError(f"case {cid!r} contract_template checks missing {ck}")
+            if type(checks[ck]) is not expected_t or checks[ck] != expected_val:
+                raise ValueError(
+                    f"case {cid!r} check {ck!r} loosened or wrong type: expected {expected_val!r} ({expected_t.__name__}), "
+                    f"got {checks[ck]!r} ({type(checks[ck]).__name__})"
+                )
+
+        # Limitations
+        limits = case_data.get("limitations")
+        if (
+            not isinstance(limits, list)
+            or not limits
+            or not all(type(x) is str and x.strip() for x in limits)
+        ):
+            raise ValueError(
+                f"case {cid!r} limitations must be non-empty list of non-empty strings"
+            )
+
     return raw
 
 
 def get_case(case_id_or_alias: str) -> dict[str, Any]:
     """Return the admitted case definition by id or registered alias."""
+    if not isinstance(case_id_or_alias, str):
+        raise ValueError(
+            f"case_id_or_alias must be string, got {type(case_id_or_alias).__name__}"
+        )
     catalogue = load_cases_catalogue()
     cases = catalogue["cases"]
     target = case_id_or_alias.strip().lower()
@@ -282,16 +547,25 @@ def check_source_joint_satisfiability(
     case_def: Mapping[str, Any],
     source_reference: Mapping[str, Any],
 ) -> tuple[bool, str | None]:
-    """Check if target_rows can jointly satisfy inclusion, answer rates and blank presence."""
-    design = case_def.get("design_choices", {})
-    vf_tol = design.get("valid_fraction_tolerance_absolute_max", 0.02)
-    swir_tol = design.get("answer_rate_tolerance_absolute_max", 0.02)
-    tir_tol = design.get("answer_rate_tolerance_absolute_max", 0.02)
+    """Check if target_rows can jointly satisfy inclusion, answer rates and blank presence.
 
-    vf = source_reference.get("valid_fraction", 0.0)
-    swir_rate = source_reference.get("swir_answer_rate", 0.0)
-    tir_rate = source_reference.get("tir_answer_rate", 0.0)
-    has_blanks = source_reference.get("has_blanks", True)
+    Uses integer interval arithmetic: for each channel requiring both answered
+    and blank states, intersects the valid answer rate tolerance interval
+    [k*(r - tol), k*(r + tol)] with the integer structural presence range
+    [1, k - 1] to check whether a feasible integer count exists in O(1) time.
+    """
+    validate_source_reference(source_reference)
+    if type(target_rows) is not int or isinstance(target_rows, bool):
+        raise TypeError(f"target_rows must be integer, got {type(target_rows)}")
+
+    design = case_def["design_choices"]
+    vf_tol = float(design["valid_fraction_tolerance_absolute_max"])
+    swir_tol = float(design["answer_rate_tolerance_absolute_max"])
+    tir_tol = float(design["answer_rate_tolerance_absolute_max"])
+
+    vf = float(source_reference["valid_fraction"])
+    swir_rate = float(source_reference["swir_answer_rate"])
+    tir_rate = float(source_reference["tir_answer_rate"])
 
     k = round(target_rows * vf)
     if k < 1 or (target_rows - k) < 1:
@@ -308,21 +582,45 @@ def check_source_joint_satisfiability(
             f"{abs(k / target_rows - vf):.4f} from source {vf:.4f} (max {vf_tol})",
         )
 
-    if has_blanks and k > 1:
-        for channel, rate, tol in (
-            ("SWIR", swir_rate, swir_tol),
-            ("TIR", tir_rate, tir_tol),
-        ):
-            if rate < 1.0:
-                feasible_a = [a for a in range(1, k) if abs(a / k - rate) <= tol]
-                if not feasible_a:
-                    max_rate = (k - 1) / k
-                    return (
-                        False,
-                        f"target row count {target_rows} (k={k} valid rows) cannot jointly satisfy "
-                        f"{channel} answer rate ({rate:.4f} +/- {tol}) and required blank presence "
-                        f"(max feasible rate with at least one blank is {k - 1}/{k} = {max_rate:.4f})",
-                    )
+    # Check each channel using interval arithmetic
+    for channel, rate, tol in (
+        ("SWIR", swir_rate, swir_tol),
+        ("TIR", tir_rate, tir_tol),
+    ):
+        req_answered = rate > 0.0
+        req_blanks = rate < 1.0
+
+        if req_answered and req_blanks:
+            if k < 2:
+                return (
+                    False,
+                    f"target row count {target_rows} gives k={k} valid rows, but {channel} "
+                    "requires at least 1 answered and 1 blank valid row (needs k >= 2)",
+                )
+            a_min = 1
+            a_max = k - 1
+        elif req_answered and not req_blanks:
+            a_min = k
+            a_max = k
+        elif not req_answered and req_blanks:
+            a_min = 0
+            a_max = 0
+        else:
+            a_min = 0
+            a_max = k
+
+        # Integer continuous bounds for |a/k - rate| <= tol
+        low = max(a_min, math.ceil(k * (rate - tol) - 1e-12))
+        high = min(a_max, math.floor(k * (rate + tol) + 1e-12))
+        if low > high:
+            max_rate_with_blank = (k - 1) / k if k > 0 else 0.0
+            return (
+                False,
+                f"target row count {target_rows} (k={k} valid rows) cannot jointly satisfy "
+                f"{channel} answer rate ({rate:.4f} +/- {tol}) and required blank presence "
+                f"(feasible integer range empty: low={low} > high={high}; "
+                f"max rate with at least one blank is {k - 1}/{k} = {max_rate_with_blank:.4f})",
+            )
 
     return True, None
 
@@ -331,14 +629,25 @@ def compute_minimum_feasible_rows(
     case_def: Mapping[str, Any],
     source_reference: Mapping[str, Any],
 ) -> int:
-    """Find smallest target row count >= floor that is jointly satisfiable for this source."""
-    floor = case_def.get("design_choices", {}).get("min_satisfiable_rows", 25)
-    ceiling = case_def.get("design_choices", {}).get("max_supported_rows", 200000)
-    for n in range(floor, min(ceiling, 5000) + 1):
+    """Find smallest target row count >= floor that is jointly satisfiable for this source.
+
+    Searches across [min_satisfiable_rows, max_supported_rows] using O(1) interval arithmetic.
+    Refuses with an explicit ValueError if no feasible row count exists within supported bounds.
+    """
+    validate_source_reference(source_reference)
+    design = case_def["design_choices"]
+    floor = int(design["min_satisfiable_rows"])
+    ceiling = int(design["max_supported_rows"])
+
+    for n in range(floor, ceiling + 1):
         ok, _ = check_source_joint_satisfiability(n, case_def, source_reference)
         if ok:
             return n
-    return floor
+
+    raise ValueError(
+        f"no jointly feasible row count exists within supported bounds [{floor}, {ceiling}] "
+        f"for this source (valid_fraction={source_reference.get('valid_fraction')})"
+    )
 
 
 def validate_plan_satisfiability(
@@ -347,11 +656,11 @@ def validate_plan_satisfiability(
     source_reference: Mapping[str, Any] | None = None,
 ) -> None:
     """Validate that requested row count satisfies tolerance floors at contract time."""
-    if not isinstance(n_rows, int) or isinstance(n_rows, bool):
+    if type(n_rows) is not int or isinstance(n_rows, bool):
         raise TypeError(f"target row count must be an integer, got {type(n_rows)}")
-    design = case_def.get("design_choices", {})
-    floor = design.get("min_satisfiable_rows", 25)
-    ceiling = design.get("max_supported_rows", 200000)
+    design = case_def["design_choices"]
+    floor = int(design["min_satisfiable_rows"])
+    ceiling = int(design["max_supported_rows"])
     if n_rows < floor:
         raise ValueError(
             f"requested row count {n_rows} is below the admitted case "
@@ -363,6 +672,7 @@ def validate_plan_satisfiability(
         )
 
     if source_reference is not None:
+        validate_source_reference(source_reference)
         ok, reason = check_source_joint_satisfiability(
             n_rows, case_def, source_reference
         )
@@ -385,38 +695,44 @@ def compile_case_contract(
     - Validates target_rows against satisfiability floor (25), max (200000),
       and source-aware joint satisfiability when source_reference is supplied.
     - Binds measured intake source_sha256 pin (64-char lowercase hex string).
-    - Locks case checks, denominators, and thresholds from installed case definition.
+    - Locks canonical case checks, denominators, and thresholds from installed case definition.
     - Resulting contract shape is strictly typed with no extra keys.
     """
-    validate_plan_satisfiability(target_rows, case_def, source_reference)
     if (
-        not isinstance(source_sha256, str)
+        type(source_sha256) is not str
         or len(source_sha256) != 64
-        or not all(c in "0123456789abcdefABCDEF" for c in source_sha256)
+        or not all(c in "0123456789abcdef" for c in source_sha256)
     ):
         raise ValueError(
-            f"invalid source_sha256 pin: must be 64-char hex string, got {source_sha256!r}"
+            f"source_sha256 must be a 64-char lowercase hex string, got {source_sha256!r}"
         )
 
-    template = case_def.get("contract_template", {})
-    checks = dict(template.get("checks", {}))
-    checks["exact_rows"] = target_rows
+    if source_reference is not None:
+        validate_source_reference(source_reference)
+        ref_sha = source_reference.get("source_sha256")
+        if ref_sha != source_sha256:
+            raise ValueError(
+                f"source_sha256 pin mismatch with source_reference: "
+                f"{source_sha256} vs {ref_sha}"
+            )
+
+    validate_plan_satisfiability(target_rows, case_def, source_reference)
+
+    template = case_def["contract_template"]
+    canonical_checks = dict(template["checks"])
+    canonical_checks["exact_rows"] = target_rows
 
     contract = {
         "version": 1,
         "case_id": case_def["id"],
         "target_rows": target_rows,
-        "source_sha256": source_sha256.lower(),
-        "output_columns": list(template.get("output_columns", [])),
-        "recommended_strategy": template.get(
-            "recommended_strategy", "fitted_markov_balanced"
-        ),
-        "checks": checks,
-        "denominators": dict(template.get("denominators", {})),
-        "flag_encoding": template.get("flag_encoding", "true/false or 0/1"),
-        "spacing_definition": template.get(
-            "spacing_definition", "median of positive adjacent depth differences"
-        ),
+        "source_sha256": source_sha256,
+        "output_columns": list(template["output_columns"]),
+        "recommended_strategy": template["recommended_strategy"],
+        "checks": canonical_checks,
+        "denominators": dict(template["denominators"]),
+        "flag_encoding": template["flag_encoding"],
+        "spacing_definition": template["spacing_definition"],
         "limitations": list(case_def.get("limitations", [])),
     }
     return contract
@@ -429,7 +745,7 @@ def validate_case_contract(
 ) -> None:
     """Validate that a case contract strictly matches canonical schema and case rules."""
     if not isinstance(contract, Mapping):
-        raise TypeError(f"contract must be a mapping, got {type(contract)}")
+        raise ValueError(f"contract must be a mapping, got {type(contract).__name__}")
 
     contract_keys = set(contract.keys())
     missing = ALLOWED_CONTRACT_KEYS - contract_keys
@@ -439,10 +755,9 @@ def validate_case_contract(
     if extra:
         raise ValueError(f"contract has unexpected keys: {sorted(extra)}")
 
-    if contract.get("version") != 1 or isinstance(contract.get("version"), bool):
-        raise ValueError(
-            f"contract version must be integer 1, got {contract.get('version')!r}"
-        )
+    c_version = contract.get("version")
+    if type(c_version) is not int or c_version != 1:
+        raise ValueError(f"contract version must be integer 1, got {c_version!r}")
 
     if contract.get("case_id") != case_def.get("id"):
         raise ValueError(
@@ -451,21 +766,30 @@ def validate_case_contract(
         )
 
     target_rows = contract.get("target_rows")
-    if not isinstance(target_rows, int) or isinstance(target_rows, bool):
-        raise TypeError(
+    if type(target_rows) is not int or isinstance(target_rows, bool):
+        raise ValueError(
             f"contract target_rows must be integer, got {type(target_rows)}"
         )
     validate_plan_satisfiability(target_rows, case_def, source_reference)
 
     source_sha = contract.get("source_sha256")
     if (
-        not isinstance(source_sha, str)
+        type(source_sha) is not str
         or len(source_sha) != 64
-        or not all(c in "0123456789abcdef" for c in source_sha.lower())
+        or not all(c in "0123456789abcdef" for c in source_sha)
     ):
         raise ValueError(
-            f"contract source_sha256 must be a valid 64-char hex string, got {source_sha!r}"
+            f"contract source_sha256 must be a valid 64-char lowercase hex string, got {source_sha!r}"
         )
+
+    if source_reference is not None:
+        validate_source_reference(source_reference)
+        ref_sha = source_reference.get("source_sha256")
+        if ref_sha != source_sha:
+            raise ValueError(
+                f"contract source_sha256 mismatch with reference: "
+                f"{source_sha} vs {ref_sha}"
+            )
 
     expected_cols = list(case_def["contract_template"]["output_columns"])
     if contract.get("output_columns") != expected_cols:
@@ -483,11 +807,21 @@ def validate_case_contract(
 
     canonical_checks = dict(case_def["contract_template"]["checks"])
     canonical_checks["exact_rows"] = target_rows
-    if contract.get("checks") != canonical_checks:
+    contract_checks = contract.get("checks")
+    if not isinstance(contract_checks, Mapping) or set(contract_checks.keys()) != set(
+        canonical_checks.keys()
+    ):
         raise ValueError(
             f"contract checks mismatch: expected canonical {canonical_checks}, "
-            f"got {contract.get('checks')}"
+            f"got {contract_checks}"
         )
+    for ck, expected_v in canonical_checks.items():
+        actual_v = contract_checks[ck]
+        if type(actual_v) is not type(expected_v) or actual_v != expected_v:
+            raise ValueError(
+                f"contract check {ck!r} type/value mismatch: expected {expected_v!r} ({type(expected_v).__name__}), "
+                f"got {actual_v!r} ({type(actual_v).__name__})"
+            )
 
     expected_denoms = dict(case_def["contract_template"]["denominators"])
     if contract.get("denominators") != expected_denoms:
@@ -526,7 +860,10 @@ def assess_source_suitability(
     Reuses existing HyLogger reader semantics:
     - Verifies 100% clean numerical rows for this admitted case:
       records raw, usable, and rejected row counts. Any non-finite,
-      negative, or malformed depth cell is rejected.
+      negative, malformed depth cell, or invalid Final_Mask (not '0' or '1')
+      is rejected.
+    - Detects CSV row width errors (extra or missing values).
+    - Accepts file paths, sequences of dicts, or sequences of tuples.
     - Required source columns: StartDepth, Final_Mask, Grp1_sTSAS, Grp1_sjCLST.
     - Non-decreasing finite depth ordering.
     - Positive median forward spacing (computed with even-length averaging).
@@ -538,13 +875,15 @@ def assess_source_suitability(
     A model cannot upgrade an unsuitable code verdict.
     """
     reasons: list[str] = []
-    reqs = case_def.get("source_requirements", {})
+    reqs = case_def["source_requirements"]
     required_cols = reqs.get("required_columns", ["StartDepth", "Final_Mask"])
     min_rows = reqs.get("min_source_rows", 20)
 
     source_sha: str | None = None
     headers: list[str] = []
-    raw_rows: list[dict[str, Any]] = []
+    raw_count = 0
+    rejected_count = 0
+    parsed_rows: list[tuple[float, bool, str | None, str | None]] = []
 
     if isinstance(source_path_or_rows, (str, Path)):
         path = Path(source_path_or_rows)
@@ -559,55 +898,126 @@ def assess_source_suitability(
             )
 
         with path.open(encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            headers = reader.fieldnames or []
-            raw_rows = list(reader)
+            reader = csv.reader(f)
+            header_row = next(reader, None)
+            if not header_row:
+                headers = []
+            else:
+                headers = [h.strip() for h in header_row]
+            expected_width = len(headers)
+
+            missing_cols = [c for c in required_cols if c not in headers]
+            if missing_cols:
+                reasons.append(
+                    f"missing required source columns: {', '.join(missing_cols)}"
+                )
+                return {
+                    "suitable": False,
+                    "source_sha256": source_sha,
+                    "source_rows": 0,
+                    "usable_rows": 0,
+                    "rejected_rows": 0,
+                    "assessed_columns": headers,
+                    "reasons": reasons,
+                    "findings": "Source lacks required columns.",
+                    "licence_status": "rights unknown",
+                    "disclaimer": "A source-format fit is not a scientific or origin/rights certification.",
+                }
+
+            for line in reader:
+                raw_count += 1
+                if len(line) != expected_width:
+                    rejected_count += 1
+                    continue
+                row_dict = dict(zip(headers, line))
+                depth_val = parse_depth(row_dict.get("StartDepth"))
+                if depth_val is None or not math.isfinite(depth_val) or depth_val < 0:
+                    rejected_count += 1
+                    continue
+                mask_str = str(row_dict.get("Final_Mask", "")).strip()
+                if mask_str not in {"0", "1"}:
+                    rejected_count += 1
+                    continue
+                is_valid = mask_str == "1"
+                swir = normalize_group(row_dict.get("Grp1_sTSAS"))
+                tir = normalize_group(row_dict.get("Grp1_sjCLST"))
+                parsed_rows.append((depth_val, is_valid, swir, tir))
     else:
-        raw_rows = list(source_path_or_rows)
-        if raw_rows and isinstance(raw_rows[0], dict):
-            headers = list(raw_rows[0].keys())
-        else:
+        # Sequence in memory (list of dicts or list of tuples)
+        raw_items = list(source_path_or_rows)
+        repr_bytes = json.dumps(raw_items, sort_keys=True, default=str).encode("utf-8")
+        source_sha = hashlib.sha256(repr_bytes).hexdigest()
+
+        if expected_source_sha256 and source_sha != expected_source_sha256:
+            reasons.append(
+                f"source sha256 mismatch (expected {expected_source_sha256}, got {source_sha})"
+            )
+
+        if not raw_items:
             headers = list(required_cols)
+        elif isinstance(raw_items[0], Mapping):
+            headers = list(raw_items[0].keys())
+        else:
+            headers = ["StartDepth", "Final_Mask", "Grp1_sTSAS", "Grp1_sjCLST"]
 
-    missing_cols = [c for c in required_cols if c not in headers]
-    if missing_cols:
-        reasons.append(f"missing required source columns: {', '.join(missing_cols)}")
-        return {
-            "suitable": False,
-            "source_sha256": source_sha,
-            "source_rows": len(raw_rows),
-            "usable_rows": 0,
-            "rejected_rows": len(raw_rows),
-            "assessed_columns": headers,
-            "reasons": reasons,
-            "findings": "Source lacks required columns.",
-            "licence_status": "rights unknown",
-            "disclaimer": "A source-format fit is not a scientific or origin/rights certification.",
-        }
+        expected_width = len(headers)
+        missing_cols = [c for c in required_cols if c not in headers]
+        if missing_cols:
+            reasons.append(
+                f"missing required source columns: {', '.join(missing_cols)}"
+            )
+            return {
+                "suitable": False,
+                "source_sha256": source_sha,
+                "source_rows": len(raw_items),
+                "usable_rows": 0,
+                "rejected_rows": len(raw_items),
+                "assessed_columns": headers,
+                "reasons": reasons,
+                "findings": "Source lacks required columns.",
+                "licence_status": "rights unknown",
+                "disclaimer": "A source-format fit is not a scientific or origin/rights certification.",
+            }
 
-    raw_count = len(raw_rows)
+        for item in raw_items:
+            raw_count += 1
+            if isinstance(item, Mapping):
+                if len(item) != expected_width:
+                    rejected_count += 1
+                    continue
+                row_dict = dict(item)
+            elif isinstance(item, (tuple, list)):
+                if len(item) != expected_width:
+                    rejected_count += 1
+                    continue
+                row_dict = dict(zip(headers, item))
+            else:
+                rejected_count += 1
+                continue
+
+            depth_val = parse_depth(row_dict.get("StartDepth"))
+            if depth_val is None or not math.isfinite(depth_val) or depth_val < 0:
+                rejected_count += 1
+                continue
+            mask_str = str(row_dict.get("Final_Mask", "")).strip()
+            if mask_str not in {"0", "1"}:
+                rejected_count += 1
+                continue
+            is_valid = mask_str == "1"
+            swir = normalize_group(row_dict.get("Grp1_sTSAS"))
+            tir = normalize_group(row_dict.get("Grp1_sjCLST"))
+            parsed_rows.append((depth_val, is_valid, swir, tir))
+
     if raw_count < min_rows:
         reasons.append(
             f"source row count {raw_count} is below minimum requirement {min_rows}"
         )
 
-    parsed_rows: list[tuple[float, bool, str | None, str | None]] = []
-    rejected_count = 0
-    for r in raw_rows:
-        depth_val = parse_depth(r.get("StartDepth"))
-        if depth_val is None or depth_val < 0:
-            rejected_count += 1
-            continue
-        is_valid = parse_valid(r.get("Final_Mask"))
-        swir = normalize_group(r.get("Grp1_sTSAS"))
-        tir = normalize_group(r.get("Grp1_sjCLST"))
-        parsed_rows.append((depth_val, is_valid, swir, tir))
-
     if rejected_count > 0:
         reasons.append(
-            f"source contains {rejected_count} malformed, non-finite or negative depth rows "
+            f"source contains {rejected_count} malformed, non-finite, negative depth or invalid mask rows "
             f"(raw: {raw_count}, usable: {len(parsed_rows)}, rejected: {rejected_count}); "
-            "admitted case requires 100% clean finite depths"
+            "admitted case requires 100% clean finite depths and binary masks"
         )
 
     if not parsed_rows:
@@ -725,7 +1135,7 @@ def assess_source_suitability(
 
 
 def validate_source_reference(source_reference: Mapping[str, Any]) -> None:
-    """Validate that a source reference dictionary adheres strictly to schema."""
+    """Validate that a source reference dictionary adheres strictly to schema and consistency rules."""
     if not isinstance(source_reference, Mapping):
         raise TypeError(
             f"source reference must be a mapping, got {type(source_reference)}"
@@ -738,58 +1148,114 @@ def validate_source_reference(source_reference: Mapping[str, Any]) -> None:
     if extra:
         raise ValueError(f"source reference has unexpected keys: {sorted(extra)}")
 
-    if source_reference.get("version") != 1 or isinstance(
-        source_reference.get("version"), bool
-    ):
-        raise ValueError("source reference version must be integer 1")
+    ref_version = source_reference.get("version")
+    if type(ref_version) is not int or ref_version != 1:
+        raise ValueError(
+            f"source reference version must be integer 1, got {ref_version!r}"
+        )
 
     sha = source_reference.get("source_sha256")
     if (
-        not isinstance(sha, str)
+        type(sha) is not str
         or len(sha) != 64
-        or not all(c in "0123456789abcdef" for c in sha.lower())
+        or not all(c in "0123456789abcdef" for c in sha)
     ):
         raise ValueError(
-            f"source reference source_sha256 must be 64-char hex, got {sha!r}"
+            f"source reference source_sha256 must be 64-char lowercase hex, got {sha!r}"
         )
 
-    for count_key in ("source_rows", "usable_rows"):
-        v = source_reference.get(count_key)
-        if not isinstance(v, int) or isinstance(v, bool) or v <= 0:
-            raise ValueError(f"source reference {count_key} must be positive integer")
+    s_rows = source_reference.get("source_rows")
+    u_rows = source_reference.get("usable_rows")
+    r_rows = source_reference.get("rejected_rows")
 
-    for rate_key in ("valid_fraction", "swir_answer_rate", "tir_answer_rate"):
+    if type(s_rows) is not int or isinstance(s_rows, bool) or s_rows <= 0:
+        raise ValueError(
+            f"source reference source_rows must be positive integer, got {s_rows!r}"
+        )
+    if (
+        type(u_rows) is not int
+        or isinstance(u_rows, bool)
+        or u_rows <= 0
+        or u_rows > s_rows
+    ):
+        raise ValueError(
+            f"source reference usable_rows must be positive integer <= source_rows, got {u_rows!r}"
+        )
+    if type(r_rows) is not int or isinstance(r_rows, bool) or r_rows < 0:
+        raise ValueError(
+            f"source reference rejected_rows must be non-negative integer, got {r_rows!r}"
+        )
+    if u_rows + r_rows != s_rows:
+        raise ValueError(
+            f"source reference row accounting mismatch: usable ({u_rows}) + "
+            f"rejected ({r_rows}) != source_rows ({s_rows})"
+        )
+
+    vf = source_reference.get("valid_fraction")
+    if type(vf) is not float or not math.isfinite(vf) or not (0.0 < vf < 1.0):
+        raise ValueError(
+            f"source reference valid_fraction must be finite float in (0, 1), got {vf!r}"
+        )
+
+    for rate_key in ("swir_answer_rate", "tir_answer_rate"):
         r = source_reference.get(rate_key)
-        if (
-            not isinstance(r, (int, float))
-            or isinstance(r, bool)
-            or not math.isfinite(r)
-            or not (0.0 <= r <= 1.0)
-        ):
+        if type(r) is not float or not math.isfinite(r) or not (0.0 <= r <= 1.0):
             raise ValueError(
-                f"source reference {rate_key} must be finite float in [0, 1]"
+                f"source reference {rate_key} must be finite float in [0, 1], got {r!r}"
             )
 
     sp = source_reference.get("median_forward_spacing")
-    if (
-        not isinstance(sp, (int, float))
-        or isinstance(sp, bool)
-        or not math.isfinite(sp)
-        or sp <= 0
-    ):
+    if type(sp) is not float or not math.isfinite(sp) or sp <= 0:
         raise ValueError(
-            "source reference median_forward_spacing must be positive finite float"
+            f"source reference median_forward_spacing must be positive finite float, got {sp!r}"
         )
 
-    for label_key in ("disclosed_swir_labels", "disclosed_tir_labels"):
-        labels = source_reference.get(label_key)
-        if not isinstance(labels, list) or not all(
-            isinstance(item, str) for item in labels
-        ):
-            raise ValueError(f"source reference {label_key} must be a list of strings")
+    swir_labels = source_reference.get("disclosed_swir_labels")
+    if not isinstance(swir_labels, list) or not all(
+        type(item) is str and item.strip() for item in swir_labels
+    ):
+        raise ValueError(
+            "source reference disclosed_swir_labels must be list of non-empty strings"
+        )
+    if len(set(swir_labels)) != len(swir_labels):
+        raise ValueError("source reference disclosed_swir_labels contains duplicates")
+    if float(source_reference["swir_answer_rate"]) > 0.0 and len(swir_labels) == 0:
+        raise ValueError(
+            "source reference disclosed_swir_labels cannot be empty when swir_answer_rate > 0"
+        )
 
-    if not isinstance(source_reference.get("has_blanks"), bool):
+    tir_labels = source_reference.get("disclosed_tir_labels")
+    if not isinstance(tir_labels, list) or not all(
+        type(item) is str and item.strip() for item in tir_labels
+    ):
+        raise ValueError(
+            "source reference disclosed_tir_labels must be list of non-empty strings"
+        )
+    if len(set(tir_labels)) != len(tir_labels):
+        raise ValueError("source reference disclosed_tir_labels contains duplicates")
+    if float(source_reference["tir_answer_rate"]) > 0.0 and len(tir_labels) == 0:
+        raise ValueError(
+            "source reference disclosed_tir_labels cannot be empty when tir_answer_rate > 0"
+        )
+
+    has_blanks = source_reference.get("has_blanks")
+    if type(has_blanks) is not bool:
         raise ValueError("source reference has_blanks must be boolean")
+    if (
+        float(source_reference["swir_answer_rate"]) < 1.0
+        or float(source_reference["tir_answer_rate"]) < 1.0
+    ) and not has_blanks:
+        raise ValueError(
+            "source reference has_blanks must be True when answer rates < 1.0"
+        )
+
+    lic = source_reference.get("licence_status")
+    if type(lic) is not str or not lic.strip():
+        raise ValueError("source reference licence_status must be non-empty string")
+
+    notice = source_reference.get("notice")
+    if type(notice) is not str or not notice.strip():
+        raise ValueError("source reference notice must be non-empty string")
 
 
 def build_source_reference(
@@ -810,25 +1276,21 @@ def build_source_reference(
             f"cannot build source reference from unsuitable source: {'; '.join(suit['reasons'])}"
         )
 
-    aggs = suit.get("aggregates", {})
-    source_sha = suit.get("source_sha256")
-    if not source_sha and isinstance(source_path_or_rows, (str, Path)):
-        source_sha = hashlib.sha256(Path(source_path_or_rows).read_bytes()).hexdigest()
-
+    aggs = suit["aggregates"]
     ref = {
         "version": 1,
-        "source_sha256": source_sha.lower() if source_sha else None,
-        "source_rows": suit.get("source_rows", 0),
-        "usable_rows": suit.get("usable_rows", 0),
-        "rejected_rows": suit.get("rejected_rows", 0),
-        "valid_fraction": aggs.get("valid_fraction", 0.0),
-        "median_forward_spacing": aggs.get("median_forward_spacing", 0.0),
-        "swir_answer_rate": aggs.get("swir_answer_rate", 0.0),
-        "tir_answer_rate": aggs.get("tir_answer_rate", 0.0),
-        "disclosed_swir_labels": aggs.get("disclosed_swir_labels", []),
-        "disclosed_tir_labels": aggs.get("disclosed_tir_labels", []),
-        "has_blanks": aggs.get("has_blanks", False),
-        "licence_status": suit.get("licence_status", "rights unknown"),
+        "source_sha256": suit["source_sha256"],
+        "source_rows": suit["source_rows"],
+        "usable_rows": suit["usable_rows"],
+        "rejected_rows": suit["rejected_rows"],
+        "valid_fraction": float(aggs["valid_fraction"]),
+        "median_forward_spacing": float(aggs["median_forward_spacing"]),
+        "swir_answer_rate": float(aggs["swir_answer_rate"]),
+        "tir_answer_rate": float(aggs["tir_answer_rate"]),
+        "disclosed_swir_labels": list(aggs["disclosed_swir_labels"]),
+        "disclosed_tir_labels": list(aggs["disclosed_tir_labels"]),
+        "has_blanks": bool(aggs["has_blanks"]),
+        "licence_status": suit["licence_status"],
         "notice": (
             "Bounded aggregate reference for code-side utility checking and verification. "
             "Model-disclosed summaries apply a frequency floor (MIN_LABEL_COUNT_FOR_MODEL_VIEW = 2) "
@@ -838,6 +1300,28 @@ def build_source_reference(
     }
     validate_source_reference(ref)
     return ref
+
+
+def build_disclosed_model_summary(
+    source_reference: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return model-facing summary with rare singleton labels redacted."""
+    validate_source_reference(source_reference)
+    return {
+        "version": 1,
+        "valid_fraction": source_reference["valid_fraction"],
+        "median_forward_spacing": source_reference["median_forward_spacing"],
+        "swir_answer_rate": source_reference["swir_answer_rate"],
+        "tir_answer_rate": source_reference["tir_answer_rate"],
+        "has_blanks": source_reference["has_blanks"],
+        "licence_status": source_reference["licence_status"],
+        "disclosed_swir_labels": list(source_reference["disclosed_swir_labels"]),
+        "disclosed_tir_labels": list(source_reference["disclosed_tir_labels"]),
+        "notice": (
+            "Model-facing disclosed summary. Singletons are withheld from the model view "
+            "per disclosure rules; code-side utility checking retains the full code-side reference."
+        ),
+    }
 
 
 def evaluate_case_utility(
@@ -864,7 +1348,7 @@ def evaluate_case_utility(
     - SWIR and TIR answer rates absolute difference <= 0.02 on included rows;
     - nonblank labels across ALL candidate rows supported by source vocabulary;
     - real downstream filter/group accounting for 100% of rows;
-    - structure presence of both inclusion states and blank labels.
+    - structure presence of both inclusion states and blank labels per channel.
     """
     # 1. Resolve and validate source reference
     if isinstance(source_reference_or_path, Mapping):
@@ -874,7 +1358,17 @@ def evaluate_case_utility(
     validate_source_reference(source_ref)
 
     # 2. Strict contract validation
-    case_def = get_case(contract.get("case_id", "hylogger_scalar_teaching_v1"))
+    if not isinstance(contract, Mapping):
+        raise ValueError(f"contract must be a mapping, got {type(contract).__name__}")
+    case_id = contract.get("case_id")
+    if not isinstance(case_id, str):
+        raise ValueError(
+            f"contract case_id must be a string, got {type(case_id).__name__}"
+        )
+    try:
+        case_def = get_case(case_id)
+    except KeyError as err:
+        raise ValueError(f"unknown case_id in contract: {err}") from err
     validate_case_contract(contract, case_def, source_ref)
 
     # 3. Read candidate payload
@@ -891,25 +1385,36 @@ def evaluate_case_utility(
     failures: list[str] = []
     measurements: dict[str, Any] = {}
 
-    def check(name: str, ok: bool, measured: Any) -> None:
-        measurements[name] = measured
-        if not ok:
+    def check(name: str, condition: bool, measurement: Any) -> None:
+        measurements[name] = measurement
+        if not condition:
             failures.append(name)
+
+    # Decode bytes safely
+    try:
+        text = candidate_bytes.decode("utf-8")
+    except UnicodeDecodeError as err:
+        return {
+            "passed": False,
+            "failures": ["invalid_utf8_encoding"],
+            "measurements": {},
+            "candidate_sha256": candidate_sha,
+            "limitations": list(case_def.get("limitations", [])),
+            "detail": f"candidate bytes are not valid UTF-8: {err}",
+        }
 
     # 4. Source pin check
     expected_src_sha = contract.get("source_sha256")
     ref_sha = source_ref.get("source_sha256")
     check(
-        "source_pin",
-        ref_sha is not None and ref_sha.lower() == expected_src_sha.lower(),
-        {"expected": expected_src_sha, "reference": ref_sha},
+        "source_pin_match",
+        expected_src_sha == ref_sha,
+        {"contract_pin": expected_src_sha, "reference_pin": ref_sha},
     )
 
-    # 5. Parse candidate CSV with row-width checking
-    text = candidate_bytes.decode("utf-8")
+    # 5. CSV structure and row parsing
     raw_reader = csv.reader(io.StringIO(text))
-    header_row = next(raw_reader, None) or []
-
+    header_row = next(raw_reader, [])
     expected_cols = contract.get(
         "output_columns", ["depth_m", "valid", "swir_group", "tir_group"]
     )
@@ -938,20 +1443,33 @@ def evaluate_case_utility(
     well_formed_ok = row_width_ok
     for line in raw_lines:
         row = dict(zip(header_row, line))
+        depth_str = row.get("depth_m", "")
+        if (
+            not isinstance(depth_str, str)
+            or " " in depth_str
+            or "\t" in depth_str
+            or "_" in depth_str
+            or not depth_str
+        ):
+            well_formed_ok = False
+            continue
         try:
-            x = float(row.get("depth_m", ""))
-            flag = str(row.get("valid", "")).strip().lower()
-            if flag not in {"true", "false", "0", "1"}:
-                well_formed_ok = False
-                continue
+            x = float(depth_str)
             if not math.isfinite(x) or x < 0:
                 well_formed_ok = False
                 continue
-            sw = row.get("swir_group") or None
-            ti = row.get("tir_group") or None
-            normalized.append((x, flag in {"true", "1"}, sw, ti))
-        except (ValueError, TypeError):
+        except ValueError:
             well_formed_ok = False
+            continue
+
+        flag_raw = row.get("valid", "")
+        if flag_raw not in {"true", "false", "0", "1"}:
+            well_formed_ok = False
+            continue
+        is_valid = flag_raw in {"true", "1"}
+        sw = row.get("swir_group") or None
+        ti = row.get("tir_group") or None
+        normalized.append((x, is_valid, sw, ti))
 
     check(
         "well_formed_rows",
@@ -979,68 +1497,68 @@ def evaluate_case_utility(
         "nondecreasing required",
     )
 
+    # Design choice limits
+    design = case_def["design_choices"]
+    spacing_limit = float(design["spacing_tolerance_relative_max"])
+    vf_limit = float(design["valid_fraction_tolerance_absolute_max"])
+    rate_limit = float(design["answer_rate_tolerance_absolute_max"])
+
     # 7. Median forward spacing (even-length averaged)
     diffs = [b[0] - a[0] for a, b in zip(normalized, normalized[1:]) if b[0] > a[0]]
     diffs.sort()
     cand_sp = float(statistics.median(diffs)) if diffs else None
-    src_sp = source_ref.get("median_forward_spacing")
+    src_sp = float(source_ref["median_forward_spacing"])
     spacing_delta = (
-        abs(cand_sp - src_sp) / src_sp
-        if (src_sp is not None and cand_sp is not None and src_sp > 0)
-        else None
+        abs(cand_sp - src_sp) / src_sp if (cand_sp is not None and src_sp > 0) else None
     )
     check(
         "depth_spacing",
-        spacing_delta is not None and spacing_delta <= 0.01,
+        spacing_delta is not None and spacing_delta <= spacing_limit,
         {
             "source_reference": src_sp,
             "candidate": cand_sp,
             "relative_difference": spacing_delta,
-            "limit": 0.01,
+            "limit": spacing_limit,
             "definition": "median of positive adjacent differences (averaged for even count)",
         },
     )
 
     # 8. Inclusion fraction
-    src_vf = source_ref.get("valid_fraction", 0.0)
+    src_vf = float(source_ref["valid_fraction"])
     cand_vf = sum(1 for r in normalized if r[1]) / len(normalized)
     vf_delta = abs(cand_vf - src_vf)
     check(
         "inclusion_fraction",
-        vf_delta <= 0.02,
+        vf_delta <= vf_limit,
         {
             "source_reference": src_vf,
             "candidate": cand_vf,
             "absolute_difference": vf_delta,
-            "limit": 0.02,
+            "limit": vf_limit,
         },
     )
 
     # 9. Channel answer rates (included rows only)
     cvalid = [r for r in normalized if r[1]]
     for i, name in ((2, "swir"), (3, "tir")):
-        src_rate = source_ref.get(f"{name}_answer_rate")
+        src_rate = float(source_ref[f"{name}_answer_rate"])
         cand_rate = (
             sum(1 for r in cvalid if r[i] is not None) / len(cvalid) if cvalid else None
         )
-        delta = (
-            abs(cand_rate - src_rate)
-            if (src_rate is not None and cand_rate is not None)
-            else None
-        )
+        delta = abs(cand_rate - src_rate) if (cand_rate is not None) else None
         check(
             f"{name}_answer_rate",
-            delta is not None and delta <= 0.02,
+            delta is not None and delta <= rate_limit,
             {
                 "source_reference": src_rate,
                 "candidate": cand_rate,
                 "absolute_difference": delta,
-                "limit": 0.02,
+                "limit": rate_limit,
                 "denominator": "included rows only",
             },
         )
 
-    # 10. Nonblank supported vocabulary across ALL rows (neither included nor excluded may hide unknown labels)
+    # 10. Nonblank supported vocabulary across ALL rows
     for i, name in ((2, "swir"), (3, "tir")):
         allowed = set(source_ref.get(f"disclosed_{name}_labels", []))
         all_nonblank = {r[i] for r in normalized if r[i] is not None}
@@ -1074,24 +1592,52 @@ def evaluate_case_utility(
         },
     )
 
-    # 12. Structure presence
-    src_has_blanks = source_ref.get("has_blanks", True)
-    cand_has_blanks = any(r[2] is None or r[3] is None for r in cvalid)
-    structure_ok = (
-        included_count > 0
-        and excluded_count > 0
-        and (cand_has_blanks if src_has_blanks else True)
-    )
+    # 12. Structure presence per channel and inclusion states
+    swir_rate = float(source_ref["swir_answer_rate"])
+    tir_rate = float(source_ref["tir_answer_rate"])
+
+    swir_answered = sum(1 for r in cvalid if r[2] is not None)
+    swir_blanks = sum(1 for r in cvalid if r[2] is None)
+    tir_answered = sum(1 for r in cvalid if r[3] is not None)
+    tir_blanks = sum(1 for r in cvalid if r[3] is None)
+
+    structure_ok = (included_count > 0) and (excluded_count > 0)
+    structure_detail: list[str] = []
+
+    if included_count == 0 or excluded_count == 0:
+        structure_detail.append("both included and excluded rows required")
+
+    if swir_rate < 1.0:
+        if swir_blanks == 0:
+            structure_ok = False
+            structure_detail.append("SWIR missing required blank labels in valid rows")
+        if swir_answered == 0:
+            structure_ok = False
+            structure_detail.append(
+                "SWIR missing required answered labels in valid rows"
+            )
+
+    if tir_rate < 1.0:
+        if tir_blanks == 0:
+            structure_ok = False
+            structure_detail.append("TIR missing required blank labels in valid rows")
+        if tir_answered == 0:
+            structure_ok = False
+            structure_detail.append(
+                "TIR missing required answered labels in valid rows"
+            )
+
     check(
         "downstream_structure_both_states_present",
         structure_ok,
         {
             "included_rows": included_count,
             "excluded_rows": excluded_count,
-            "source_has_blanks": src_has_blanks,
-            "candidate_has_blanks": cand_has_blanks,
-            "swir_blanks_in_valid": sum(1 for r in cvalid if r[2] is None),
-            "tir_blanks_in_valid": sum(1 for r in cvalid if r[3] is None),
+            "swir_blanks_in_valid": swir_blanks,
+            "tir_blanks_in_valid": tir_blanks,
+            "swir_answered_in_valid": swir_answered,
+            "tir_answered_in_valid": tir_answered,
+            "structure_detail": structure_detail,
         },
     )
 
@@ -1112,25 +1658,105 @@ def verify_case_candidate(
 ) -> dict[str, Any]:
     """Consumer verification recomputing all case utility checks independently.
 
-    A reported PASS over failing data, or tampering with reported measurements,
-    is detected and refused. Does NOT require raw source rows when given a
-    source aggregate reference.
+    A reported PASS over failing data, tampered measurements, altered limitations,
+    missing measurement records, extra keys, or forged receipts is detected and refused.
+    Does NOT require raw source rows when given a valid source aggregate reference.
     """
     recomputed = evaluate_case_utility(
         candidate_path_or_bytes, source_reference_or_path, contract
     )
-    matches_reported = True
-    if reported_utility is not None:
-        if reported_utility.get("passed") != recomputed["passed"]:
-            matches_reported = False
-        if reported_utility.get("failures") != recomputed["failures"]:
-            matches_reported = False
-        if reported_utility.get("candidate_sha256") != recomputed["candidate_sha256"]:
-            matches_reported = False
 
-    case_verified = recomputed["passed"] and matches_reported
+    if reported_utility is None:
+        return {
+            "case_verified": False,
+            "recomputed": recomputed,
+            "matches_reported": "not_compared",
+            "discrepancies": ["no reported_utility provided for comparison"],
+        }
+
+    matches_reported = True
+    discrepancies: list[str] = []
+
+    if not isinstance(reported_utility, Mapping):
+        return {
+            "case_verified": False,
+            "recomputed": recomputed,
+            "matches_reported": False,
+            "discrepancies": ["reported_utility must be a mapping"],
+        }
+
+    # 1. Require equal top-level key sets
+    expected_top_keys = set(recomputed.keys())
+    reported_top_keys = set(reported_utility.keys())
+    if reported_top_keys != expected_top_keys:
+        matches_reported = False
+        extra = sorted(reported_top_keys - expected_top_keys)
+        missing = sorted(expected_top_keys - reported_top_keys)
+        discrepancies.append(
+            f"top-level keys mismatch: extra={extra}, missing={missing}"
+        )
+
+    # 2. Compare passed and failures
+    if reported_utility.get("passed") != recomputed["passed"]:
+        matches_reported = False
+        discrepancies.append(
+            f"verdict mismatch: reported {reported_utility.get('passed')}, "
+            f"recomputed {recomputed['passed']}"
+        )
+
+    if reported_utility.get("failures") != recomputed["failures"]:
+        matches_reported = False
+        discrepancies.append(
+            f"failures mismatch: reported {reported_utility.get('failures')}, "
+            f"recomputed {recomputed['failures']}"
+        )
+
+    # 3. Compare candidate_sha256
+    if reported_utility.get("candidate_sha256") != recomputed["candidate_sha256"]:
+        matches_reported = False
+        discrepancies.append(
+            f"candidate_sha256 mismatch: reported {reported_utility.get('candidate_sha256')}, "
+            f"recomputed {recomputed['candidate_sha256']}"
+        )
+
+    # 4. Compare limitations
+    if reported_utility.get("limitations") != recomputed["limitations"]:
+        matches_reported = False
+        discrepancies.append(
+            f"limitations mismatch: reported {reported_utility.get('limitations')}, "
+            f"recomputed {recomputed['limitations']}"
+        )
+
+    # 5. Canonically compare required measurements
+    reported_meas = reported_utility.get("measurements")
+    recomp_meas = recomputed["measurements"]
+
+    if not isinstance(reported_meas, Mapping) or not reported_meas:
+        matches_reported = False
+        discrepancies.append("reported measurements missing, empty, or non-mapping")
+    else:
+        if set(reported_meas.keys()) != set(recomp_meas.keys()):
+            matches_reported = False
+            missing_m = sorted(set(recomp_meas.keys()) - set(reported_meas.keys()))
+            extra_m = sorted(set(reported_meas.keys()) - set(recomp_meas.keys()))
+            discrepancies.append(
+                f"measurement keys mismatch: missing {missing_m}, unexpected {extra_m}"
+            )
+        else:
+            for k, recomp_val in recomp_meas.items():
+                rep_val = reported_meas[k]
+                if not _deep_numeric_match(rep_val, recomp_val):
+                    matches_reported = False
+                    discrepancies.append(
+                        f"measurement value mismatch for {k!r}: "
+                        f"reported {rep_val!r}, recomputed {recomp_val!r}"
+                    )
+                    break
+
+    case_verified = bool(recomputed["passed"] and (matches_reported is True))
     return {
         "case_verified": case_verified,
         "recomputed": recomputed,
         "matches_reported": matches_reported,
+        "discrepancies": discrepancies,
     }
