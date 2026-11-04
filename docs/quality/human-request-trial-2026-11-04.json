@@ -1,0 +1,97 @@
+{
+  "date": "2026-11-04 Australia/Perth",
+  "software_revision": "797989e97ef7e229eee94ebb50bcfd0eab4a5c63",
+  "request": "I need 10,000 fictional drill-sample records for a data-checking lesson. Keep the depth spacing, blank result labels and inclusion flags similar to this source, and show which checks passed.",
+  "purpose": "Fictional sample records for practising evidence and data checks",
+  "result": "FAIL: natural request refused at preparation; not a generated-data quality result",
+  "prepare_exit_code": 1,
+  "wall_seconds": 50.703,
+  "model_config": {
+    "adapter": "agy_cli",
+    "family": "claude",
+    "model": "claude-opus-5-5-high",
+    "reasoning_effort": "high"
+  },
+  "observed_model": "claude-opus-5-5-high",
+  "identity_evidence": "AGY init.model only; backend weights not independently attested",
+  "usage": {
+    "cached_tokens": 0,
+    "calls": 1,
+    "input_tokens": 17912,
+    "model": "claude-opus-5-5-high",
+    "output_tokens": 1112,
+    "reasoning_tokens": 0
+  },
+  "tools_used": [
+    "finish"
+  ],
+  "source": {
+    "name": "HD012-scalars.csv",
+    "sha256": "8d9afb0120f9a82182f4689109a6c97c96bcc869a555ba77fdece0f98b4cb1bf",
+    "rows": 10260,
+    "unchanged": true,
+    "rows_sent_to_model": false
+  },
+  "response": {
+    "n_rows": 10000,
+    "outputs": [
+      "scalar"
+    ],
+    "seed": 0,
+    "strategy": "fitted_markov_joint",
+    "summary": "Proposed settings: 10,000 rows of scalar CSV made with the fitted_markov_joint strategy, fitted to the locally supplied drill-sample source file. The output keeps only the source's existing columns. The user did not give a seed, so seed 0 is a placeholder; a reviewer can change it. The data-checking lesson is treated as context only, not as a quality or fitness guarantee. Several requests are listed as unsupported. This strategy models the source's columns but does not promise to keep the spacing between depths, the pattern of blank result labels, or the inclusion-flag rates similar to the source. Nothing in this draft checks that similarity. There is no option to output which checks passed, whether as a new column or as a report. There is also no guarantee that the records are fictional, meaning none matches or is copied from a real source record. This draft cannot establish quality or rights.",
+    "unsupported": [
+      "Guarantee that depth spacing (intervals between consecutive sample depths) stays similar to the source; the strategy does not promise to keep it and the draft does not check it",
+      "Guarantee that the pattern and rate of blank result labels stays similar to the source; not checked or guaranteed",
+      "Guarantee that inclusion-flag rates stay similar to the source; not checked or guaranteed",
+      "Showing which checks passed (a new check-result field or a check report is not a supported output)",
+      "Guarantee that records are fictional, meaning none matches or is copied from a real source record (a privacy/non-disclosure guarantee is not supported)"
+    ]
+  },
+  "non_agy_clients_created": 0,
+  "muse_calls": 0,
+  "generated_dataset": false,
+  "runnable_spec_created": false,
+  "runnable_plan_created": false,
+  "quality_contract": {
+    "scope": "Engineering acceptance for a teaching dataset, not an industry or scientific standard",
+    "target_rows": 10000,
+    "depth_spacing_relative_tolerance": 0.01,
+    "valid_fraction_absolute_tolerance": 0.02,
+    "blank_labels_among_valid_absolute_tolerance": 0.02,
+    "finite_nonnegative_non_decreasing_depths": true,
+    "source_supported_labels_only": true,
+    "preserve_raw_source_bytes": true,
+    "all_profile_required_checks_must_pass": true,
+    "report_skips_separately": true,
+    "no_muse_or_local_meta_calls": true,
+    "human_acceptance": "not granted; inspect result before any acceptance"
+  },
+  "quality_contract_executed": false,
+  "findings": [
+    {
+      "id": "HR-01",
+      "issue": "Request prompt names strategy choices without describing what the generator and fixed validators support. The model consequently describes existing similarity checks and reports as unsupported.",
+      "code": [
+        "engine/cli/request.py:77",
+        "profiles/hylogger/capabilities.py:393",
+        "profiles/hylogger/profile.json"
+      ],
+      "next_change": "Supply a profile-owned capability brief and applicable checks/report descriptions; keep unsupported requests and scientific/privacy limitations explicit."
+    },
+    {
+      "id": "HR-02",
+      "issue": "The reply turns fictional training data into an implicit no-source-row-match privacy guarantee and states existing source columns are preserved; actual output uses the canonical generated schema.",
+      "code": [
+        "profiles/hylogger/validation/dataset.py:21"
+      ],
+      "next_change": "Describe synthetic generation and output schema accurately; refuse explicit privacy guarantees without inventing one from ordinary intended use."
+    }
+  ],
+  "limits": [
+    "No generation, validation, replay or bundle stage ran after the refusal.",
+    "No thresholds or product code changed, and the source was not edited.",
+    "No claim that generated data meet the proposed lesson-quality contract.",
+    "Backend weights not independently attested; AGY tool confinement not established."
+  ]
+}
