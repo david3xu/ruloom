@@ -141,7 +141,7 @@ automatic seed search or arbitrary contract overrides are permitted.
 
 ## Profile foundation status and remaining runtime integration
 
-The profile foundation (`profiles/hylogger/cases.json` and `profiles/hylogger/validation/cases.py`) establishes reviewed primary-evidence records (with recorded admission metadata, not external cryptographic authentication), strict canonical contracts with integer interval feasibility, deterministic source suitability, bounded source aggregate references, and recipient utility verification without shipping raw source rows. Catalogue integrity relies on local file hash self-attestation; manifest digest pinning is future integration.
+The profile foundation (`profiles/hylogger/cases.json` and `profiles/hylogger/validation/cases.py`) establishes reviewed primary-evidence records (authenticated against installed trusted code via a pinned canonical JSON digest `26b083a5...`, with recorded admission metadata rather than external cryptographic proof or publisher certification), strict canonical contracts with integer interval feasibility, deterministic source suitability, bounded source aggregate references with literal label names and free-form licence text withheld from model views, and recipient utility verification without shipping raw source rows. No invented privacy or scientific guarantee is claimed.
 
 Subsequent slices complete runtime integration:
 1. Engine execution: binding compiled case contracts and utility checks into `engine.core.runner.execute` and the existing capability graph validation step.

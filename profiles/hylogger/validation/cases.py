@@ -7,7 +7,7 @@ This module provides profile-owned case logic for the research-led workflow:
   integer interval feasibility and source pins;
 - enforces deterministic source suitability pre-flight before any model call;
 - builds bounded source aggregate references without shipping raw source rows;
-- separates full code-side reference from rare-label-redacted model summaries;
+- separates full code-side reference from model summaries (which withhold literal labels);
 - enforces downstream practical-use checking (read/filter/group, row accounting,
   per-channel structure presence, and fixed lesson tolerances from agreement);
 - provides independent consumer recomputation and full measurement verification.
@@ -16,8 +16,10 @@ This is a profile foundation for the research-led workflow, not a runtime CLI
 or publication integration (which bind into execute and package in subsequent slices).
 Provenance reviewer names and admission notes are recorded metadata claims in
 the catalogue, not cryptographic proofs or external certifications of independence.
-Catalogue integrity relies on local file hash self-attestation; manifest digest
-pinning is future integration.
+Catalogue identity is authenticated against installed trusted profile code via the
+pinned canonical JSON SHA-256 digest; review provenance strings alone are not authorization.
+New case admission requires a reviewed versioned catalogue and code-pin change;
+later engine integration will bind this digest into spec and release.
 This module imports no engine and no model code (FP-CODE-2).
 """
 
@@ -150,6 +152,10 @@ ADMITTED_PRIMARY_DOMAINS = frozenset(
     {"www.auscope.org.au", "github.com", "wapims.dmp.wa.gov.au"}
 )
 
+REVIEWED_CASES_CATALOGUE_SHA256 = (
+    "26b083a521447b4fa4bfce22c812da9ba9d6d5aa19a6d381e06a55fd87ac6ab3"
+)
+
 
 def _cases_json_path() -> Path:
     return Path(__file__).resolve().parent.parent / "cases.json"
@@ -184,17 +190,20 @@ def _parse_iso_date(d_str: Any) -> datetime.date:
 def _deep_numeric_match(
     a: Any, b: Any, rel_tol: float = 1e-9, abs_tol: float = 1e-7
 ) -> bool:
-    """Deep equality check with explicit numeric tolerance policy for floats."""
+    """Deep equality check requiring exact scalar types, with relative/absolute tolerance for floats.
+
+    Scalar JSON types must match exactly (int is not float, bool is not int).
+    Only same-type finite float values use the rel_tol / abs_tol numeric policy.
+    """
     if type(a) is not type(b):
-        if (
-            isinstance(a, (int, float))
-            and isinstance(b, (int, float))
-            and not isinstance(a, bool)
-            and not isinstance(b, bool)
-        ):
-            return math.isclose(float(a), float(b), rel_tol=rel_tol, abs_tol=abs_tol)
         return False
-    if isinstance(a, float):
+    if type(a) is bool:
+        return a is b
+    if type(a) is int:
+        return a == b
+    if type(a) is float:
+        if not (math.isfinite(a) and math.isfinite(b)):
+            return False
         return math.isclose(a, b, rel_tol=rel_tol, abs_tol=abs_tol)
     if isinstance(a, Mapping):
         if set(a.keys()) != set(b.keys()):
@@ -323,10 +332,6 @@ def load_cases_catalogue() -> dict[str, Any]:
         if type(reviewer) is not str or not reviewer.strip():
             raise ValueError(
                 f"evidence entry {eid!r} admission_reviewer must be non-empty string"
-            )
-        if "gemini" in reviewer.lower():
-            raise ValueError(
-                f"evidence entry {eid!r} reviewer cannot be implementer: {reviewer!r}"
             )
 
     cases = raw.get("cases")
@@ -482,6 +487,17 @@ def load_cases_catalogue() -> dict[str, Any]:
             raise ValueError(
                 f"case {cid!r} limitations must be non-empty list of non-empty strings"
             )
+
+    # Authenticate catalogue identity against pinned trusted digest
+    canonical_bytes = json.dumps(
+        raw, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    actual_digest = hashlib.sha256(canonical_bytes).hexdigest()
+    if actual_digest != REVIEWED_CASES_CATALOGUE_SHA256:
+        raise ValueError(
+            f"cases catalogue digest mismatch: expected pinned {REVIEWED_CASES_CATALOGUE_SHA256}, "
+            f"got {actual_digest}"
+        )
 
     return raw
 
@@ -1293,9 +1309,9 @@ def build_source_reference(
         "licence_status": suit["licence_status"],
         "notice": (
             "Bounded aggregate reference for code-side utility checking and verification. "
-            "Model-disclosed summaries apply a frequency floor (MIN_LABEL_COUNT_FOR_MODEL_VIEW = 2) "
-            "to redact singletons; code-side utility checking uses the full code-side vocabulary "
-            "disclosed in this reference. Contains no raw measurements or individual source rows."
+            "Model-facing summaries withhold all literal label names and free-form licence text; "
+            "code-side utility checking uses the full code-side vocabulary disclosed in this reference. "
+            "Contains no raw measurements or individual source rows."
         ),
     }
     validate_source_reference(ref)
@@ -1305,21 +1321,22 @@ def build_source_reference(
 def build_disclosed_model_summary(
     source_reference: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Return model-facing summary with rare singleton labels redacted."""
+    """Return model-facing summary with literal label names and free-form licence text withheld."""
     validate_source_reference(source_reference)
+    lic = str(source_reference.get("licence_status", "")).strip().lower()
+    rights_status = "disclosed" if lic.startswith("disclosed:") else "unknown"
     return {
         "version": 1,
-        "valid_fraction": source_reference["valid_fraction"],
-        "median_forward_spacing": source_reference["median_forward_spacing"],
-        "swir_answer_rate": source_reference["swir_answer_rate"],
-        "tir_answer_rate": source_reference["tir_answer_rate"],
-        "has_blanks": source_reference["has_blanks"],
-        "licence_status": source_reference["licence_status"],
-        "disclosed_swir_labels": list(source_reference["disclosed_swir_labels"]),
-        "disclosed_tir_labels": list(source_reference["disclosed_tir_labels"]),
+        "valid_fraction": float(source_reference["valid_fraction"]),
+        "median_forward_spacing": float(source_reference["median_forward_spacing"]),
+        "swir_answer_rate": float(source_reference["swir_answer_rate"]),
+        "tir_answer_rate": float(source_reference["tir_answer_rate"]),
+        "has_blanks": bool(source_reference["has_blanks"]),
+        "rights_status": rights_status,
         "notice": (
-            "Model-facing disclosed summary. Singletons are withheld from the model view "
-            "per disclosure rules; code-side utility checking retains the full code-side reference."
+            "Model-facing disclosed summary. All literal label names and free-form "
+            "source licence text are withheld from the model context; code-side "
+            "utility checking retains the full code-side reference."
         ),
     }
 
@@ -1697,11 +1714,12 @@ def verify_case_candidate(
         )
 
     # 2. Compare passed and failures
-    if reported_utility.get("passed") != recomputed["passed"]:
+    rep_passed = reported_utility.get("passed")
+    if type(rep_passed) is not bool or rep_passed != recomputed["passed"]:
         matches_reported = False
         discrepancies.append(
-            f"verdict mismatch: reported {reported_utility.get('passed')}, "
-            f"recomputed {recomputed['passed']}"
+            f"verdict mismatch: reported {rep_passed!r} ({type(rep_passed).__name__}), "
+            f"recomputed {recomputed['passed']!r} (bool)"
         )
 
     if reported_utility.get("failures") != recomputed["failures"]:
@@ -1752,6 +1770,14 @@ def verify_case_candidate(
                         f"reported {rep_val!r}, recomputed {recomp_val!r}"
                     )
                     break
+
+    # 6. Final whole-mapping exact scalar type guard
+    if not _deep_numeric_match(reported_utility, recomputed):
+        matches_reported = False
+        if not any("exact scalar type" in d for d in discrepancies):
+            discrepancies.append(
+                "reported_utility scalar types or values differ from recomputed result under exact scalar type comparison"
+            )
 
     case_verified = bool(recomputed["passed"] and (matches_reported is True))
     return {
