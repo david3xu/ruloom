@@ -106,3 +106,5 @@ limits, budgets, error redaction, policy failures and recipient binding. They us
 injected responses and establish engineering behavior only. Genuine live evidence,
 when recorded, is a separately bounded image smoke, not the paired Muse-versus-Claude
 benchmark. That comparison remains pending the owner's instruction.
+
+Dated engineering and live-transport evidence: [5 November receipt](quality/vision-support-2026-11-05.md).
