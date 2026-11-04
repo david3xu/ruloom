@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "evidence_pack": {
+    "auscope_nvcl": {
+      "id": "auscope_nvcl",
+      "url": "https://www.auscope.org.au/nvcl/",
+      "title": "National Virtual Core Library",
+      "section": "Improving Data Quality, Integrity, and Interpretation",
+      "verbatim_passage": "The NVCL team works in collaboration with the NVCL nodes and researchers to ensure data quality and integrity",
+      "supports": "Quality control is a real activity around NVCL datasets.",
+      "does_not_establish": [
+        "our teaching lesson or numeric tolerances as an industry standard",
+        "source-field semantics or source licensing",
+        "scientific validity of generated data"
+      ],
+      "retrieved_date": "2026-11-04",
+      "reviewed_date": "2026-11-04",
+      "admission_reviewer": "Codex coordinator",
+      "admission_kind": "AI coordinator checked the primary page; no human or scientific approval claimed",
+      "passage_sha256": "df25a037e87cfe17683b993e3bcdc45986b21e9597f9978419c62b31df37fe4b"
+    },
+    "gswa_hackathon_2026": {
+      "id": "gswa_hackathon_2026",
+      "url": "https://github.com/Geological-Survey-of-Western-Australia/gswa-hackathon-2026/discussions/1",
+      "title": "Questions for organisers and GSWA experts",
+      "section": "Accessing the data",
+      "verbatim_passage": "contain raw HyLogger and The Spectral Geologist (.tsg) files alongside drill core photograph images",
+      "supports": "Actual source packages may contain different products; scalar columns do not imply that images and curves are in the CSV.",
+      "does_not_establish": [
+        "a universal source licence",
+        "our invented row count or tolerances"
+      ],
+      "retrieved_date": "2026-11-04",
+      "reviewed_date": "2026-11-04",
+      "admission_reviewer": "Codex coordinator",
+      "admission_kind": "AI coordinator checked the primary page; no human or scientific approval claimed",
+      "passage_sha256": "f3015e35a40a80b5bf2b2eacecf64af30c67e88fe4e05a98a2623c1cc03ce6e9"
+    },
+    "wapims_core_atlas": {
+      "id": "wapims_core_atlas",
+      "url": "https://wapims.dmp.wa.gov.au/WAPIMS/Search/CoreAtlas",
+      "title": "Digital Core Atlas",
+      "section": "Digital Core Atlas",
+      "verbatim_passage": "The GSWA Digital Core Atlas provides an interactive display of multiple-datasets overlayed and linked to images of individual core trays.",
+      "supports": "Linked image/data inspection is real practice; relevant to a future image case.",
+      "does_not_establish": [
+        "realistic synthetic photographs",
+        "image functionality in the current scalar teaching case"
+      ],
+      "retrieved_date": "2026-11-04",
+      "reviewed_date": "2026-11-04",
+      "admission_reviewer": "Codex coordinator",
+      "admission_kind": "AI coordinator checked the primary page; no human or scientific approval claimed",
+      "passage_sha256": "35085fac11d7e3ff2d1102b6dc742cb8801caf0bce048c1fd9fbdfbe413d25e9"
+    }
+  },
+  "cases": {
+    "hylogger_scalar_teaching_v1": {
+      "id": "hylogger_scalar_teaching_v1",
+      "version": 1,
+      "title": "Source-grounded scalar data-checking lesson",
+      "aliases": [
+        "source-grounded scalar data-checking lesson",
+        "scalar_teaching_v1"
+      ],
+      "purpose_description": "Preparing a data-checking lesson using drill-sample dataset to teach inspection of depth-linked inclusion flags and blank classification labels.",
+      "researched_facts": {
+        "primary_evidence_ids": [
+          "auscope_nvcl",
+          "gswa_hackathon_2026"
+        ],
+        "admission_reviewer": "Codex coordinator",
+        "admission_kind": "AI coordinator checked the primary page; no human or scientific approval claimed",
+        "disclosed_meaning": "Scalar classification labels are interpretations, not measured reflectance curves or concentrations."
+      },
+      "source_licence_evidence": {
+        "registry_record_ref": "HD012-source.json supplied registry record",
+        "licence_note": "Do not attribute CC-BY-4.0 entry to a universal claim in the expert FAQ; licence must be checked per source registry record."
+      },
+      "design_choices": {
+        "activity": "scalar data-checking teaching exercise",
+        "min_satisfiable_rows": 25,
+        "max_supported_rows": 200000,
+        "default_target_rows": 10000,
+        "spacing_tolerance_relative_max": 0.01,
+        "valid_fraction_tolerance_absolute_max": 0.02,
+        "answer_rate_tolerance_absolute_max": 0.02,
+        "spacing_definition": "median of positive adjacent depth differences; mean is descriptive only",
+        "answer_rate_denominator": "included rows only"
+      },
+      "source_requirements": {
+        "required_columns": [
+          "StartDepth",
+          "Final_Mask",
+          "Grp1_sTSAS",
+          "Grp1_sjCLST"
+        ],
+        "min_source_rows": 20,
+        "require_ordered_finite_depth": true,
+        "require_positive_median_spacing": true,
+        "require_both_inclusion_states": true,
+        "require_both_label_states_in_included": true,
+        "admitted_example_source": {
+          "name": "HD012",
+          "sha256": "8d9afb0120f9a82182f4689109a6c97c96bcc869a555ba77fdece0f98b4cb1bf"
+        }
+      },
+      "contract_template": {
+        "output_columns": [
+          "depth_m",
+          "valid",
+          "swir_group",
+          "tir_group"
+        ],
+        "recommended_strategy": "fitted_markov_balanced",
+        "checks": {
+          "exact_rows": true,
+          "depth_finite_ordered_nonnegative": true,
+          "relative_median_spacing_difference_max": 0.01,
+          "valid_binary": true,
+          "absolute_valid_fraction_difference_max": 0.02,
+          "absolute_answer_rate_difference_max": 0.02,
+          "nonblank_labels_source_supported": true,
+          "downstream_read_filter_group_accounts_for_rows": true,
+          "downstream_structure_both_states_present": true
+        },
+        "denominators": {
+          "answer_rate": "included rows only"
+        },
+        "flag_encoding": "true/false or 0/1",
+        "spacing_definition": "median of positive adjacent depth differences"
+      },
+      "limitations": [
+        "Case-level teaching-table utility only; no scientific, privacy, image or licensing guarantee.",
+        "A source-format fit is not a scientific or origin/rights certification.",
+        "Output always uses exactly the four columns depth_m, valid, swir_group and tir_group; other source columns are not carried over.",
+        "Not an exact or row-by-row reconstruction of the source; spacing is one constant median step, so source spacing variability is not reproduced.",
+        "Classification labels are interpretations, not measured reflectance curves or physical concentrations.",
+        "Blank group labels indicate no reported classification label, not absence of physical curves."
+      ]
+    }
+  }
+}
