@@ -10,8 +10,11 @@ Method, all fitted from Profile aggregates:
 - depths start at ``geometry.depth_start_m`` and step by the source median
   spacing; a step repeats the previous depth only when the previous row is
   invalid (and the current row is invalid too, so repeats stay masked out);
-- valid flags come from a two-state Markov chain whose stay probabilities
-  are fitted from the source valid/invalid mean run lengths;
+- valid flags come from either a two-state Markov chain
+  (``fitted_markov_joint``, default) whose stay probabilities are fitted
+  from source valid/invalid mean run lengths, or exact integer run allocation
+  (``fitted_markov_balanced``) preserving the rounded aggregate valid count
+  by construction;
 - invalid rows carry no groups; each valid row draws a coverage pattern
   (both/swir-only/tir-only/neither answered) at source rates, then draws
   answered labels from the source marginals, conditioned on the previous
@@ -26,6 +29,7 @@ Method, all fitted from Profile aggregates:
 
 from __future__ import annotations
 
+import math
 import random
 from collections.abc import Mapping
 from typing import Any
@@ -127,8 +131,110 @@ def _pick_tir(
     return _weighted_choice(rng, labels, weights)
 
 
-def generate_samples(profile: Profile, seed: int, n_rows: int) -> list[Sample]:
+def _positive_partition(rng: random.Random, total: int, count: int) -> list[int]:
+    """Partition positive integer ``total`` into ``count`` positive integer parts."""
+    if count < 1 or total < 1 or count > total:
+        raise ValueError(
+            f"cannot partition total {total} into {count} positive integers "
+            "(requires 1 <= count <= total)"
+        )
+    if count == 1:
+        return [total]
+    cuts = sorted(rng.sample(range(1, total), count - 1))
+    pts = [0, *cuts, total]
+    parts = [b - a for a, b in zip(pts[:-1], pts[1:])]
+    if len(parts) != count or sum(parts) != total or any(p <= 0 for p in parts):
+        raise ValueError(
+            f"positive partition failed: total={total}, count={count}, parts={parts}"
+        )
+    return parts
+
+
+def _balanced_flags(
+    rng: random.Random,
+    n: int,
+    vf: float,
+    mean_valid: float | None,
+    mean_invalid: float | None,
+) -> list[bool]:
+    """Generate ``n`` boolean flags matching target valid count by construction.
+
+    Fits target integer valid count = ``int(round(n * vf))`` (Python ties-to-even
+    on rounded aggregate source valid fraction). Mixed counts allocate positive
+    alternating run lengths for valid and invalid states, exhausting the target
+    totals exactly.
+    """
+    if (
+        not isinstance(vf, (int, float))
+        or isinstance(vf, bool)
+        or not math.isfinite(float(vf))
+        or not (0.0 <= float(vf) <= 1.0)
+    ):
+        raise ValueError(f"valid_fraction must be a finite float in [0, 1], got {vf!r}")
+    target = int(round(n * float(vf)))
+    if target <= 0:
+        return [False] * n
+    if target >= n:
+        return [True] * n
+
+    n_invalid = n - target
+    candidates: list[float] = []
+    if (
+        mean_valid is not None
+        and isinstance(mean_valid, (int, float))
+        and not isinstance(mean_valid, bool)
+        and math.isfinite(float(mean_valid))
+        and float(mean_valid) > 0
+    ):
+        candidates.append(target / float(mean_valid))
+    if (
+        mean_invalid is not None
+        and isinstance(mean_invalid, (int, float))
+        and not isinstance(mean_invalid, bool)
+        and math.isfinite(float(mean_invalid))
+        and float(mean_invalid) > 0
+    ):
+        candidates.append(n_invalid / float(mean_invalid))
+
+    if candidates:
+        estimated_k = sum(candidates) / len(candidates)
+        k = int(round(estimated_k))
+    else:
+        k = 1
+
+    k = max(1, min(k, target, n_invalid))
+
+    v_runs = _positive_partition(rng, target, k)
+    i_runs = _positive_partition(rng, n_invalid, k)
+
+    first_valid = rng.random() < float(vf)
+    flags: list[bool] = []
+    for step in range(k):
+        if first_valid:
+            flags.extend([True] * v_runs[step])
+            flags.extend([False] * i_runs[step])
+        else:
+            flags.extend([False] * i_runs[step])
+            flags.extend([True] * v_runs[step])
+
+    if len(flags) != n or sum(flags) != target:
+        raise ValueError(
+            f"inconsistent balanced allocation: len={len(flags)} (expected {n}), "
+            f"valid={sum(flags)} (expected {target})"
+        )
+    return flags
+
+
+def generate_samples(
+    profile: Profile,
+    seed: int,
+    n_rows: int,
+    strategy: str = "fitted_markov_joint",
+) -> list[Sample]:
     """Generate ``n_rows`` synthetic samples from Profile aggregates only."""
+    if strategy not in ("fitted_markov_joint", "fitted_markov_balanced"):
+        raise ValueError(f"unknown generation strategy: {strategy!r}")
+
     stats = profile.stats
     try:
         geometry = stats["geometry"]
@@ -151,23 +257,32 @@ def generate_samples(profile: Profile, seed: int, n_rows: int) -> list[Sample]:
 
     rng = random.Random(seed)
 
-    if mean_valid and mean_invalid:
-        p_leave_valid = 1.0 / mean_valid
-        p_enter_valid = 1.0 / mean_invalid
-        flags: list[bool] = []
-        current = rng.random() < valid_fraction
-        for _ in range(n_rows):
-            flags.append(current)
-            if current:
-                current = rng.random() >= p_leave_valid
-            else:
-                current = rng.random() < p_enter_valid
-    elif mean_valid:
-        flags = [True] * n_rows
-    elif mean_invalid:
-        flags = [False] * n_rows
-    else:
-        flags = [rng.random() < valid_fraction for _ in range(n_rows)]
+    if strategy == "fitted_markov_balanced":
+        flags = _balanced_flags(
+            rng,
+            n_rows,
+            float(valid_fraction),
+            mean_valid,
+            mean_invalid,
+        )
+    elif strategy == "fitted_markov_joint":
+        if mean_valid and mean_invalid:
+            p_leave_valid = 1.0 / mean_valid
+            p_enter_valid = 1.0 / mean_invalid
+            flags: list[bool] = []
+            current = rng.random() < valid_fraction
+            for _ in range(n_rows):
+                flags.append(current)
+                if current:
+                    current = rng.random() >= p_leave_valid
+                else:
+                    current = rng.random() < p_enter_valid
+        elif mean_valid:
+            flags = [True] * n_rows
+        elif mean_invalid:
+            flags = [False] * n_rows
+        else:
+            flags = [rng.random() < valid_fraction for _ in range(n_rows)]
 
     depths = [start]
     for i in range(1, n_rows):
@@ -175,6 +290,12 @@ def generate_samples(profile: Profile, seed: int, n_rows: int) -> list[Sample]:
             depths.append(depths[-1])
         else:
             depths.append(depths[-1] + step)
+
+    if strategy == "fitted_markov_balanced" and not any(flags):
+        return [
+            Sample(depth_m=depths[i], valid=False, swir_group=None, tir_group=None)
+            for i in range(n_rows)
+        ]
 
     coverage = stats["joint"]["coverage_valid"]
     patterns = ("both", "swir_only", "tir_only", "neither")
@@ -247,10 +368,19 @@ def generate(profile: Profile, plan: Mapping[str, Any]) -> bytes:
     """Generate a synthetic hole CSV from a Profile and a plan dict.
 
     The plan carries an integer ``seed`` and a positive integer ``n_rows``;
-    the returned bytes are the synthetic-dataset CSV (via
+    an optional ``strategy`` string selects the generation algorithm
+    (defaults to ``fitted_markov_joint`` for backward compatibility).
+    The returned bytes are the synthetic-dataset CSV (via
     :func:`profiles.hylogger.validation.dataset.to_csv_bytes`).
     """
     seed, n_rows = _plan_seed_n_rows(plan)
     if not isinstance(profile, Profile):
         raise TypeError(f"profile must be a Profile, got {type(profile).__name__}")
-    return to_csv_bytes(generate_samples(profile, seed, n_rows))
+    strategy = plan.get("strategy")
+    if strategy is None:
+        strategy = "fitted_markov_joint"
+    elif not isinstance(strategy, str) or not strategy:
+        raise ValueError(
+            f"plan 'strategy' must be a non-empty string, got {strategy!r}"
+        )
+    return to_csv_bytes(generate_samples(profile, seed, n_rows, strategy=strategy))
