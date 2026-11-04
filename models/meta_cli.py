@@ -42,6 +42,7 @@ from .base import (
     ModelCapabilities,
     ModelError,
     Usage,
+    image_wire_schema,
     monetary_cost,
     structured_image_schema,
 )
@@ -534,7 +535,9 @@ class MuseCLIModel:
                 pass
 
             schema_file = Path(staged_dir) / "response-schema.json"
-            schema_file.write_text(json.dumps(schema_dict), encoding="utf-8")
+            schema_file.write_text(
+                json.dumps(image_wire_schema(schema_dict)), encoding="utf-8"
+            )
             argv = self._argv(str(schema_file), prompt, [staged_path])
             proc = self._run_vision(argv, Path(staged_dir))
 
@@ -863,5 +866,9 @@ class MuseCLIModel:
             "provider": "meta",
             "adapter": "meta_cli",
             "evidence_kind": "provider_reported",
+            "schema_validation": {
+                "local": "full",
+                "wire_unsupported_keywords": ["uniqueItems"],
+            },
         }
         return Completion(data=answer, usage=usage, meta=meta)

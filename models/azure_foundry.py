@@ -40,6 +40,7 @@ from .base import (
     ModelError,
     StructuredModel,
     Usage,
+    image_wire_schema,
     monetary_cost,
     structured_image_schema,
 )
@@ -410,7 +411,7 @@ class AzureFoundryModel(StructuredModel):
                 "json_schema": {
                     "name": "structured_response",
                     "strict": True,
-                    "schema": dict(schema),
+                    "schema": image_wire_schema(schema) if vision else dict(schema),
                 },
             },
         }
@@ -723,6 +724,10 @@ class AzureFoundryModel(StructuredModel):
         completion.meta["cost"] = monetary_cost(raw_cost, source="azure")
         completion.meta["adapter"] = "azure_foundry"
         completion.meta["evidence_kind"] = "provider_reported"
+        completion.meta["schema_validation"] = {
+            "local": "full",
+            "wire_unsupported_keywords": ["uniqueItems"],
+        }
 
         # Declared protocol specification distinguished from live validation
         completion.meta["protocol"] = {

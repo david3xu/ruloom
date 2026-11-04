@@ -8,6 +8,7 @@ answer -- surfaces as :class:`ModelError`.
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 from collections.abc import Mapping
@@ -46,6 +47,57 @@ def structured_image_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
         validator.check_schema(result)
     except (ValueError, TypeError, RecursionError, jsonschema.SchemaError):
         raise ModelError("invalid vision output schema or external reference") from None
+    return result
+
+
+def image_wire_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """Project the image schema to the provider dialect; validate the full original locally.
+
+    Meta rejects ``uniqueItems`` during structured-output admission. Uniqueness
+    remains enforced by local validation. Visit schema nodes only, preserving
+    data property names and annotation values.
+    """
+    result = copy.deepcopy(dict(schema))
+    pending = [result]
+    maps = (
+        "properties",
+        "patternProperties",
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+    )
+    singles = (
+        "items",
+        "additionalProperties",
+        "contains",
+        "not",
+        "if",
+        "then",
+        "else",
+        "propertyNames",
+        "unevaluatedProperties",
+        "unevaluatedItems",
+    )
+    lists = ("anyOf", "allOf", "oneOf", "prefixItems")
+    while pending:
+        node = pending.pop()
+        if not isinstance(node, dict):
+            continue
+        node.pop("uniqueItems", None)
+        for key in maps:
+            children = node.get(key)
+            if isinstance(children, dict):
+                pending.extend(children.values())
+        for key in singles:
+            child = node.get(key)
+            if isinstance(child, dict):
+                pending.append(child)
+            elif key == "items" and isinstance(child, list):
+                pending.extend(child)
+        for key in lists:
+            children = node.get(key)
+            if isinstance(children, list):
+                pending.extend(children)
     return result
 
 

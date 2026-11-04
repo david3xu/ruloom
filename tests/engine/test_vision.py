@@ -360,3 +360,11 @@ def test_recipient_refuses_invalid_receipt_even_with_recut_checksums(tmp_path, f
     write_bundle(path, members, receipt)
     with pytest.raises(ReleaseVerificationError):
         verify_release(path)
+
+
+def test_raw_record_cannot_be_relabelled_by_later_nonraw_registration(tmp_path):
+    runner, path, _, digest = registered(tmp_path)
+    runner.artifact_records.insert(0, Artifact(digest, "image/png", "intake", 1))
+    with pytest.raises(ImageSecurityError, match="raw-intake"):
+        with staged_image_attachment(path, runner, CAPS):
+            pass

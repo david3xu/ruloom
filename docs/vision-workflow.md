@@ -72,6 +72,11 @@ band transitions may be normal. The original image is not attached, so loss of i
 original framing cannot be assessed. Only whitelisted numeric source statistics
 enter the prompt, without source filenames, source hashes or raw sample records.
 
+The provider wire schema omits unsupported `uniqueItems`; the full original schema
+and local critic still enforce uniqueness. Meta rejected the initial smoke at schema
+admission, which is retained as a failure. See the provider
+[structured-output constraints](https://dev.meta.ai/docs/structured-output).
+
 The model must echo the generated artifact digest and exact deterministic check
 facts. Local validation rejects missing categories, wrong types, altered facts and
 unknown citations. The observations help a teacher locate visible issues to inspect;
@@ -83,7 +88,9 @@ separates opinions, deterministic facts and reported model/provider/usage/cost.
 Injected, unverified and provider-reported evidence are distinct. A failure or an
 unavailable critic is explicit; known usage from a rejected opinion is preserved,
 while unreported usage remains unknown. The optional critic can continue on code
-checks; a required critic failure stops the run. Neither opinion can change a
+checks; a required critic failure stops the run. Unknown usage also blocks any later
+required model seat (including an opted-in local critic), so that combination can
+stop the run after an optional image failure. Neither opinion can change a
 failed deterministic check or accept material on behalf of a human.
 
 Recipient verification checks the receipt digest, exact shipped image, check facts,

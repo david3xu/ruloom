@@ -30,7 +30,8 @@
     "tests/models/test_azure_foundry.py",
     "tests/models/test_meta_cli_restrictions.py",
     "tests/profiles/hylogger/test_critic.py",
-    "tests/audit/test_r04_image_release.py"
+    "tests/audit/test_r04_image_release.py",
+    "tests/models/test_image_schema.py"
   ],
   "required_rules": [
     "FP-CODE-2",

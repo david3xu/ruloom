@@ -579,3 +579,52 @@ def test_source_changed_between_inventory_and_statistics_is_refused(
     )
     with pytest.raises(capabilities.ImageIntakeError, match="changed during"):
         capabilities.image_intake(ctx)
+
+
+def test_case_plus_images_refused_before_any_model_even_with_default_outputs(
+    tmp_path, monkeypatch
+):
+    import hashlib
+
+    source = _write_source(tmp_path)
+    spec = tmp_path / "selected-case.json"
+    spec.write_text(
+        json.dumps(
+            {
+                "spec_version": 1,
+                "target_rows": 8,
+                "source": {
+                    "path": str(source),
+                    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                },
+                "case": {"id": "hylogger_scalar_teaching_v1", "version": 1},
+            }
+        )
+    )
+    models = _BothModels({"seed": 8, "n_rows": 8}, "unused")
+    code, run_dir = _run_with_images(
+        tmp_path, monkeypatch, models, extra_argv=("--spec", str(spec))
+    )
+    assert code == EXIT_FAILED
+    assert models.planner.calls == models.critic.calls == 0
+    assert "requires outputs ==" in (run_dir / "run.jsonl").read_text()
+    assert not (run_dir / "release.zip").exists()
+
+
+def test_unknown_image_usage_blocks_later_required_local_critic(tmp_path, monkeypatch):
+    from models.base import ModelError
+
+    models = _BothModels({"seed": 8, "n_rows": 8}, "unused")
+
+    def fail(*args):
+        models.critic.calls += 1
+        raise ModelError("controlled transport failure")
+
+    models.critic.complete_with_image = fail
+    code, run_dir = _run_with_images(
+        tmp_path, monkeypatch, models, extra_argv=("--local-critic",)
+    )
+    assert code == EXIT_FAILED
+    assert models.critic.calls == 1 and models.planner.calls == 1
+    assert "unknown usage" in (run_dir / "run.jsonl").read_text()
+    assert not (run_dir / "release.zip").exists()

@@ -259,6 +259,16 @@ def _check_source_pin(ctx: Any, source_sha256: str) -> None:
 
 def intake(ctx: Any) -> None:
     """Hash the source, verify it against the registry, parse samples."""
+    spec = ctx.spec_record()
+    if (
+        isinstance(spec, Mapping)
+        and spec.get("case") is not None
+        and getattr(ctx, "images_dir", None) is not None
+    ):
+        raise ImageIntakeError(
+            "image-enabled runs are a separate extension: a selected scalar "
+            "teaching case cannot be combined with --images"
+        )
     payload = ctx.raw_bytes()
     source_sha256 = hashlib.sha256(payload).hexdigest()
     _check_source_pin(ctx, source_sha256)
