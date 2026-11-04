@@ -199,3 +199,82 @@ def test_generic_path_matches_compat_path(
                 ]
             )
         assert RunLog.read_jsonl(artifact / "run.jsonl").verify()
+
+
+def test_fixed_plan_missing_strategy_resolves_bound_spec_strategy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fixed plan omitting strategy resolves to bound spec strategy with zero model calls."""
+    csv_path = _write_source(tmp_path)
+    monkeypatch.setenv("RULOOM_THRESHOLDS", str(_write_thresholds(tmp_path)))
+
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text(
+        json.dumps(
+            {
+                "spec_version": 1,
+                "profile": "hylogger",
+                "strategy": "fitted_markov_balanced",
+            }
+        ),
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "plan.json"
+    # Plan intentionally omits "strategy"
+    plan_path.write_text(
+        json.dumps({"seed": 18, "n_rows": 8}),
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out-balanced-replay"
+    argv = [
+        "run",
+        str(csv_path),
+        "--max-attempts",
+        "2",
+        "--spec",
+        str(spec_path),
+        "--plan",
+        str(plan_path),
+        "--model-policy",
+        "offline",
+        "--out",
+        str(out_dir),
+    ]
+    monkeypatch.setattr("sys.stdin", io.StringIO("accept\nok\n"))
+
+    class RefusingModel:
+        def complete(self, prompt: str, schema: Mapping[str, Any]) -> Completion:
+            raise AssertionError("model was invoked under an offline fixed-plan replay")
+
+    code = cli_module.main(argv, model=RefusingModel())
+    assert code == 0
+
+    run_dirs = [c for c in (out_dir / "runs").iterdir() if (c / "run.json").is_file()]
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+
+    # Stored plan must have resolved strategy to fitted_markov_balanced
+    stored_plan = json.loads((run_dir / "plan.json").read_text(encoding="utf-8"))
+    assert stored_plan["strategy"] == "fitted_markov_balanced"
+    assert stored_plan["seed"] == 18
+    assert stored_plan["n_rows"] == 8
+
+    # Evidence report records strategy: fitted_markov_balanced
+    evidence_report = (run_dir / "evidence-report.md").read_text(encoding="utf-8")
+    assert "Strategy: fitted_markov_balanced" in evidence_report
+
+    # Check exact included count: 6 valid out of 8 in TOY source (0.75).
+    # 8 * 0.75 = 6 exact valid rows.
+    csv_rows = (run_dir / "data.csv").read_text(encoding="utf-8").splitlines()[1:]
+    assert len(csv_rows) == 8
+    actual_valid = sum(1 for row in csv_rows if row.split(",")[1].lower() == "true")
+    assert actual_valid == 6
+
+    # Validation report valid_fraction check passed with exact count evidence
+    val_report = json.loads(
+        (run_dir / "validation-report.json").read_text(encoding="utf-8")
+    )
+    vf_result = next(r for r in val_report["results"] if r["name"] == "valid_fraction")
+    assert vf_result["status"] == "pass"
+    assert "actual count 6 == fitted target 6" in vf_result["detail"]

@@ -491,3 +491,67 @@ def test_image_checks_fail_for_wrong_dimensions() -> None:
     report = run_image_checks(reference, synthetic, artifact_name="synthetic.png")
     assert report.verdict == "fail"
     assert "image_dimensions" in report.failed
+
+
+def test_valid_fraction_exact_count_evidence() -> None:
+    """Exact count validation folds into valid_fraction result alongside the band."""
+    base = (
+        _base()
+    )  # 8 samples, 7 valid (valid_fraction = 7/8 = 0.875, in band [0.5, 1.0])
+    thresholds = _thresholds()
+
+    # Positive test: count matches fitted target and is within band -> PASS
+    report_pass = run_checks(
+        base, thresholds, source_samples=base, expected_valid_count=7
+    )
+    res_pass = next(r for r in report_pass.results if r.name == "valid_fraction")
+    assert res_pass.status == "pass"
+    assert "actual count 7 == fitted target 7" in res_pass.detail
+    assert "in [0.5, 1.0]" in res_pass.detail
+
+    # Negative test 1: wrong expected target passed -> FAIL even though in band
+    report_fail_target = run_checks(
+        base, thresholds, source_samples=base, expected_valid_count=6
+    )
+    res_fail_target = next(
+        r for r in report_fail_target.results if r.name == "valid_fraction"
+    )
+    assert res_fail_target.status == "fail"
+    assert "actual count 7 != fitted target 6" in res_fail_target.detail
+    assert "in [0.5, 1.0]" in res_fail_target.detail
+
+    # Negative test 2: flipped flag in samples so count 6 != expected 7, though 6/8=0.75 is inside band [0.5, 1.0]
+    flipped = [
+        Sample(
+            depth_m=s.depth_m,
+            valid=False if i in (3, 4) else True,
+            swir_group=s.swir_group,
+            tir_group=s.tir_group,
+        )
+        for i, s in enumerate(base)
+    ]
+    report_flipped = run_checks(
+        flipped, thresholds, source_samples=base, expected_valid_count=7
+    )
+    res_flipped = next(r for r in report_flipped.results if r.name == "valid_fraction")
+    assert res_flipped.status == "fail"
+    assert "actual count 6 != fitted target 7" in res_flipped.detail
+
+    # Negative test 3: invalid target type (bool, negative, etc.)
+    report_bad_type = run_checks(
+        base, thresholds, source_samples=base, expected_valid_count=-1
+    )
+    res_bad_type = next(
+        r for r in report_bad_type.results if r.name == "valid_fraction"
+    )
+    assert res_bad_type.status == "fail"
+    assert "invalid valid_fraction or fitted target" in res_bad_type.detail
+
+    report_bool_type = run_checks(
+        base, thresholds, source_samples=base, expected_valid_count=True
+    )
+    res_bool_type = next(
+        r for r in report_bool_type.results if r.name == "valid_fraction"
+    )
+    assert res_bool_type.status == "fail"
+    assert "invalid valid_fraction or fitted target" in res_bool_type.detail

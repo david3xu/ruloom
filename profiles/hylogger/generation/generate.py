@@ -186,7 +186,7 @@ def _balanced_flags(
         and math.isfinite(float(mean_valid))
         and float(mean_valid) > 0
     ):
-        candidates.append(target / float(mean_valid))
+        candidates.append(target / max(1.0, float(mean_valid)))
     if (
         mean_invalid is not None
         and isinstance(mean_invalid, (int, float))
@@ -194,7 +194,7 @@ def _balanced_flags(
         and math.isfinite(float(mean_invalid))
         and float(mean_invalid) > 0
     ):
-        candidates.append(n_invalid / float(mean_invalid))
+        candidates.append(n_invalid / max(1.0, float(mean_invalid)))
 
     if candidates:
         estimated_k = sum(candidates) / len(candidates)
@@ -261,7 +261,7 @@ def generate_samples(
         flags = _balanced_flags(
             rng,
             n_rows,
-            float(valid_fraction),
+            valid_fraction,
             mean_valid,
             mean_invalid,
         )

@@ -44,7 +44,7 @@ def provider_schema(allowed_strategies: Any = None) -> dict[str, Any]:
     The provider rejects non-strict schemas with a 400 (``required``
     must list every key in ``properties``), while :data:`PLAN_SCHEMA`
     keeps ``strategy`` optional so a plan omitting it still validates
-    and runs under the run spec's own strategy. The wire schema sent
+    before the bound spec strategy is resolved. The wire schema sent
     here therefore always requires every property it declares: with
     bound strategies it carries ``seed``/``n_rows``/``strategy`` (all
     required, so the planner must name one of the supported
@@ -89,7 +89,8 @@ def validate_plan(
     ``allowed_strategies`` is given, a plan naming a strategy outside
     that set is refused here too: the planner may only propose values
     inside the spec-supported bounded schema. A plan omitting
-    ``strategy`` runs under the run spec's own strategy (no injection).
+    ``strategy`` is accepted here; capability execution resolves any
+    bound spec strategy before storage and generation.
     """
     if not isinstance(data, Mapping):
         raise PlanError(f"plan must be an object, got {type(data).__name__}")

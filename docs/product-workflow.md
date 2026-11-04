@@ -23,7 +23,9 @@ lesson. Keep the depth spacing, blank result labels and inclusion flags
 similar to this source, and show which checks passed.” The HyLogger scalar
 profile offers aggregate-fitted strategies (legacy approximate
 `fitted_markov_joint` and opt-in exact-count `fitted_markov_balanced`) and
-fixed checks for those properties. It produces `depth_m`, `valid`, `swir_group`
+fixed checks for those properties; balanced generation requires the actual
+valid row count to match the fitted integer target exactly alongside the
+calibrated band. It produces `depth_m`, `valid`, `swir_group`
 and `tir_group`; blank group labels mean no classification label was reported. The route
 does not produce measurement curves, sample IDs, coordinates or photographs.
 An explicit privacy guarantee or custom tolerance remains unsupported. The balanced strategy fits an integer inclusion count from rounded source aggregates; it does not preserve the source row order or exact run-length distribution.
@@ -43,18 +45,21 @@ The selected adapter determines transport; a model name alone cannot switch
 providers. Provider identity is what the CLI reports, not verified weights.
 
 Implementation helpers and code reviewers are a separate development process.
-For this change an owner-authorised AGY Opus session produced partial code;
-after its quota error Codex finished implementation and tests. A separately
-requested Sonnet review has its own receipt. These workers do not participate
-in every user's data run. Datacore records their handoffs and evidence; it
+Earlier AGY Opus work produced partial code before a quota error, and Codex
+finished that stage. The owner-provided Gemini Flash high session implemented
+the balanced generator and review corrections. A separate native Claude
+Sonnet high session independently reviewed the frozen changes; Codex audited,
+added boundary/identity checks and ran the real-source acceptance test. These
+workers do not participate in every user's data run. Datacore records their handoffs and evidence; it
 does not turn a worker's completion message into product acceptance.
 
 ## Scope and remaining limits
 
 This release keeps the existing strategies, thresholds, repair bounds,
-human gate, source rights and package verification. New work is limited to
-accurate request capability context, strict metadata validation, regression
-tests and clear workflow documentation. Profile text is reviewed against
+human gate, source rights and package verification. New work adds
+request capability context, strict metadata validation, explicit model-family
+configuration and an opt-in balanced inclusion strategy, with regression
+checks and workflow documentation. Profile text is reviewed against
 the code; validating its shape alone cannot establish its truth.
 
 Free-form requirements are not fully compiled into independent executable
@@ -65,8 +70,9 @@ preparation. There is no clarification dialogue or hosted multi-user UI.
 Passing engineering checks does not establish scientific validity, anonymity
 or unrestricted reuse. Source terms remain recorded per release.
 
-AGY tool-use detection is a post-call audit, not process confinement.
-Untrusted third-party profiles and worker isolation remain outside this
+Requested no-tools prompts provide behavioral guidance at the role boundary,
+while AGY tool-use detection remains a post-call audit rather than process
+confinement. Untrusted third-party profiles and worker isolation remain outside this
 readiness claim. Optional procedural image machinery remains fixture-tested;
 it is not evidence of real core-photo fidelity.
 
