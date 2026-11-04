@@ -126,3 +126,15 @@ End after the Test 1 report. Test 2 remains awaiting explicit owner instruction.
 - [ ] Run and report Test 1 with all attempts retained.
 - [ ] Publish reviewed code and evidence through the existing PR.
 - [ ] Stop for the owner's Test 2 instruction.
+
+## Delivery focus and merge cadence
+
+Owner priority confirmed on 4 November: work mainly on the HyLogger profile.
+Deliver small coherent slices: (1) admitted primary evidence, source-fit and
+practical-use checking in the profile; (2) binding those checks into the existing
+engine, human gate, release and recipient verification; (3) checked runtime AI
+roles and fresh-user orchestration; (4) the frozen Test 1 report. Independently
+review and audit each slice, require green CI and branch protection, then merge
+to main regularly. An earlier slice is a foundation, not a ready full workflow.
+No separate generation/release engine, benchmark-specific source/row hardcoding,
+automatic seed search or arbitrary contract overrides are permitted.
