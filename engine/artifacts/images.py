@@ -92,14 +92,17 @@ def staged_image_attachment(
     record = records[-1]
     producer = record.produced_by
     specs = getattr(getattr(runner, "manifest", None), "capabilities", None)
-    spec = specs.get(producer) if isinstance(specs, Mapping) else None
-    if not isinstance(spec, Mapping) or spec.get("reads_raw_source") is not False:
-        raise ImageSecurityError("image producer is unknown or a raw-intake capability")
-    if (
-        record.media_type != media_type
-        or media_type not in capabilities.image_media_types
-    ):
-        raise ImageSecurityError("registered image media type mismatch")
+    for candidate in records:
+        spec = specs.get(candidate.produced_by) if isinstance(specs, Mapping) else None
+        if not isinstance(spec, Mapping) or spec.get("reads_raw_source") is not False:
+            raise ImageSecurityError(
+                "image producer is unknown or a raw-intake capability"
+            )
+        if (
+            candidate.media_type != media_type
+            or media_type not in capabilities.image_media_types
+        ):
+            raise ImageSecurityError("registered image media type mismatch")
     # Validate the selected registry value, not only the caller's snapshot.
     validate_image_bytes(payload, capabilities)
     with tempfile.TemporaryDirectory(prefix="ruloom-image-input-") as directory:
