@@ -182,6 +182,7 @@ def test_fixed_plan_replays_identical_data_without_model_calls(
     assert json.loads(saved_plan.read_text(encoding="utf-8")) == {
         "seed": 8,
         "n_rows": 8,
+        "strategy": "fitted_markov_joint",
     }
 
     replay_dirs: list[Path] = []
