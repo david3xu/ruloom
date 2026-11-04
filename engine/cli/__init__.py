@@ -389,11 +389,16 @@ def resolve_role_bindings(
         ):
             role_sources["reasoning_effort"] = SOURCE_PROFILE
         else:
-            base["reasoning_effort"] = (
-                "xhigh"
-                if adapter == "azure_foundry"
-                else ("high" if adapter == "agy_cli" else DEFAULT_EFFORT)
-            )
+            if adapter == "azure_foundry":
+                base["reasoning_effort"] = (
+                    "none"
+                    if base.get("model") == "meta-models--muse-glimmer-30b"
+                    else "xhigh"
+                )
+            elif adapter == "agy_cli":
+                base["reasoning_effort"] = "high"
+            else:
+                base["reasoning_effort"] = DEFAULT_EFFORT
             role_sources["reasoning_effort"] = SOURCE_DEFAULT
 
         if adapter in {"glimmer_local", "azure_foundry"}:
@@ -418,7 +423,9 @@ def resolve_role_bindings(
                 from models.azure_foundry import validate_azure_base_url
 
                 try:
-                    base["base_url"] = validate_azure_base_url(base["base_url"])
+                    base["base_url"] = validate_azure_base_url(
+                        base["base_url"], model=base["model"]
+                    )
                 except ValueError as exc:
                     raise ManifestError(str(exc)) from exc
 
@@ -518,11 +525,13 @@ def default_client(role: str, config: Mapping[str, Any]) -> StructuredModel:
         selected_model = str(
             config.get("model", DEFAULT_MODEL_BY_ADAPTER.get(adapter, ""))
         )
-        selected_effort = str(
-            config.get(
-                "reasoning_effort", "high" if adapter == "agy_cli" else DEFAULT_EFFORT
-            )
+        default_eff = (
+            "none"
+            if adapter == "azure_foundry"
+            and selected_model == "meta-models--muse-glimmer-30b"
+            else ("high" if adapter == "agy_cli" else DEFAULT_EFFORT)
         )
+        selected_effort = str(config.get("reasoning_effort", default_eff))
         selected_family = str(
             config.get("family") or model_family(adapter, selected_model)
         )
@@ -565,11 +574,15 @@ def default_client(role: str, config: Mapping[str, Any]) -> StructuredModel:
             raise ValueError(
                 f"role {role!r} bound to adapter 'azure_foundry' requires explicit subscription_id"
             )
+        selected_model = str(config.get("model", "muse-spark-1.3"))
+        default_effort = (
+            "none" if selected_model == "meta-models--muse-glimmer-30b" else "xhigh"
+        )
         return AzureFoundryModel(
             base_url=str(base_url),
             subscription_id=str(subscription_id),
-            model=str(config.get("model", "muse-spark-1.3")),
-            effort=str(config.get("reasoning_effort", "xhigh")),
+            model=selected_model,
+            effort=str(config.get("reasoning_effort", default_effort)),
         )
     if adapter != "meta_cli":
         raise ValueError(

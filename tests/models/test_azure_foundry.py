@@ -1384,3 +1384,125 @@ def test_azure_foundry_complete_with_image_reported_cost(
         "currency": "USD",
         "source": "azure",
     }
+
+
+MANAGED_URL = "https://audit-fixture.services.ai.azure.com/openai/v1/"
+MANAGED_MODEL = "meta-models--muse-glimmer-30b"
+
+
+def _managed_model(**overrides: Any) -> AzureFoundryModel:
+    return AzureFoundryModel(
+        **{
+            "base_url": MANAGED_URL,
+            "subscription_id": VALID_SUB,
+            "model": MANAGED_MODEL,
+            "effort": "none",
+            "token_provider": lambda _: "fixture.token",
+            **overrides,
+        }
+    )
+
+
+def test_managed_route_is_explicit_and_old_validator_stays_strict() -> None:
+    assert validate_azure_base_url(MANAGED_URL, model=MANAGED_MODEL) == MANAGED_URL
+    with pytest.raises(ValueError):
+        validate_azure_base_url(MANAGED_URL)
+    assert validate_azure_base_url(VALID_URL) == VALID_URL
+    with pytest.raises(ValueError):
+        _managed_model(base_url=VALID_URL)
+    with pytest.raises(ValueError):
+        _managed_model(model="muse-spark-1.3", effort="low")
+    with pytest.raises(ValueError):
+        _managed_model(model="muse-glimmer-30b", effort="low")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://audit-fixture.services.ai.azure.com/openai/v1/",
+        "https://audit-fixture.services.ai.azure.com.evil.example/openai/v1/",
+        "https://nested.audit-fixture.services.ai.azure.com/openai/v1/",
+        "https://audit-fixture.services.ai.azure.com:443/openai/v1/",
+        "https://user@audit-fixture.services.ai.azure.com/openai/v1/",
+        "https://audit-fixture.services.ai.azure.com/models/",
+        "https://audit-fixture.services.ai.azure.com/openai/v1/?key=CANARY",
+        "https://audit-fixture.services.ai.azure.com/openai/v1/#CANARY",
+    ],
+)
+def test_managed_bad_route_refused_before_auth(url: str) -> None:
+    provider = MagicMock(return_value="fixture.token")
+    with pytest.raises(ValueError):
+        _managed_model(base_url=url, token_provider=provider)
+    provider.assert_not_called()
+
+
+@pytest.mark.parametrize("effort", ["low", "xhigh", "max", "NONE"])
+def test_managed_refuses_assumed_reasoning_effort(effort: str) -> None:
+    with pytest.raises(ValueError, match="requires reasoning_effort 'none'"):
+        _managed_model(effort=effort)
+    with pytest.raises(ValueError, match="requires reasoning_effort 'none'"):
+        validate_selection("azure_foundry", MANAGED_MODEL, "meta", effort)
+
+
+def test_managed_wire_image_and_usage_contract(tmp_path: Path) -> None:
+    import base64
+
+    image = tmp_path / "generated.png"
+    payload = _make_test_png()
+    image.write_bytes(payload)
+    model = _managed_model()
+    wire = _make_azure_response(model=MANAGED_MODEL)
+    with patch.object(
+        urllib.request.OpenerDirector, "open", return_value=MockHTTPResponse(wire)
+    ) as opened:
+        result = model.complete_with_image("synthetic only", TEST_SCHEMA, image)
+    request = opened.call_args.args[0]
+    sent = json.loads(request.data)
+    assert request.full_url == MANAGED_URL + "chat/completions"
+    assert sent["model"] == MANAGED_MODEL
+    assert sent["max_tokens"] == 4096
+    assert "reasoning_effort" not in sent
+    assert "max_completion_tokens" not in sent
+    part = sent["messages"][0]["content"][1]
+    assert part["type"] == "image_url"
+    assert base64.b64decode(part["image_url"]["url"].split(",", 1)[1]) == payload
+    assert result.usage.model == MANAGED_MODEL
+    assert result.usage.input_tokens == 227
+    assert result.usage.output_tokens == 1054
+    assert result.meta["deployment_type"] == "GlobalManagedCompute"
+    assert result.meta["reasoning_effort"] is None
+    assert result.meta["cost"]["status"] == "unavailable"
+    assert model_family("azure_foundry", MANAGED_MODEL) == "meta"
+
+
+@pytest.mark.parametrize(
+    "response,reason",
+    [
+        (_make_azure_response(model="muse-spark-1.3"), "model mismatch"),
+        (_make_azure_response(model=MANAGED_MODEL, content="{}"), "schema"),
+        (_make_azure_response(model=MANAGED_MODEL, content="not JSON"), "valid JSON"),
+        (_make_azure_response(model=MANAGED_MODEL, prompt_tokens=-1), "prompt_tokens"),
+    ],
+)
+def test_managed_bad_image_reply_is_not_success(
+    tmp_path: Path, response: bytes, reason: str
+) -> None:
+    image = tmp_path / "generated.png"
+    image.write_bytes(_make_test_png())
+    with patch.object(
+        urllib.request.OpenerDirector, "open", return_value=MockHTTPResponse(response)
+    ):
+        with pytest.raises(ModelError, match=reason):
+            _managed_model().complete_with_image("synthetic only", TEST_SCHEMA, image)
+
+
+def test_managed_failure_redacts_provider_body(tmp_path: Path) -> None:
+    image = tmp_path / "generated.png"
+    image.write_bytes(_make_test_png())
+    error = urllib.error.HTTPError(
+        MANAGED_URL, 503, "PROVIDER_CANARY", {}, io.BytesIO(b"PROVIDER_CANARY")
+    )
+    with patch.object(urllib.request.OpenerDirector, "open", side_effect=error):
+        with pytest.raises(ModelError, match="HTTP 503") as raised:
+            _managed_model().complete_with_image("synthetic only", TEST_SCHEMA, image)
+    assert "PROVIDER_CANARY" not in str(raised.value)

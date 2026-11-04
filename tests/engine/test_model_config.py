@@ -807,3 +807,32 @@ def test_vision_contributor_override_preserves_scalar_default(role, expected):
         role, {"adapter": "meta_cli", "model": "muse-spark-1.3", "contributor": False}
     )
     assert model.contributor is expected
+
+
+def test_managed_azure_role_resolves_exact_route_and_constructs_without_auth() -> None:
+    manifest = _manifest()
+    url = "https://audit-fixture.services.ai.azure.com/openai/v1/"
+    model = "meta-models--muse-glimmer-30b"
+    resolved, sources = cli_module.resolve_role_bindings(
+        manifest,
+        cli_adapters=["planner=azure_foundry"],
+        cli_models=[f"planner={model}"],
+        cli_base_urls=[f"planner={url}"],
+        cli_subscription_id="11111111-2222-3333-4444-555555555555",
+        env={},
+    )
+    assert resolved["planner"]["reasoning_effort"] == "none"
+    assert sources["planner"]["reasoning_effort"] == "default"
+    client = cli_module.default_client("planner", resolved["planner"])
+    assert client.model == model
+    assert client.base_url == url
+    assert client.capabilities.supports_image
+    with pytest.raises(ManifestError):
+        cli_module.resolve_role_bindings(
+            manifest,
+            cli_adapters=["planner=azure_foundry"],
+            cli_models=["planner=muse-spark-1.3"],
+            cli_base_urls=[f"planner={url}"],
+            cli_subscription_id="11111111-2222-3333-4444-555555555555",
+            env={},
+        )
