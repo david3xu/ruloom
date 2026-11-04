@@ -44,12 +44,16 @@ subsequent merge; this document's observations apply to the revision above.
 
 ## Controls and boundaries
 
-The installed-wheel fixture is invented. Its seeds are fixed and disclosed:
+The installed-wheel fixture is invented and its AI-role responses are scripted
+mocks. These tests establish no live-model, Azure or AGY output quality. Its
+seeds are fixed and disclosed:
 9 is a release-positive control first observed in earlier exploration, 8 is a
 quality-failure control, and 1 exercises same-seed repair. No seed search or
 threshold tuning occurs. A repair correcting inclusion while still failing
-another check demonstrates correction, not release success. The real-source
-control reuses the existing HD012 seed42, 10000-row balanced plan unchanged.
+another check demonstrates correction, not release success. The root manager's real-source control reuses the existing HD012 seed42,
+10000-row balanced plan unchanged. Earlier failed controls remain recorded in
+[request-capability evidence](request-capabilities-2026-11-04.md); they have not
+been relabelled or erased.
 
 Native Sonnet's exact-revision verdict is PASS. It independently confirmed
 case-report recut refusal through ZIP-only CLI, default consumer and real
