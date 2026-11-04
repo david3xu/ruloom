@@ -1,5 +1,9 @@
 # Request capability implementation — 4 November 2026
 
+Historical intermediate checkpoint. Its quota and failure statements describe
+that revision, not the current state. See the [completed follow-up and retained
+failures](product-ready-2026-11-04.md) for current scoped readiness evidence.
+
 **Draft; independent review and live interpretation remain blocked by quota.
 This is not a product-readiness approval.** Machine-readable measurements:
 [receipt](request-capabilities-2026-11-04.json).

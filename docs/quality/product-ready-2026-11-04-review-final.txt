@@ -1,0 +1,57 @@
+# Final small-delta re-review of frozen b829f0df0e39af46f63ebb212d11b857979ac571
+
+**Verdict: APPROVE** at this exact SHA for the code, tests and profile text in the 287669d..b829f0d delta. This is an independent code-review outcome only. It does not approve the product or its live behaviour, and it makes no scientific or privacy claim.
+
+- **Revision check:** `git rev-parse HEAD` gives the same SHA in the canonical repo and in `/private/tmp/ruloom-ready-review-b829f0d`. The clone is clean. Canonical status shows only the untracked `uv.lock`.
+- **Protected files:** the delta is 4 files (`engine/cli/request.py`, `profiles/hylogger/profile.json`, `tests/engine/test_plan_replay.py`, `tests/engine/test_request.py`). It touches no thresholds, lock, data or schema file.
+
+## Commands and exits (all with the allowed `.venv` Python, outputs redirected to files)
+
+| Command | Exit | Result |
+|---|---|---|
+| Full source-free suite (`pytest -p no:cacheprovider -q -rs`) | 0 | 796 passed, 14 skipped, 0 failed |
+| `scripts/force_pass.py` | 0 | 47 PASS lines, 0 FAIL |
+| Focused tests: plan_replay, request, capabilities, checks, generate, agy_cli | 0 | 119 passed, 4 skipped |
+| `ruff check --no-cache .` | 0 | All checks passed (ruff 0.17.3) |
+| `ruff format --no-cache --check .` | 0 | 169 files already formatted |
+| `git diff --check 287669d HEAD` | 0 | clean |
+| Probes r1 (profile.json), r2 (compatibility), r3/r4 (prompt diff) | 0 | see below |
+
+- **Skips:** all 14 are the same real-source skips as before ("requires git-ignored NVCL source data"). Real-source goldens and live behaviour are still outside my scope.
+- **Earlier failure:** the 287669d failure (`test_fixed_plan_replays_identical_data_without_model_calls`) is gone: the suite passes and the focused run includes it.
+
+## Gate results
+- **Enforced and executed (PASS):** 12 FP rules (FP-DOC-1, -2, -4 and FP-CODE-2 through FP-CODE-10) and 31 enforced Q checks. For example, Q-REQUEST-DRAFT ran 28 tests, Q-MODEL-AGY 30 and Q-CODE-HYGIENE 3. FP-CODE-6 (no domain words in `engine/`) still passes with the new rule text.
+- **Four planned stubs, printed "PASS — PLANNED — stub, not executed" and not evidence of anything:** Q-GOV-NO-PEER-DISPATCH, Q-GOV-REVIEW-ISOLATION, Q-GOV-CURRENT-LEASE and Q-GOV-TOOL-CONTAINMENT. That accounts for 12 + 31 + 4 = 47.
+- **No blanket governance claim.** True tool containment remains planned. The no-tools prompt is behavioural guidance, and AGY's tool audit is still a post-call check.
+
+## F1 resolution (verified)
+- **Expectation:** `tests/engine/test_plan_replay.py:182-186` now expects `{"seed": 8, "n_rows": 8, "strategy": "fitted_markov_joint"}`. Every byte-identical replay assertion below it is unchanged.
+- **Probe r2:** I ran the same default-strategy replay at 5d4f347, 287669d and b829f0d with a spec of `fitted_markov_joint`. The data hash is `19fdc2e973ea3b6b` in all three revisions, with an explicit strategy, an omitted one, and a replay of the stored plan, and with 0 model calls.
+- **What changed:** only the stored `plan.json` content. A plan that omitted `strategy` was stored without it at 5d4f347; it is stored with the resolved `fitted_markov_joint` from 287669d on. This is a deliberate, disclosed contract change, not a data change.
+- **Toy source:** the exit-1 run verdict in that probe comes from the legacy joint strategy on the toy source and is identical at 5d4f347.
+
+## Behaviour-guidance delta
+- **Rule in `engine/cli/request.py:33-37`:**
+  - It tells the model to select the strategy whose documented properties best cover the request.
+  - It follows the profile brief's recommendation and treats the default as a fallback.
+  - It says the user need not know the internal strategy name or ask for an exact count.
+  - The wording is generic. It names no domain word and no strategy, and it changes no schema, source or threshold.
+- **Prompt diff (probe r3/r4):** the tabular prompt grows only by the new rule line (+356 characters). The hylogger prompt grows by that line plus the edited brief text.
+- **Profile brief:**
+  - `profile.json` is otherwise semantically identical to 287669d. The release members, models, checks, limits and generation strategies/default/outputs are equal after the JSON reformat; only the brief `description` and one `supported_requests` bullet changed.
+  - The default is still `fitted_markov_joint`.
+  - The description is 1204 characters (limit 1500) and the changed bullet is 501 (limit 600).
+  - The "not a scientific or privacy guarantee" wording is retained in both the description and the limitations.
+- **Bullet accuracy:** the bullet says the exact-count check applies to `fitted_markov_balanced` and that the legacy default's total included fraction "can drift". That matches the implementation I verified at 287669d. It adds no privacy claim and invents no check.
+- **Test limits:** `tests/engine/test_request.py` adds a substring check that the two rule phrases exist. This shows the rule is in the prompt. It is not evidence that any live model will choose balanced.
+
+## Disclosed low advisories (carried over, none blocking)
+- `repair.repair()` (the old compatibility function) and `scripts/evaluate.py` still use legacy `run_checks` with no exact-count measurement or strategy resolution. The CLI lifecycle uses `capabilities.repair`.
+- `request.json` `prompt_sha256` hashes the base prompt, not the prompt with the AGY no-tools instruction. The full sent text is in the recorded argv, so the base prompt digest and the wire prefix differ by design.
+- Tiny inputs: `n_rows=2` on the toy source fails with "list index out of range" in both strategies, and was already present at 5d4f347.
+- The exact count follows the profile's rounded `valid_fraction`, as documented.
+- Phase-2 items remain unchanged: the GPT effort inconsistency, model text inside refusal messages, unbounded reads, and the untested `scripts/provider_smoke.py`.
+- Documentation wording about this review should state the actual outcome: APPROVE for the code delta above, at this SHA.
+
+I made no edits, commits or installs. I opened no source data and made no provider, network or MCP call. Real-source suitability, live requests and package acceptance remain with root.

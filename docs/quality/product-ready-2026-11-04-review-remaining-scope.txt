@@ -1,0 +1,110 @@
+# Phase 2 review, remaining scope (frozen 5d4f3472b751cb72a8da7cbc06ce451242b5453c vs main 22da658)
+
+**Overall verdict: REQUEST_CHANGES stays open. This is not product approval.** The balanced-strategy finding from the first review is unchanged and still open. In the remaining scope I found no new blocker, only one Medium and four Low items.
+
+## Revision and scope
+- **Clone:** `/private/tmp/ruloom-ready-review-5d4f347`. `git rev-parse HEAD` gives 5d4f347, and `git status --short` was empty before and after my work.
+- **Reviewed:**
+  - `engine/cli/request.py`, `request_context.py`, `__init__.py` (diff)
+  - `engine/core/manifest.py`, `model_policy.py`, `spec.py`, `runner.py` (diffs)
+  - `models/agy_cli.py`, `selection.py`, `local_transport.py`, `glimmer.py` (diff)
+  - `scripts/provider_smoke.py`
+  - both profile briefs and the AGY/evidence docs
+- **Writes:** I only wrote probe scripts and output under `/private/tmp/rv_probe/`, `/private/tmp/rv_*.out` and `mktemp` directories. I made no writes in the canonical repo; its status was `M profiles/hylogger/capabilities.py`, `M profiles/hylogger/generation/plan.py` and `?? uv.lock`, which are not my edits (the `M` files are presumably Gemini's in-progress work).
+
+## Commands run (all with `/Users/291928k/workspace/ruloom/.venv/bin/python`, in the clone)
+
+| Command | Exit | Result |
+|---|---|---|
+| Full suite: `pytest -p no:cacheprovider -q -rs` | 0 | 787 passed, 14 skipped |
+| `scripts/force_pass.py` | 0 | 47 PASS lines, no FAIL |
+| Focused: request, model_policy, agy_cli, local_transport, evidence_report, model_config, wheel_cli, test_generate | 0 | 134 passed, 4 skipped |
+| Probe scripts p1–p5, run with `-I` | 0 for p1, p2, p5; p4's exit was lost in a pipe but its output is complete | See below |
+
+- **Probe p3:** it exited 1 only because of a bug in my probe harness (`Boom` has no `.calls`). Product behaviour was already shown before that line.
+- **Skips:** all 14 skips are "requires git-ignored NVCL source data". The real-source goldens, including `test_generate.py:39,46,95,110`, did not run.
+
+## Gate results
+- **Executed PASS (FP):** FP-DOC-1, FP-DOC-2, FP-DOC-4, FP-CODE-2, -3, -4, -5, -6, -7, -8, -9 and -10.
+- **Executed PASS (Q, enforced):**
+  - **Data/release:** Q-DATA-R01, R02, R03 and R08; Q-RELEASE-R04-MEMBERS, R04-RIGHTS, R06, COMPLETE and PUBLICATION.
+  - **Engine:** Q-ENGINE-R05, R07, R10, R11, SPEC, EVIDENCE and DISPATCH; Q-GRAPH-AUTHORITY.
+  - **Eval/governance:** Q-EVAL-R09-ENGINE and R09-HARNESS; Q-GOV-SCOPED-WRITES, CHILD-CAPABILITY and BRANCH-PROTECTION.
+  - **Models and request:** Q-MODEL-CALL-POLICY (26 tests), Q-MODEL-LOCAL-TRANSPORT (7), Q-REQUEST-DRAFT (27), Q-MODEL-AGY (26); Q-CODE-HYGIENE.
+- **Executed in-gate checks:** Q-STRUCT-FEATURE-MAP, Q-STRUCT-IMPORTS and Q-DOC-CLAIM-EVIDENCE.
+- **Covered only by FP-DOC-1:** Q-DOC-R12.
+- **Planned stubs, printed "PASS — PLANNED — stub, not executed":** Q-GOV-NO-PEER-DISPATCH, Q-GOV-REVIEW-ISOLATION, Q-GOV-CURRENT-LEASE and Q-GOV-TOOL-CONTAINMENT. These are not evidence of anything. The last matches the documented gap that AGY tool confinement is not established.
+
+## Findings
+
+**M1 — Medium: AGY accepts a reply that never names the model, although the file says "no fallback".**
+- **Where:** `models/agy_cli.py:144-148`; the file and class docs say "no fallback".
+- **Probe p2:** a stream with no `init` event, or an `init` without `model`, is ACCEPTED. `Usage.model` is "unknown", and the data are returned. A stream naming a different model is correctly refused.
+- **Effect:** the evidence is truthful, because the report shows "reported model: unknown". But a draft or plan can still come from a model whose identity was never observed. Only `scripts/provider_smoke.py` (live-planner stage, `provider_smoke.py:146-152`) fails closed on this, and that script is opt-in.
+- **Minimal rework:** refuse a missing or unknown `init.model` in the product path, or state this acceptance explicitly in `docs/model-families.md` and the evidence report. Which one is the owner's call.
+
+**L1 — Low: GPT effort rule is inconsistent.** `family_default` allows GPT at medium effort only (`models/selection.py:28-29`), but `validate_selection` accepts `gpt-oss-120b-high` with effort high (probe p1). `--role-family planner=gpt` with no effort fails because the AGY default effort is high; the error does not tell the user to pass `--role-effort planner=medium`.
+
+**L2 — Low: error text can carry model output.** AGY schema failures put the full multi-line jsonschema message, including the offending instance, into `ModelError` (probe p2). That text goes to `model_call_failed` in `run.jsonl` and the report. A malformed reply could therefore put model-authored text into the evidence.
+
+**L3 — Low: unbounded reads.**
+- `AgyCLIModel.complete` buffers all subprocess stdout with no cap.
+- `prepare_request` reads the whole source with `read_bytes()` to hash it (`request.py:143`).
+- The first is bounded in practice by the timeout, the second by the source size.
+
+**L4 — Low: `scripts/provider_smoke.py` has no automated test.** It is referenced only in `docs/model-families.md:86`, so its assertions (`offline*` makes no model call, the planner reports the selected identity, a decline writes no release) were not exercised. I read it and found no logic error.
+
+## Probe results with no defect found (executed)
+- **Loopback guard (p1):**
+  - Admitted: `127.0.0.1`, `[::1]` and `[::ffff:127.0.0.1]`.
+  - Refused: `localhost`, `127.1`, `0.0.0.0`, `127.0.0.1.evil.com`, userinfo (`http://user@127.0.0.1`, `http://127.0.0.1@evil.com`), `evil.com#@127.0.0.1`, port 0 or 99999, a query string, a fragment, `ftp://`, decimal-integer hosts, private addresses and an empty string.
+  - Redirect and proxy refusal live in `_NoRedirect` and `ProxyHandler({})`. I did not open a loopback server; I rely on the executed `test_local_transport.py` (7 passed).
+- **Policy matrix (p1):** offline denies everything, hosted allows, local-only needs `glimmer_local` plus a loopback URL, and an unknown policy is denied.
+- **AGY parser (p2):** refused: non-zero exit, wrong model, any tool other than `finish`, duplicate init or result, no terminal result, non-SUCCESS, schema violations, extra keys, bool or negative usage, non-JSON lines and non-dict events. An alias/effort conflict is refused when the command line is built. A missing CLI becomes `ModelError`. The command line carries the deny-all settings and the sandbox flag, and `observed_permissions.confinement` is "not-established". The docs (`docs/model-families.md:72-74`, `docs/product-workflow.md:68`) state the post-call-audit limitation, so that known limitation stays documented.
+- **Role resolution (p5):**
+  - CLI beats env beats profile.
+  - A foreign family, a conflicting alias effort, an unknown adapter and an unknown role are all refused.
+  - Rebinding the `local_critic` role (which requires open weights) to `meta_cli` or `agy_cli` is refused.
+- **Manifest brief (p5):** unknown or missing key, empty list, more than 16 items, duplicates, control characters or DEL, a description over 1500, an item over 600, a blank or non-string item, and a non-object brief are all refused. A manifest with no brief, a 1500-character description and Unicode are accepted.
+- **Request context (p3):**
+  - Hylogger context is 9,278 characters (cap 24,000); tabular is 4,539.
+  - It lists 28 required checks and the optional `swir_answer_rate`; 5 conditional checks are counted, not named.
+  - No image, critic or PNG check is named.
+  - Strategy enums match the manifests.
+  - The hylogger brief names 27 check IDs, all present in the manifest, so it invents no source-similarity check.
+  - The "curve" wording (`profile.json:485`) says a blank label is not proof a curve is absent; it does not claim absence.
+- **`prepare` (p3, fake model):**
+  - Good draft: exit 0, files `request.json`, `spec.json` and `plan.json`, `source_rows_sent` false.
+  - The prompt held no source bytes or path, and an injected request stayed last in the prompt.
+  - Unsupported: exit 1, receipt only.
+  - Rejected with an error receipt:
+    - an extra key
+    - rows over the maximum, or zero or boolean rows
+    - a bad strategy or an imaging output
+    - a negative or boolean seed
+    - an empty `unsupported` entry
+    - offline, a non-local policy, or a disabled role
+    - a missing source
+  - An empty or over-long request, or a non-positive or boolean attempt bound: no directory created and no model contact.
+  - An existing output directory raises `FileExistsError`.
+- **End-to-end offline run (p4):**
+  - Prepare, then run with `--plan --model-policy offline`: exit 0, 0 model calls, release written.
+  - The evidence report shows "Model policy: offline", "Initial plan origin: saved-plan replay" and "No successful model invocations".
+  - A multi-line user purpose containing a fake `## Verdict` heading is flattened and does not forge a heading.
+  - Refused as expected:
+    - offline without `--plan`: exit 1
+    - local-only with a hosted planner: exit 1, `model_policy_denied` logged
+    - plan rows different from `target_rows`: exit 1
+    - plan strategy outside the spec: exit 1
+    - a source changed after the draft: exit 1, hash refusal
+  - These ran on the tabular profile only.
+
+## Not done, and limits
+- **First finding:** I did not re-review the balanced strategy or the replay and count fix; that waits for the new frozen revision.
+- **Real data:** I opened no real data. The skipped real-source goldens, including the legacy byte-compatibility test against real data, remain for root's check.
+- **No live calls:** I made no provider, AGY, network or MCP call, and no loopback listener.
+
+## Rework for root
+1. **Balanced-strategy replay and count issue.** Fix as given in the first review; I check it in the re-review.
+2. **M1.** Decide between refusing an unknown AGY model identity and documenting the acceptance.
+3. **L1–L4.** Optional, and none blocks.

@@ -48,7 +48,7 @@ Implementation helpers and code reviewers are a separate development process.
 Earlier AGY Opus work produced partial code before a quota error, and Codex
 finished that stage. The owner-provided Gemini Flash high session implemented
 the balanced generator and review corrections. A separate native Claude
-Sonnet high session independently reviewed the frozen changes; Codex audited,
+Sonnet high session approved the frozen code at `b829f0d`; Codex audited,
 added boundary/identity checks and ran the real-source acceptance test. These
 workers do not participate in every user's data run. Datacore records their handoffs and evidence; it
 does not turn a worker's completion message into product acceptance.
@@ -90,3 +90,7 @@ workflow against a stronger model working directly. Report any differences
 in tools, information and compute budgets. A saved-plan replay measures
 reproducibility, not fresh model performance. No general superiority claim
 is established by the current smoke tests.
+
+The [4 November readiness report](quality/product-ready-2026-11-04.md) records
+the real request, independent code review, failed attempts, measured quality,
+replay and consumer refusal checks. Its scope is the supported local CLI.
