@@ -290,13 +290,16 @@ validation verdict pass, artifact `55eb1c22e212…`, release ZIP
 (CP-02 repaired TIR sequence generation and versioned the golden bytes
 deliberately; pre-repair values were artifact `be9e26d7e664…`, release
 `46c7c07110c5…` — see `docs/quality/scorecard-cp02-addendum.md`.)
-Credit-free preparation checks: 730 passed, 14 source-dependent tests skipped
-(observed 2026-11-03 on `codex/credit-free-product`; real data and live model
-evaluation deferred; reproduce with `.venv/bin/python -m pytest -q`).
-Force-pass gate (`scripts/force_pass.py`): 46 PASS, 0 FAIL, exit 0
-(42 enforced: 12 FP + 30 Q executed; 4 planned Q stubs reported,
-not executed; same branch and date; reproduce with
-`.venv/bin/python scripts/force_pass.py`). The engine is generic: profiles declare their
+Local scalar workflow checks observed 4 November 2026 at `b829f0d`:
+810 tests passed with the local source cache; independent source-free review
+ran 796 passed with 14 source-dependent skips. Actual Gemini request,
+source-fitted generation, offline replay and consumer verification passed;
+failed earlier attempts remain visible in the
+[readiness report](docs/quality/product-ready-2026-11-04.md).
+Reproduce with `.venv/bin/python -m pytest -q`.
+Force-pass gate (`scripts/force_pass.py`): exit 0, 43 enforced checks passed
+(12 FP + 31 Q), with 4 planned stubs reported but not executed.
+Reproduce with `.venv/bin/python scripts/force_pass.py`. The engine is generic: profiles declare their
 step/loop/gate graphs and permissions, and the same engine code runs
 the HyLogger profile and the common tabular profile
 (`ruloom run --profile tabular ...`). Run it with:

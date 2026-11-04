@@ -1,0 +1,964 @@
+{
+  "scope": "Bounded local CLI scalar teaching/test-data workflow, not hosted service or scientific/privacy guarantee.",
+  "code_revision": "b829f0df0e39af46f63ebb212d11b857979ac571",
+  "reviewed_revision": "b829f0df0e39af46f63ebb212d11b857979ac571",
+  "request": "I need 10,000 fictional drill-sample records for a data-checking lesson. Keep the depth spacing, blank result labels and inclusion flags similar to this source, and show which checks passed.",
+  "frozen_lesson_contract": {
+    "scope": "Engineering acceptance for a teaching dataset, not an industry or scientific standard",
+    "target_rows": 10000,
+    "depth_spacing_relative_tolerance": 0.01,
+    "valid_fraction_absolute_tolerance": 0.02,
+    "blank_labels_among_valid_absolute_tolerance": 0.02,
+    "finite_nonnegative_non_decreasing_depths": true,
+    "source_supported_labels_only": true,
+    "preserve_raw_source_bytes": true,
+    "all_profile_required_checks_must_pass": true,
+    "report_skips_separately": true,
+    "no_muse_or_local_meta_calls": true,
+    "human_acceptance": "not granted; inspect result before any acceptance"
+  },
+  "live_workflow": {
+    "status": "pass",
+    "request": "I need 10,000 fictional drill-sample records for a data-checking lesson. Keep the depth spacing, blank result labels and inclusion flags similar to this source, and show which checks passed.",
+    "code_revision": "b829f0df0e39af46f63ebb212d11b857979ac571",
+    "working_tree_clean": true,
+    "source_name": "HD012-scalars.csv",
+    "source_sha256": "8d9afb0120f9a82182f4689109a6c97c96bcc869a555ba77fdece0f98b4cb1bf",
+    "muse_calls": 0,
+    "scope": "AGY-only request interpretation and source-fitted scalar data for a lesson; no image/curve generation",
+    "stages": {
+      "prepare": {
+        "exit_code": 0,
+        "wall_seconds": 94.044
+      },
+      "generate": {
+        "exit_code": 0,
+        "wall_seconds": 0.292,
+        "consumer_verified": true,
+        "data_sha256": "3e9c3309b0705206b596449f6be668125f86264405e3202555e349605412c5d6",
+        "release_sha256": "3fda5db0bd5da207343715b6bd93bcc0ab5f08906611aa8bb6f4ea5cf1d85217"
+      },
+      "replay": {
+        "exit_code": 0,
+        "wall_seconds": 0.271,
+        "consumer_verified": true,
+        "data_sha256": "3e9c3309b0705206b596449f6be668125f86264405e3202555e349605412c5d6",
+        "release_sha256": "bfb5c64b239c17f81ae6ca0ddedcb17c18890764b58312dd315185ab0d74246e"
+      },
+      "unsupported": {
+        "exit_code": 1,
+        "wall_seconds": 124.977
+      }
+    },
+    "plan": {
+      "n_rows": 10000,
+      "seed": 42,
+      "strategy": "fitted_markov_balanced"
+    },
+    "tampered_payload_refused": true,
+    "unsupported_response": {
+      "n_rows": 10000,
+      "outputs": [
+        "scalar"
+      ],
+      "seed": 42,
+      "strategy": "fitted_markov_balanced",
+      "summary": "This proposed plan interprets the request to generate 10,000 scalar records using the fitted_markov_balanced strategy. Measured check results appear only after generation. The output CSV produces exactly four columns (other source columns are not carried over): depth_m (finite, nonnegative, non-decreasing depth advancing by source median step), valid (boolean inclusion flag fitted to source valid fraction), swir_group (source SWIR group label or blank), and tir_group (source TIR group label or blank).\n\nDeclared checks and reports address the supported requirements as follows:\n- 10,000 row count: checked by row_count_match.\n- Depth spacing similar to source: checked by depth_start_match, spacing_step_match, depth_span_match, depth_end_within_requested, spacing_median, depth_non_decreasing, depth_finite, depth_nonnegative, and backward_steps.\n- Blank result labels similar to source: checked by swir_answer_fidelity, tir_answer_fidelity, invalid_label_rate, and tir_answer_rate (the optional check swir_answer_rate is recorded as a skip and is not counted as a pass).\n- Inclusion flags similar to source: fitted_markov_balanced allocates valid and invalid runs matching source valid fraction, checked by valid_fraction, repeated_depth_fraction, and repeated_depths_masked_out.\n- Showing check outcomes: provided post-generation by validation-report.json and evidence-report.md without extra data columns.\n\nNo check is promised to pass; any failed or skipped required check blocks acceptance. Remaining uncertainty includes post-generation check results and aggregate source values. The user's required guarantee that no original person or source sample can ever be identified is unsupported because no privacy or anonymity guarantees are provided.",
+      "unsupported": [
+        "Guarantee that no original person or source sample can ever be identified from the generated data"
+      ]
+    },
+    "wall_seconds": 219.598,
+    "provider_clients": [
+      {
+        "role": "planner",
+        "adapter": "agy_cli",
+        "model": "gemini-3.8-flash-high",
+        "effort": "high"
+      },
+      {
+        "role": "planner",
+        "adapter": "agy_cli",
+        "model": "gemini-3.8-flash-high",
+        "effort": "high"
+      }
+    ],
+    "provider_calls": [
+      {
+        "role": "planner",
+        "status": "returned",
+        "reported_model": "gemini-3.8-flash-high",
+        "wall_seconds": 94.006,
+        "usage": {
+          "model": "gemini-3.8-flash-high",
+          "input_tokens": 14253,
+          "cached_tokens": 0,
+          "output_tokens": 8485,
+          "reasoning_tokens": 8020,
+          "calls": 1
+        },
+        "tools_used": [
+          "finish"
+        ]
+      },
+      {
+        "role": "planner",
+        "status": "returned",
+        "reported_model": "gemini-3.8-flash-high",
+        "wall_seconds": 124.971,
+        "usage": {
+          "model": "gemini-3.8-flash-high",
+          "input_tokens": 14276,
+          "cached_tokens": 0,
+          "output_tokens": 12687,
+          "reasoning_tokens": 12233,
+          "calls": 1
+        },
+        "tools_used": [
+          "finish"
+        ]
+      }
+    ],
+    "source_unchanged": true
+  },
+  "same_seed_generator_audit": {
+    "code_revision": "287669dd4d664e295c7c56f62fa3e2375a8be032",
+    "source_sha256": "8d9afb0120f9a82182f4689109a6c97c96bcc869a555ba77fdece0f98b4cb1bf",
+    "seed": 42,
+    "n_rows": 10000,
+    "legacy_sha256": "5ab6908428e69acc07438b857c36a745b48b93dacd7b8bd68452e799088b4007",
+    "legacy_bytes_unchanged": true,
+    "balanced_sha256": "3e9c3309b0705206b596449f6be668125f86264405e3202555e349605412c5d6",
+    "balanced_replay_equal": true,
+    "source_metrics": {
+      "n": 10260,
+      "tir_persistence": 0.724789,
+      "spacing_median_m": 0.00754,
+      "repeated_depth_fraction": 0.137928,
+      "backward_steps": 0,
+      "valid_fraction": 0.750682,
+      "swir_answer_rate": 0.849,
+      "tir_answer_rate": 0.988834,
+      "repeated_valid_fraction": 0.001979
+    },
+    "balanced_metrics": {
+      "n": 10000,
+      "tir_persistence": 0.730124,
+      "spacing_median_m": 0.00754,
+      "repeated_depth_fraction": 0.222022,
+      "backward_steps": 0,
+      "valid_fraction": 0.7507,
+      "swir_answer_rate": 0.846676,
+      "tir_answer_rate": 0.988411,
+      "repeated_valid_fraction": 0.0
+    },
+    "checks": {
+      "exact_rows": true,
+      "exact_fitted_flag_count": true,
+      "spacing_within_one_percent": true,
+      "flag_drift_within_two_points": true,
+      "swir_blank_within_two_points": true,
+      "tir_blank_within_two_points": true,
+      "source_unchanged": true
+    },
+    "pass": true
+  },
+  "quality": {
+    "generate": {
+      "pass": true,
+      "source_metrics": {
+        "n": 10260,
+        "tir_persistence": 0.724789,
+        "spacing_median_m": 0.00754,
+        "repeated_depth_fraction": 0.137928,
+        "backward_steps": 0,
+        "valid_fraction": 0.750682,
+        "swir_answer_rate": 0.849,
+        "tir_answer_rate": 0.988834,
+        "repeated_valid_fraction": 0.001979
+      },
+      "synthetic_metrics": {
+        "n": 10000,
+        "tir_persistence": 0.730124,
+        "spacing_median_m": 0.00754,
+        "repeated_depth_fraction": 0.222022,
+        "backward_steps": 0,
+        "valid_fraction": 0.7507,
+        "swir_answer_rate": 0.846676,
+        "tir_answer_rate": 0.988411,
+        "repeated_valid_fraction": 0.0
+      },
+      "differences": {
+        "spacing_relative_difference": 0.0,
+        "valid_fraction_difference": 1.8000000000073513e-05,
+        "swir_blank_fraction_difference": 0.0023239999999999927,
+        "tir_blank_fraction_difference": 0.0004229999999999512
+      },
+      "acceptance_checks": {
+        "exact_rows": true,
+        "spacing_similarity": true,
+        "flag_similarity": true,
+        "swir_blank_similarity": true,
+        "swir_source_supported_labels": true,
+        "tir_blank_similarity": true,
+        "tir_source_supported_labels": true,
+        "ordered_finite_nonnegative": true,
+        "profile_required_checks": true,
+        "source_unchanged": true
+      },
+      "profile_report": {
+        "artifact_name": "HD012-scalars:attempt-1",
+        "artifact_sha256": "3e9c3309b0705206b596449f6be668125f86264405e3202555e349605412c5d6",
+        "results": [
+          {
+            "band_position": null,
+            "detail": "10000 rows, header ok",
+            "name": "csv_schema",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "10000 rows",
+            "name": "has_rows",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "0 backward steps",
+            "name": "backward_steps",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "depths never decrease",
+            "name": "depth_non_decreasing",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "all depths finite",
+            "name": "depth_finite",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "all depths use the documented nonnegative convention",
+            "name": "depth_nonnegative",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.7497235532620715,
+            "detail": "0.00754 in [0.003472, 0.008898]",
+            "name": "spacing_median",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.6322350998092092,
+            "detail": "0.222022 in [0.0, 0.35117]",
+            "name": "repeated_depth_fraction",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.4523334333274154,
+            "detail": "0.7507 in [0.602929, 0.929615] (actual count 7507 == fitted target 7507)",
+            "name": "valid_fraction",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.0,
+            "detail": "0.0 in [0.0, 0.157337]",
+            "name": "repeated_depths_masked_out",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "invalid-label rate 0.000000 <= source 0.000000",
+            "name": "invalid_label_rate",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "band vacuous [0.0, 1.0]",
+            "name": "swir_answer_rate",
+            "status": "skip"
+          },
+          {
+            "band_position": 0.7244060783334528,
+            "detail": "0.988411 in [0.957949, 1.0]",
+            "name": "tir_answer_rate",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.0034292143985944655,
+            "detail": "answer-rate drift 0.002324 <= 0.677706",
+            "name": "swir_answer_fidelity",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.010143826242588203,
+            "detail": "answer-rate drift 0.000423 <= 0.041700",
+            "name": "tir_answer_fidelity",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "10 swir groups in vocabulary",
+            "name": "swir_vocabulary",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "18 tir groups in vocabulary",
+            "name": "tir_vocabulary",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "10 swir groups answered by the source",
+            "name": "swir_source_vocabulary",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "10 swir groups answer",
+            "name": "swir_label_richness",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "18 tir groups answered by the source",
+            "name": "tir_source_vocabulary",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "18 tir groups answer",
+            "name": "tir_label_richness",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.026111989253180826,
+            "detail": "TVD 0.018810 <= 0.720345",
+            "name": "swir_fidelity",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.07332638319665918,
+            "detail": "TVD 0.028362 <= 0.386789",
+            "name": "tir_fidelity",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.01819791215437175,
+            "detail": "TIR persistence drift 0.005335 <= 0.293165",
+            "name": "tir_persistence_fidelity",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "10000 rows as requested",
+            "name": "row_count_match",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "start 0.004 as requested",
+            "name": "depth_start_match",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "end 58.65765999999348 within requested extent 75.396461",
+            "name": "depth_end_within_requested",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.0,
+            "detail": "median spacing 0.00754 matches requested step 0.00754 (drift 0.000000 <= 0.000249)",
+            "name": "spacing_step_match",
+            "status": "pass"
+          },
+          {
+            "band_position": 6.52278231427772e-06,
+            "detail": "end 58.65765999999348 matches requested span 58.65766 with 2220 masked repeats",
+            "name": "depth_span_match",
+            "status": "pass"
+          }
+        ],
+        "verdict": "pass"
+      },
+      "data_sha256": "3e9c3309b0705206b596449f6be668125f86264405e3202555e349605412c5d6"
+    },
+    "replay": {
+      "pass": true,
+      "source_metrics": {
+        "n": 10260,
+        "tir_persistence": 0.724789,
+        "spacing_median_m": 0.00754,
+        "repeated_depth_fraction": 0.137928,
+        "backward_steps": 0,
+        "valid_fraction": 0.750682,
+        "swir_answer_rate": 0.849,
+        "tir_answer_rate": 0.988834,
+        "repeated_valid_fraction": 0.001979
+      },
+      "synthetic_metrics": {
+        "n": 10000,
+        "tir_persistence": 0.730124,
+        "spacing_median_m": 0.00754,
+        "repeated_depth_fraction": 0.222022,
+        "backward_steps": 0,
+        "valid_fraction": 0.7507,
+        "swir_answer_rate": 0.846676,
+        "tir_answer_rate": 0.988411,
+        "repeated_valid_fraction": 0.0
+      },
+      "differences": {
+        "spacing_relative_difference": 0.0,
+        "valid_fraction_difference": 1.8000000000073513e-05,
+        "swir_blank_fraction_difference": 0.0023239999999999927,
+        "tir_blank_fraction_difference": 0.0004229999999999512
+      },
+      "acceptance_checks": {
+        "exact_rows": true,
+        "spacing_similarity": true,
+        "flag_similarity": true,
+        "swir_blank_similarity": true,
+        "swir_source_supported_labels": true,
+        "tir_blank_similarity": true,
+        "tir_source_supported_labels": true,
+        "ordered_finite_nonnegative": true,
+        "profile_required_checks": true,
+        "source_unchanged": true
+      },
+      "profile_report": {
+        "artifact_name": "HD012-scalars:attempt-1",
+        "artifact_sha256": "3e9c3309b0705206b596449f6be668125f86264405e3202555e349605412c5d6",
+        "results": [
+          {
+            "band_position": null,
+            "detail": "10000 rows, header ok",
+            "name": "csv_schema",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "10000 rows",
+            "name": "has_rows",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "0 backward steps",
+            "name": "backward_steps",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "depths never decrease",
+            "name": "depth_non_decreasing",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "all depths finite",
+            "name": "depth_finite",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "all depths use the documented nonnegative convention",
+            "name": "depth_nonnegative",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.7497235532620715,
+            "detail": "0.00754 in [0.003472, 0.008898]",
+            "name": "spacing_median",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.6322350998092092,
+            "detail": "0.222022 in [0.0, 0.35117]",
+            "name": "repeated_depth_fraction",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.4523334333274154,
+            "detail": "0.7507 in [0.602929, 0.929615] (actual count 7507 == fitted target 7507)",
+            "name": "valid_fraction",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.0,
+            "detail": "0.0 in [0.0, 0.157337]",
+            "name": "repeated_depths_masked_out",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "invalid-label rate 0.000000 <= source 0.000000",
+            "name": "invalid_label_rate",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "band vacuous [0.0, 1.0]",
+            "name": "swir_answer_rate",
+            "status": "skip"
+          },
+          {
+            "band_position": 0.7244060783334528,
+            "detail": "0.988411 in [0.957949, 1.0]",
+            "name": "tir_answer_rate",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.0034292143985944655,
+            "detail": "answer-rate drift 0.002324 <= 0.677706",
+            "name": "swir_answer_fidelity",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.010143826242588203,
+            "detail": "answer-rate drift 0.000423 <= 0.041700",
+            "name": "tir_answer_fidelity",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "10 swir groups in vocabulary",
+            "name": "swir_vocabulary",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "18 tir groups in vocabulary",
+            "name": "tir_vocabulary",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "10 swir groups answered by the source",
+            "name": "swir_source_vocabulary",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "10 swir groups answer",
+            "name": "swir_label_richness",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "18 tir groups answered by the source",
+            "name": "tir_source_vocabulary",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "18 tir groups answer",
+            "name": "tir_label_richness",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.026111989253180826,
+            "detail": "TVD 0.018810 <= 0.720345",
+            "name": "swir_fidelity",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.07332638319665918,
+            "detail": "TVD 0.028362 <= 0.386789",
+            "name": "tir_fidelity",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.01819791215437175,
+            "detail": "TIR persistence drift 0.005335 <= 0.293165",
+            "name": "tir_persistence_fidelity",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "10000 rows as requested",
+            "name": "row_count_match",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "start 0.004 as requested",
+            "name": "depth_start_match",
+            "status": "pass"
+          },
+          {
+            "band_position": null,
+            "detail": "end 58.65765999999348 within requested extent 75.396461",
+            "name": "depth_end_within_requested",
+            "status": "pass"
+          },
+          {
+            "band_position": 0.0,
+            "detail": "median spacing 0.00754 matches requested step 0.00754 (drift 0.000000 <= 0.000249)",
+            "name": "spacing_step_match",
+            "status": "pass"
+          },
+          {
+            "band_position": 6.52278231427772e-06,
+            "detail": "end 58.65765999999348 matches requested span 58.65766 with 2220 masked repeats",
+            "name": "depth_span_match",
+            "status": "pass"
+          }
+        ],
+        "verdict": "pass"
+      },
+      "data_sha256": "3e9c3309b0705206b596449f6be668125f86264405e3202555e349605412c5d6"
+    }
+  },
+  "retained_failed_trials": [
+    {
+      "revision": "5d4f3472b751cb72a8da7cbc06ce451242b5453c",
+      "status": "failed",
+      "error": "RuntimeError: Original human request still refused",
+      "plan": null,
+      "stages": {
+        "prepare": {
+          "exit_code": 1,
+          "wall_seconds": 183.616
+        }
+      },
+      "provider_clients": [
+        {
+          "role": "planner",
+          "adapter": "agy_cli",
+          "model": "gemini-3.8-flash-high",
+          "effort": "high"
+        }
+      ],
+      "provider_calls": [],
+      "source_unchanged": true,
+      "output_released": false
+    },
+    {
+      "revision": "287669dd4d664e295c7c56f62fa3e2375a8be032",
+      "status": "failed",
+      "error": "RuntimeError: generate failed profile or independent lesson-quality contract",
+      "plan": {
+        "n_rows": 10000,
+        "seed": 42,
+        "strategy": "fitted_markov_joint"
+      },
+      "stages": {
+        "prepare": {
+          "exit_code": 0,
+          "wall_seconds": 142.792
+        },
+        "generate": {
+          "exit_code": 2,
+          "wall_seconds": 0.261
+        }
+      },
+      "provider_clients": [
+        {
+          "role": "planner",
+          "adapter": "agy_cli",
+          "model": "gemini-3.8-flash-high",
+          "effort": "high"
+        }
+      ],
+      "provider_calls": [
+        {
+          "role": "planner",
+          "status": "returned",
+          "reported_model": "gemini-3.8-flash-high",
+          "wall_seconds": 142.73,
+          "usage": {
+            "model": "gemini-3.8-flash-high",
+            "input_tokens": 14180,
+            "cached_tokens": 0,
+            "output_tokens": 15338,
+            "reasoning_tokens": 14953,
+            "calls": 1
+          },
+          "tools_used": [
+            "finish"
+          ]
+        }
+      ],
+      "source_unchanged": true,
+      "output_released": false
+    }
+  ],
+  "independent_review": {
+    "initial": {
+      "report": "product-ready-2026-11-04-review-initial.txt",
+      "session_id": "64eeda56-8aea-4ecb-ac5e-0e274599784f",
+      "requested_model": "claude-sonnet-5-5",
+      "effort": "high",
+      "is_error": false,
+      "usage": {
+        "input_tokens": 42,
+        "cache_creation_input_tokens": 98823,
+        "cache_read_input_tokens": 1489181,
+        "output_tokens": 14633,
+        "output_tokens_details": {
+          "thinking_tokens": 6884
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 98823,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "global",
+        "iterations": [
+          {
+            "input_tokens": 2,
+            "output_tokens": 2767,
+            "cache_read_input_tokens": 97796,
+            "cache_creation_input_tokens": 1027,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 1027
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard",
+        "fallback_credit": null
+      },
+      "model_usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 560,
+          "outputTokens": 16204,
+          "thinkingTokens": 7160,
+          "cacheReadInputTokens": 1716816,
+          "cacheCreationInputTokens": 123016,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 123016,
+          "webSearchRequests": 0,
+          "costUSD": 0.8269055999999999,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      }
+    },
+    "remaining_scope": {
+      "report": "product-ready-2026-11-04-review-remaining-scope.txt",
+      "session_id": "64eeda56-8aea-4ecb-ac5e-0e274599784f",
+      "requested_model": "claude-sonnet-5-5",
+      "effort": "high",
+      "is_error": false,
+      "usage": {
+        "input_tokens": 34,
+        "cache_creation_input_tokens": 67175,
+        "cache_read_input_tokens": 2093778,
+        "output_tokens": 27977,
+        "output_tokens_details": {
+          "thinking_tokens": 9970
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 67175,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "global",
+        "iterations": [
+          {
+            "input_tokens": 2,
+            "output_tokens": 4715,
+            "cache_read_input_tokens": 163784,
+            "cache_creation_input_tokens": 2214,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 2214
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard",
+        "fallback_credit": null
+      },
+      "model_usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 594,
+          "outputTokens": 44181,
+          "thinkingTokens": 17130,
+          "cacheReadInputTokens": 3810594,
+          "cacheCreationInputTokens": 190191,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 190191,
+          "webSearchRequests": 0,
+          "costUSD": 1.5848213999999998,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      }
+    },
+    "count_rework": {
+      "report": "product-ready-2026-11-04-review-count-rework.txt",
+      "session_id": "64eeda56-8aea-4ecb-ac5e-0e274599784f",
+      "requested_model": "claude-sonnet-5-5",
+      "effort": "high",
+      "is_error": false,
+      "usage": {
+        "input_tokens": 38,
+        "cache_creation_input_tokens": 55086,
+        "cache_read_input_tokens": 3528048,
+        "output_tokens": 24974,
+        "output_tokens_details": {
+          "thinking_tokens": 9095
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 55086,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "global",
+        "iterations": [
+          {
+            "input_tokens": 2,
+            "output_tokens": 4847,
+            "cache_read_input_tokens": 219143,
+            "cache_creation_input_tokens": 1941,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 1941
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard",
+        "fallback_credit": null
+      },
+      "model_usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 632,
+          "outputTokens": 69155,
+          "thinkingTokens": 26225,
+          "cacheReadInputTokens": 7338642,
+          "cacheCreationInputTokens": 245277,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 245277,
+          "webSearchRequests": 0,
+          "costUSD": 2.4077862,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      }
+    },
+    "final": {
+      "report": "product-ready-2026-11-04-review-final.txt",
+      "session_id": "64eeda56-8aea-4ecb-ac5e-0e274599784f",
+      "requested_model": "claude-sonnet-5-5",
+      "effort": "high",
+      "is_error": false,
+      "usage": {
+        "input_tokens": 20,
+        "cache_creation_input_tokens": 21516,
+        "cache_read_input_tokens": 2104404,
+        "output_tokens": 9832,
+        "output_tokens_details": {
+          "thinking_tokens": 2156
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 21516,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "global",
+        "iterations": [
+          {
+            "input_tokens": 2,
+            "output_tokens": 2460,
+            "cache_read_input_tokens": 241661,
+            "cache_creation_input_tokens": 939,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 939
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard",
+        "fallback_credit": null
+      },
+      "model_usage": {
+        "claude-sonnet-5-5": {
+          "inputTokens": 652,
+          "outputTokens": 78987,
+          "thinkingTokens": 28381,
+          "cacheReadInputTokens": 9443046,
+          "cacheCreationInputTokens": 266793,
+          "cacheCreationEphemeral5mInputTokens": 0,
+          "cacheCreationEphemeral1hInputTokens": 266793,
+          "webSearchRequests": 0,
+          "costUSD": 2.8026506,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 128000,
+          "canonicalModel": "claude-sonnet-5-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      }
+    }
+  },
+  "root_checks": {
+    "full_suite": "810 passed, 0 skipped with local source cache",
+    "source_free_review_suite": "796 passed, 14 absent-source skips",
+    "gate_exit": 0,
+    "enforced_pass": 43,
+    "planned_not_executed": 4,
+    "ruff": "pass",
+    "diff_check": "pass"
+  },
+  "development_workers": {
+    "implementation": {
+      "tool": "agy",
+      "session": "c1b7691d-80fd-4751-81c7-69496d9852e9",
+      "cli_reported_model": "gemini-3.8-flash-high",
+      "effort": "high",
+      "role": "balanced generator, strategy resolution, count evidence, tool-free guidance, focused tests"
+    },
+    "independent_review": {
+      "tool": "claude",
+      "session": "64eeda56-8aea-4ecb-ac5e-0e274599784f",
+      "reported_model": "claude-sonnet-5-5",
+      "effort": "high",
+      "role": "independent code review, negative probes and source-free checks"
+    },
+    "codex": "Coordination, design bounds, code audit, additional boundary and identity checks, request matching guidance, real-source/live tests and evidence."
+  },
+  "datacore": {
+    "project": "ruloom",
+    "ledger": "ruloom-human-request-readiness-20261104",
+    "external_sessions": true,
+    "runtime_worker_lease_claimed": false,
+    "runtime_owned_review_verdict_claimed": false,
+    "limitation": "Front-door record_review_verdict is not available to this coordinator; external reviewer results are recorded as linked evidence notes, not invented Runtime approvals."
+  }
+}

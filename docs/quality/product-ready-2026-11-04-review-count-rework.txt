@@ -1,0 +1,64 @@
+# Final re-review of frozen 287669dd4d664e295c7c56f62fa3e2375a8be032
+
+**Verdict: REQUEST_CHANGES.** The source-free full suite fails at this exact revision (exit 1). Each of the five items from the prior phase is fixed, as probed below. The block is one failing existing test, plus a contract change to the stored `plan.json`.
+
+- **Revision:** the source-free clone `/private/tmp/ruloom-ready-review-287669d` and the canonical repo are both at 287669d. Canonical status shows only the untracked `uv.lock`.
+- **Protected files:** `git diff --name-only 5d4f347 HEAD` touches no thresholds, golden, data, fixture or lock file.
+
+## Blocking finding
+
+**F1, Medium–High: the full suite is red, and the cause is in this delta.**
+- **Failing test:** `tests/engine/test_plan_replay.py:182` (`test_fixed_plan_replays_identical_data_without_model_calls`).
+- **What changed:** that test file is not in the delta and passed at 5d4f347 (787 passed, 14 skipped).
+- **Cause:** the new fresh-plan code in `profiles/hylogger/capabilities.py` (the `proposed["strategy"] = spec_strategy` branch) now writes the resolved strategy into the stored plan. The test's model proposes `{"seed": 8, "n_rows": 8}` and the stored plan is `{"seed": 8, "n_rows": 8, "strategy": "fitted_markov_joint"}`.
+- **Effect:**
+  - The data bytes are unchanged; probe q1 shows identical bytes for the default path.
+  - The release `plan.json` content for default-strategy runs gains a key when the proposal or saved plan omitted `strategy`. A real provider cannot omit it under the strict wire schema. Saved plan files and test doubles can.
+  - The gate did not catch this: `force_pass.py` exits 0 and does not run that test. The "focused 93 passed" figure missed it.
+- **Minimal rework:** I would not weaken the check. Make a deliberate decision and record it: update the one expectation to include the resolved `fitted_markov_joint` and keep the byte-identical replay assertions, or stop writing the default into the stored plan. Then rerun the whole suite. This is root's call; I made no edit.
+
+## Re-probes of the earlier findings (all executed)
+
+| Item | Result |
+|---|---|
+| Replay omission (spec balanced, plan without `strategy`), 0 model calls | Stored plan has `fitted_markov_balanced`. Evidence report says `Strategy: fitted_markov_balanced`. 6 of 8 rows valid. The check reads "0.75 in [0.5, 1.0] (actual count 6 == fitted target 6)". Released. |
+| Plan strategy contradicting the spec | Refused before generation in both directions. |
+| Altered included count despite the band passing | In the CLI run with a mutated generator that flips one valid row, `valid_fraction` fails: "0.625 in [0.5, 1.0], but actual count 5 != fitted target 6". No release. The unit probe shows the legacy check passes the same band (0.69 in [0.5, 1.0]) while the new one fails. |
+| Fresh and repair paths with a model that omits `strategy` | Both plans reach the generator as balanced. Attempt 1 fails on `valid_fraction` alone, repair passes, and the report names balanced. |
+| Malformed target values | Rejected as FAIL, no crash: −1, True, False, 70.0, "70", nan. Wrong integer targets 0, 69, 71 and 10⁹ fail. |
+| Public generator with a malformed fraction | Refused for True, False, "0.7", nan, inf, −0.1, 1.5 and a list. None is refused as missing. 0, 1, 0.0, 1.0 and 0.5 produce 0, all, 0, all and half of the rows. |
+| Tiny or odd run means | 1e-300, 5e-324, 0.5, inf, nan, negative, bool, string, None, 0 and 1e308 all give the exact count with no crash. |
+| `expected_valid_count=None`, 180 generator combinations | `run_checks` with `expected_valid_count=None` returns the same report as at 5d4f347. Generator bytes for joint (default and explicit) and balanced match 5d4f347 in all 180 combinations; 24 of those combinations raise an error in both revisions. |
+| AGY missing identity | Refused for no init, no model, None, "" and "unknown" ("missing AGY reported model identity…"). A wrong or differently-cased model is still refused. The exact alias is accepted. |
+| AGY payload after the no-tools guidance | The sent prompt equals `TOOL_FREE_INSTRUCTION + prompt` exactly. This held for 8 payloads, including an empty one, a 50,000-character one and one beginning `--tool`. The recorded argv shows the instruction. |
+
+## Commands and exits (all with the allowed `.venv` Python; outputs redirected to files, so no pipe hid an exit)
+
+| Command | Exit | Result |
+|---|---|---|
+| `pytest -p no:cacheprovider -q -rs` (full) | **1** | 1 failed, 794 passed, 14 skipped |
+| `pytest tests/engine/test_plan_replay.py` (alone, twice) | **1** | 1 failed, 4 passed (deterministic) |
+| `scripts/force_pass.py` | 0 | 47 PASS lines, no FAIL |
+| `ruff check --no-cache .` | 0 | All checks passed (ruff 0.17.3) |
+| `ruff format --no-cache --check .` | 0 | 169 files formatted |
+| `git diff --check 5d4f347 HEAD` | 0 | clean |
+| Probes q1, q2, q3, q5, q6 | 0 | as above |
+| Probe q4 (tiny-row comparison) | not captured | The exit printed was `cut`'s. The output shows identical behaviour in both revisions. |
+
+## Gate results
+- **Enforced and executed (PASS):**
+  - FP-DOC-1, FP-DOC-2, FP-DOC-4 and FP-CODE-2 through FP-CODE-10, which is 12 FP rules.
+  - 31 enforced Q checks, including Q-MODEL-AGY (30 tests), Q-REQUEST-DRAFT (27), Q-MODEL-CALL-POLICY (26), Q-ENGINE-EVIDENCE and Q-ENGINE-SPEC.
+- **Planned stubs, printed "PASS — PLANNED — stub, not executed", not evidence of anything:** Q-GOV-NO-PEER-DISPATCH, Q-GOV-REVIEW-ISOLATION, Q-GOV-CURRENT-LEASE and Q-GOV-TOOL-CONTAINMENT. That makes 47 PASS lines = 12 + 31 + 4.
+- **No claim of full runtime governance or true tool containment.** The no-tools prompt is behavioural guidance only, and AGY tool audit is still a post-call check, as the docs now say.
+
+## Remaining low advisories (non-blocking)
+- `profiles/hylogger/generation/repair.py:132-153`: the old compatibility `repair()` still calls legacy `run_checks`. It does not pass `expected_valid_count` or resolve a missing strategy. Only tests import it; the CLI path uses `capabilities.repair`. `scripts/evaluate.py:312` is the same: it uses legacy `run_checks`, so exact count is not measured there.
+- `request.json` `prompt_sha256` hashes the prompt without the AGY instruction. The full sent text is in the recorded argv.
+- `docs/product-workflow.md` says a Claude Sonnet session "independently reviewed the frozen changes". At this revision that review is a REQUEST_CHANGES, so the wording could read as a pass.
+- A 2-row run with the toy source fails with "capability failed: list index out of range" in both strategies, at both revisions. It is not caused by this delta, and the message is unhelpful.
+- The exact count follows the profile's rounded `valid_fraction`, as documented.
+- Phase-2 advisories L1–L4 (GPT effort inconsistency, model text in error messages, unbounded reads, untested `provider_smoke.py`) are unchanged, since the delta does not touch them.
+- Not covered: the 14 real-source tests skipped in this clone, live-provider behaviour and package acceptance. Those belong to root's separate checks.
+
+Once F1 is resolved and the full suite exits 0, I see no other blocker in this delta. That outcome needs another frozen revision to re-verify. I made no edits, commits or installs, and I called no provider or MCP service.

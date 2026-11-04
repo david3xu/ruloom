@@ -1,0 +1,71 @@
+**Verdict: REQUEST_CHANGES.** This is an incomplete review. I could run no tests or probes, and I found one substantive defect by reading the code.
+
+- **Revision:** HEAD `5d4f3472b751cb72a8da7cbc06ce451242b5453c` against main `22da658`. Both the canonical repo and `/private/tmp/ruloom-ready-review-5d4f347` report that revision (`git rev-parse`, exit 0).
+- **What I could not run:** Bash was in don't-ask mode and refused `cd <clone> && python -m pytest …` and `/Users/291928k/workspace/ruloom/.venv/bin/python --version`. Only `git` commands ran. I did not try to get around the denial.
+- **Not executed:** the full suite, the gate (`scripts/force_pass.py`), the FP-* rules and the Q checkers.
+- **Not executed:** all positive, negative and mutation probes. Everything below was found by reading the diff and code. Nothing is marked PASS.
+
+## Finding 1 — MEDIUM–HIGH: the evidence report can name a strategy that did not run
+
+- **Where:** `profiles/hylogger/generation/generate.py:379-381` and `profiles/hylogger/capabilities.py:354-357` (the `generate` step).
+- **What happens:**
+  - `generate()` defaults a missing `plan["strategy"]` to `fitted_markov_joint`.
+  - The `generate` step passes only `ctx.plan()`. Nothing in `engine/` copies the spec's strategy into the plan.
+  - `plan.validate_plan` (`profiles/hylogger/generation/plan.py:92,105-116`) accepts a plan with no `strategy`, and its docstring says that plan "runs under the run spec's own strategy".
+  - `engine/core/report.py:109` prints `plan.get('strategy', spec.get('strategy'))`.
+- **Failure scenario:**
+  - The spec says `strategy: fitted_markov_balanced`, and `ruloom run --plan` replays a saved plan `{"seed": …, "n_rows": …}` with no strategy key. A plan saved before this feature, or a hand-edited one, would look like this.
+  - The replay path in `capabilities.plan` only validates the plan, so it passes.
+  - The generator runs `fitted_markov_joint`, and `evidence-report.md` says "Strategy: fitted_markov_balanced".
+  - The inclusion count is then approximate while the report implies it is exact.
+- **Why it matters:** the "invocation of the selected strategy" and "evidence truth" requirements are not met on this path. Model-planned runs are less exposed because the wire schema requires `strategy` when a spec strategy exists.
+- **Minimal rework (either one):**
+  - In the hylogger `plan` step, set `plan["strategy"] = spec strategy` when the plan omits it, so the stored plan, the generator and the report agree. Or make `generate` fail when the plan has no strategy and the spec's strategy is not the default.
+  - Also fix the docstring at `plan.py:46-47,92`.
+- **Test to add:** a spec with `strategy=fitted_markov_balanced` and a plan without `strategy`. Assert the output has the balanced exact valid count and the report names the strategy that ran.
+
+## Finding 2 — MEDIUM (test gap): no test goes through the engine for the new strategy
+
+- `grep fitted_markov_balanced tests/` finds 7 hits, all in `tests/profiles/hylogger/test_generate.py`, which calls `generate`/`generate_samples` directly.
+- No test runs the spec or CLI → plan → `generate` → report path with the new strategy. That is how Finding 1 got through.
+- No test checks that `ruloom prepare` or `--spec` accepts `fitted_markov_balanced` end to end.
+
+## Finding 3 — LOW–MEDIUM: nothing measures the exact-count claim
+
+- `profile.json:492` says balanced "preserves the rounded aggregate valid fraction by exact integer run allocation".
+- No check measures the exact count. The `valid_fraction` check still uses the fixed calibrated band.
+- The count is exact by construction and tested only in unit tests.
+- `docs/quality/request-capabilities-2026-11-04.md:83-86` leaves the source-centred flag-fidelity check as an open follow-up. The commit adds no such check, so evidence cannot show the claim held for a given run.
+
+## Finding 4 — LOW (inspected, not executed)
+
+- **`generate.py:264` vs `:150-160` (the `_balanced_flags` validation).** `generate_samples` calls `float(valid_fraction)` before `_balanced_flags` validates it. A bool therefore becomes 1.0 and passes the bool rejection that the unit test exercises directly. A `None` or non-numeric value raises a bare `TypeError`/`ValueError` instead of the named message. A real profile never produces these values (`statistics.py:204` rounds a real float).
+- **`generate.py:~190-205`.** A tiny positive `mean_valid` or `mean_invalid` makes `target/mean` overflow to `inf`, and `int(round(inf))` raises `OverflowError`. Real run-length means are at least 1, so I judge this unreachable. I did not run a probe.
+
+## What I inspected and found consistent (inspected only)
+
+- **Joint path unchanged:** the `fitted_markov_joint` branch (`generate.py:268-285`) is the old code verbatim. The default and the missing-strategy behaviour are preserved. The pinned-bytes test `test_legacy_exact_bytes_pinned` exists, but I did not run it.
+- **Balanced allocation logic:**
+  - The target is `int(round(n*vf))`, which is half-to-even and bounded by `n`.
+  - `0` and `n` return early as all-invalid and all-valid.
+  - `k` is clamped to `[1, min(target, n_invalid)]`.
+  - `_positive_partition` uses `rng.sample(range(1,total), k-1)`, which is O(k) with a final sum and positivity check.
+  - Allocation is bounded by `n_rows`, itself capped at `max_rows` 200000.
+  - It does not copy source rows and does not search over seeds.
+  - Ordering and masked repeats reuse the existing depth loop.
+- **Unknown or empty strategies:** these are refused in `generate_samples` and `generate`. `request.py:94` constrains the strategy with an enum from the manifest.
+- **Target rows:** `target_rows` is validated in `spec.py:307-316` and enforced in `runner.py:1044-1050` as a type-exact integer match against the plan.
+- **Profile brief:** `profile.json:485` says a blank label is "not proof that a measurement curve is absent". I saw no invented source-similarity checks. A count of the quoted check names in the hylogger profile/validation/calibration files returned 51 occurrences, but I did not map each name to a registered check.
+- **Old failed seed42 evidence:** retained in `docs/quality/request-capabilities-2026-11-04.md:63-86`, which keeps the 0.026118 inclusion-fraction miss and says no seeds were retried.
+
+## Not reviewed
+
+I did not reach `model_policy.py`, `models/agy_cli.py`, `selection.py`, `local_transport.py`, `request_context.py`, `provider_smoke.py`, the manifest changes, or the new tests for those. The AGY post-call audit is documented as not confinement, but I did not re-verify that wording.
+
+## Rework for root
+
+1. Fix Finding 1 and add the engine-level test from Finding 2.
+2. Re-run the full gate in the frozen clone with `/Users/291928k/workspace/ruloom/.venv/bin/python`. I could not.
+3. Either re-invoke this review with Bash allowed for `.venv/bin/python -m pytest` and temp-file probes, or have root run them and record the exits. Until then, treat the lifecycle, the AGY changes and the FP/Q results as unreviewed.
+
+I made no edits and did not touch `uv.lock`. I called no other AI, provider, MCP service or network service.
