@@ -1,1 +1,37 @@
-{"audit_ref": null, "code": ["engine/core/model_policy.py", "engine/cli/request.py", "engine/cli/__init__.py", "engine/core/runner.py", "engine/core/spec.py", "engine/core/report.py", "models/local_transport.py", "models/glimmer.py"], "docs": ["docs/credit-free-product.md", "docs/engine/core/README.md"], "id": "F-ENGINE-CREDIT-FREE", "owner": "Codex", "proof": "Automated synthetic fixtures only. Real local planning, repair and independent cross-provider comparison remain owner-deferred. Runtime receipts distinguish requested and reported identities and saved-plan replay; development authorship remains in Git and Datacore.", "required_rules": ["Q-MODEL-CALL-POLICY", "Q-MODEL-LOCAL-TRANSPORT", "Q-REQUEST-DRAFT", "Q-ENGINE-EVIDENCE"], "status": "implemented", "tests": ["tests/engine/test_model_policy.py", "tests/engine/test_request.py", "tests/test_local_transport.py", "tests/engine/test_evidence_report.py"], "title": "Credit-free call policy and human-reviewed request drafts"}
+{
+  "audit_ref": null,
+  "code": [
+    "engine/core/model_policy.py",
+    "engine/cli/request.py",
+    "engine/cli/__init__.py",
+    "engine/core/runner.py",
+    "engine/core/spec.py",
+    "engine/core/report.py",
+    "models/local_transport.py",
+    "models/glimmer.py",
+    "engine/cli/request_context.py",
+    "engine/core/manifest.py"
+  ],
+  "docs": [
+    "docs/credit-free-product.md",
+    "docs/engine/core/README.md",
+    "docs/product-workflow.md"
+  ],
+  "id": "F-ENGINE-CREDIT-FREE",
+  "owner": "Codex",
+  "proof": "Automated synthetic fixtures only. Real local planning, repair and independent cross-provider comparison remain owner-deferred. Runtime receipts distinguish requested and reported identities and saved-plan replay; development authorship remains in Git and Datacore.",
+  "required_rules": [
+    "Q-MODEL-CALL-POLICY",
+    "Q-MODEL-LOCAL-TRANSPORT",
+    "Q-REQUEST-DRAFT",
+    "Q-ENGINE-EVIDENCE"
+  ],
+  "status": "implemented",
+  "tests": [
+    "tests/engine/test_model_policy.py",
+    "tests/engine/test_request.py",
+    "tests/test_local_transport.py",
+    "tests/engine/test_evidence_report.py"
+  ],
+  "title": "Credit-free call policy and human-reviewed request drafts"
+}

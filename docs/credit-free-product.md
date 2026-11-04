@@ -19,6 +19,10 @@ do not establish model quality, scientific validity or production isolation.
    It creates a draft for human review, never a dataset or an acceptance.
    Unsupported requirements refuse preparation; supported interpretations still
    need human review. An exact row target is enforced on every stored plan.
+   Request interpretation now receives strictly validated profile-owned
+   capability text, applicable scalar checks and actual release members.
+   The draft receipt binds that context and its digest, the manifest digest
+   and prompt digest. These are declarations, not measured results.
 4. The evidence report reads persisted records to show the request, plan origin,
    actual model invocations, check failures and optional-review gaps. It must
    not label a replay as fresh inference or a planned row count as measured.
@@ -56,3 +60,7 @@ Do not treat saved-plan replay or fake-model fixtures as model performance.
 No such experiment has been run for this extension.
 
 Automated preparation evidence: [verification receipt](quality/credit-free-preparation.md).
+
+The current [request-to-data workflow](product-workflow.md) records the
+bounded product scope, runtime versus development roles, and deferred
+comparison design. The historical receipt above remains tied to its date.
