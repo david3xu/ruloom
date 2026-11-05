@@ -1681,10 +1681,10 @@ def test_unsupported_message_fields_named_without_values() -> None:
         )
     )
     assert err.reason_code == "unsupported_message_fields"
+    # A null audio field is an admitted empty; populated annotations are not.
     assert err.diagnostics["unsupported_message_fields"] == [
         "[unrecognized]",
         "annotations",
-        "audio",
     ]
     _assert_no_canary(err)
 
@@ -1746,3 +1746,49 @@ def test_success_path_unchanged_by_diagnostics() -> None:
         completion = client.complete("prompt", TEST_SCHEMA)
     assert completion.data == {"seed": 42, "n_rows": 100}
     assert completion.usage.model == "muse-spark-1.3"
+
+
+def test_empty_runtime_message_fields_and_reasoning_are_admitted_and_discarded() -> (
+    None
+):
+    """Managed Glimmer shape seen on 5 Nov 2026: null annotations/audio plus reasoning."""
+    body = _make_azure_response(
+        extra_msg_fields={
+            "annotations": None,
+            "audio": None,
+            "reasoning": "REASONING-CANARY-c41",
+        }
+    )
+    client = AzureFoundryModel(
+        base_url=VALID_URL, subscription_id=VALID_SUB, token_provider=lambda s: "tok"
+    )
+    with patch.object(
+        urllib.request.OpenerDirector, "open", return_value=MockHTTPResponse(body)
+    ):
+        completion = client.complete("prompt", TEST_SCHEMA)
+    assert completion.data == {"seed": 42, "n_rows": 100}
+    assert "REASONING-CANARY-c41" not in json.dumps(completion.meta, default=str)
+    body_empty_list = _make_azure_response(extra_msg_fields={"annotations": []})
+    with patch.object(
+        urllib.request.OpenerDirector,
+        "open",
+        return_value=MockHTTPResponse(body_empty_list),
+    ):
+        assert client.complete("prompt", TEST_SCHEMA).data["seed"] == 42
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"audio": {"data": "x"}},
+        {"annotations": [{"type": "url_citation"}]},
+        {"audio": ""},
+        {"annotations": {}},
+        {"unknown_field": None},
+    ],
+)
+def test_populated_or_unknown_message_fields_still_refused(
+    fields: dict[str, Any],
+) -> None:
+    err = _refusal_from(_make_azure_response(extra_msg_fields=fields))
+    assert err.reason_code == "unsupported_message_fields"

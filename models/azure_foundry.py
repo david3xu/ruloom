@@ -142,8 +142,31 @@ REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}\Z")
 
 #: Allowed message keys returned by backend choices.
 SUPPORTED_MESSAGE_KEYS = frozenset(
-    {"role", "content", "reasoning_content", "refusal", "tool_calls", "function_call"}
+    {
+        "role",
+        "content",
+        "reasoning_content",
+        "reasoning",
+        "refusal",
+        "tool_calls",
+        "function_call",
+    }
 )
+
+#: Message fields some OpenAI-compatible runtimes (such as the managed Glimmer
+#: deployment observed on 5 November 2026) always include. They are admitted only
+#: as explicit empties (null or []); any populated value is still refused.
+EMPTY_ONLY_MESSAGE_KEYS = frozenset({"annotations", "audio"})
+
+
+def _unexpected_message_fields(message: Mapping[str, Any]) -> set[str]:
+    """Message keys outside the contract; empty-only keys count only when populated."""
+    return {
+        key
+        for key in message.keys()
+        if key not in SUPPORTED_MESSAGE_KEYS
+        and not (key in EMPTY_ONLY_MESSAGE_KEYS and message[key] in (None, []))
+    }
 
 
 def _validate_bearer_token(token: Any) -> str:
@@ -426,7 +449,7 @@ def _response_diagnostics(
             diag["finish_reason"] = first.get("finish_reason")
             message = first.get("message")
             if isinstance(message, Mapping):
-                extra = set(message.keys()) - SUPPORTED_MESSAGE_KEYS
+                extra = _unexpected_message_fields(message)
                 if extra:
                     diag["unsupported_message_fields"] = sorted(map(str, extra))
                 content = message.get("content")
@@ -673,7 +696,7 @@ class AzureFoundryModel(StructuredModel):
                 "Azure Foundry choice message must be an object", "message_not_object"
             ) from None
 
-        if set(message.keys()) - SUPPORTED_MESSAGE_KEYS:
+        if _unexpected_message_fields(message):
             raise _refuse(
                 "Azure Foundry message contains unsupported fields",
                 "unsupported_message_fields",

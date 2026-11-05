@@ -2053,6 +2053,8 @@ def research_case(
         f"User purpose: {purpose}\n"
         f"Installed case: {case_id} (version {case_version})\n"
         f"Case title: {case_def.get('title')}\n"
+        f"Case purpose: {case_def.get('purpose_description')}\n"
+        f"Case output columns: {contract.get('output_columns')}\n"
         f"Admitted primary evidence IDs: {admitted_ids}\n"
         f"Admitted passages:\n"
     )
@@ -2069,7 +2071,15 @@ def research_case(
         "\nSelect and explain relevant admitted evidence. "
         "Do NOT invent citations or references. Do NOT approve data or alter thresholds. "
         "Any requests for geological predictions, core photographs, reflectance curves, "
-        "privacy guarantees, or live web search must be reported in unsupported_requirements."
+        "privacy guarantees, or live web search must be reported in unsupported_requirements. "
+        "The admitted passages show that the teaching activity is real practice; they "
+        "are not the data source. Depth spacing, inclusion flags, blank-label patterns "
+        "and the label vocabulary are fitted by deterministic code from the pinned "
+        "source and checked by the case contract, so a request for those features is "
+        "within this case even though the passages contain no values. List in "
+        "unsupported_requirements only requests outside the case contract and output "
+        "columns above, such as new columns, identifiers, coordinates, images, spectra "
+        "or curves, custom tolerances, or the domains named above."
         + prohibited_prose_contract(("research_summary", "limitations"))
     )
 

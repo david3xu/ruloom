@@ -160,6 +160,12 @@ by Azure Foundry already include reasoning tokens; the runner charges
 reasoning tokens. The adapter discards reasoning content blobs, bounds and sanitizes
 request IDs, and redacts raw HTTP error bodies and bearer tokens from receipts.
 
+Message fields outside the response contract are refused. The exceptions are
+`reasoning` and `reasoning_content`, which are discarded unread, and `annotations` and
+`audio`, which are admitted only when they are null or an empty list. The managed
+Glimmer runtime returned that shape on 5 November 2026, and the original allowlist
+refused an otherwise valid answer. Populated annotations or audio are still refused.
+
 A refused Azure response raises `ModelError` with a fixed message plus two
 log-safe fields defined in `models/base.py`: `reason_code`, drawn from the closed
 `MODEL_ERROR_REASON_CODES` vocabulary (for example `finish_reason_not_stop`,
