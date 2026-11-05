@@ -2,6 +2,11 @@
 
 **Synthetic data, woven from reality. Backed by evidence.**
 
+[The idea and design](docs/idea-and-design.md) — why Ruloom exists, one example and the role of Muse.
+
+**Final user test: pending.** [Read the shared test prompt and evidence status](docs/final-test.md).
+Results will be added after the full workflow and comparison have been tested.
+
 A supported source profile becomes reproducible synthetic data,
 calibrated against real data, proven by executed checks, and delivered
 with its evidence under the terms recorded in each release.
