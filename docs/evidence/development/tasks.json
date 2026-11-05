@@ -1,0 +1,2638 @@
+[
+ {
+  "task_id": "rl-loop3-gen-impl",
+  "created_at": "2026-11-01T07:10:43.947Z",
+  "updated_at": "2026-11-01T07:14:09.845Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "RULOOM LOOP 3 (step 6 generator). Repo ~/workspace/ruloom (github.com/david3xu/ruloom). Branch: from main 5a6c69f create loop3/generator; commits branch only; no push/merge; no co-author trailers. Fresh profiles/hylogge\u2026",
+  "related_commits": [
+   "5a6c69f"
+  ]
+ },
+ {
+  "task_id": "rl-loop3-gen-review1",
+  "created_at": "2026-11-01T07:19:46.004Z",
+  "updated_at": "2026-11-01T07:21:29.021Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review Ruloom Loop 3 branch loop3/generator commit 06eab18 (history was rewritten to remove committed HyLogger data after implementation; tree content is identical to the workers a173fc8, main is a0bc4a7 and now git-ign\u2026",
+  "related_commits": [
+   "06eab18",
+   "a0bc4a7",
+   "b8a6595"
+  ]
+ },
+ {
+  "task_id": "rl-loop4-plan-impl",
+  "created_at": "2026-11-01T07:22:37.401Z",
+  "updated_at": "2026-11-01T07:27:19.707Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "RULOOM LOOP 4 (step 8 plan + model adapter). Repo ~/workspace/ruloom, branch loop4/plan from main 6c65cf6; commits branch only; no push/merge; no co-author trailers. Implement models/base.py (Usage, Completion, Structur\u2026",
+  "related_commits": [
+   "6c65cf6",
+   "87463d0"
+  ]
+ },
+ {
+  "task_id": "rl-loop4-plan-review1",
+  "created_at": "2026-11-01T07:28:15.623Z",
+  "updated_at": "2026-11-01T07:31:00.690Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review Ruloom Loop 4 branch loop4/plan commit 87463d0 (main must stay 6c65cf6, nothing pushed, no data tracked): models/base.py + models/meta_cli.py MuseCLIModel runs muse exec --json --effort max --model muse-spark-1.3\u2026",
+  "related_commits": [
+   "87463d0",
+   "6c65cf6"
+  ]
+ },
+ {
+  "task_id": "rl-loop5-repair-impl",
+  "created_at": "2026-11-01T07:32:08.549Z",
+  "updated_at": "2026-11-01T07:36:12.579Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "RULOOM LOOP 5 (step 9 repair loop). Repo ~/workspace/ruloom, branch loop5/repair from main 87463d0; commits branch only; no push/merge; no co-author trailers; never git add data/. Implement profiles/hylogger/repair.py: \u2026",
+  "related_commits": [
+   "87463d0",
+   "49a9fc0"
+  ]
+ },
+ {
+  "task_id": "rl-loop5-repair-review1",
+  "created_at": "2026-11-01T07:37:50.564Z",
+  "updated_at": "2026-11-01T07:39:29.823Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review Ruloom Loop 5 branch loop5/repair commit 49a9fc0 (main must stay 87463d0, nothing pushed): profiles/hylogger/repair.py bounded loop, repair() max_attempts keyword-only with NO default (front door verified via ins\u2026",
+  "related_commits": [
+   "49a9fc0",
+   "87463d0"
+  ]
+ },
+ {
+  "task_id": "rl-loop6-cli-impl",
+  "created_at": "2026-11-01T07:40:37.753Z",
+  "updated_at": "2026-11-01T07:46:02.351Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "RULOOM LOOP 6 (steps 10+12+13, first-stage product). Repo ~/workspace/ruloom, branch loop6/cli-release from main 49a9fc0; commits branch only; no push/merge; no co-author trailers; never git add data/. Implement engine/\u2026",
+  "related_commits": [
+   "49a9fc0",
+   "75fb115"
+  ]
+ },
+ {
+  "task_id": "rl-loop6-forcepass-rework",
+  "created_at": "2026-11-01T07:48:58.021Z",
+  "updated_at": "2026-11-01T07:54:35.129Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "Add an EXECUTABLE force-pass gate on the SAME branch loop6/cli-release (main stays 49a9fc0, no push/merge, no data tracked). [owner]: rules must be forced by code, not only docs. Implement scripts/force_pass.py (stdlib \u2026",
+  "related_commits": [
+   "49a9fc0",
+   "7fe714a",
+   "75fb115"
+  ]
+ },
+ {
+  "task_id": "rl-loop6-review",
+  "created_at": "2026-11-01T08:08:46.111Z",
+  "updated_at": "2026-11-01T08:10:19.127Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "task_action_request": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review Loop 6 on branch loop6/cli-release at commit 7fe714a (two commits over main 49a9fc0: 75fb115 CLI lifecycle + 7fe714a executable force-pass gate). Read AGENTS.md in repo root first: it defines the force-pass rules\u2026",
+  "related_commits": [
+   "7fe714a",
+   "49a9fc0",
+   "75fb115"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-d0tmb5ys",
+  "created_at": "2026-11-01T08:33:08.220Z",
+  "updated_at": "2026-11-01T08:53:05.655Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 2,
+   "task_complete": 2
+  },
+  "summary": "RULOOM LOOP 7 \u2014 broader engine per accepted 08-engine-design.md. Repo ~/workspace/ruloom, branch loop7/generic-engine from main (currently ca57a96); commits on branch only; no push/merge; no co-author trailers; never gi\u2026",
+  "related_commits": [
+   "ca57a96",
+   "1975d8a"
+  ]
+ },
+ {
+  "task_id": "rl-loop7-hierarchy-rework",
+  "created_at": "2026-11-01T08:54:18.011Z",
+  "updated_at": "2026-11-01T08:59:35.231Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "task_action_request": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "REWORK on SAME branch loop7/generic-engine (over commit 1975d8a; main stays ca57a96; no push/merge). [owner] requires a MULTI-LEVEL folder hierarchy organised by feature \u2014 flat directories are not acceptable. Restructur\u2026",
+  "related_commits": [
+   "1975d8a",
+   "ca57a96",
+   "7dedc60"
+  ]
+ },
+ {
+  "task_id": "rl-loop7-review",
+  "created_at": "2026-11-01T09:04:42.444Z",
+  "updated_at": "2026-11-01T09:06:37.234Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "task_action_request": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review Loop 7 on branch loop7/generic-engine at commit 7dedc60 (commits 1975d8a generic engine + 7dedc60 multi-level hierarchy over main ca57a96). Read AGENTS.md first; scripts/force_pass.py is the enforcer. Score EVERY\u2026",
+  "related_commits": [
+   "7dedc60",
+   "1975d8a",
+   "ca57a96"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-21coa97e",
+  "created_at": "2026-11-01T09:28:00.867Z",
+  "updated_at": "2026-11-01T09:33:42.690Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "RULOOM LOOP 8 \u2014 HyLogger image extension per 07 section 16, on the generic engine. Repo ~/workspace/ruloom, branch loop8/hylogger-images from main f951e47; commits on branch only; no push/merge; no co-author trailers; n\u2026",
+  "related_commits": [
+   "f951e47",
+   "2db9a2b"
+  ]
+ },
+ {
+  "task_id": "rl-loop8-review",
+  "created_at": "2026-11-01T09:38:33.255Z",
+  "updated_at": "2026-11-01T09:42:00.357Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "task_action_request": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review Loop 8 on branch loop8/hylogger-images at commit 2db9a2b over main f951e47. Read AGENTS.md; scripts/force_pass.py is the enforcer. Score EVERY force-pass rule (FP-DOC-1, FP-DOC-2, FP-DOC-4, FP-CODE-2..8) PASS/FAI\u2026",
+  "related_commits": [
+   "2db9a2b",
+   "f951e47"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-uqho24il",
+  "created_at": "2026-11-01T09:46:03.045Z",
+  "updated_at": "2026-11-01T10:02:57.623Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 2,
+   "task_complete": 1
+  },
+  "summary": "RULOOM LOOP 9 (Step 11) \u2014 local Muse Glimmer critic, advisory only. Repo ~/workspace/ruloom, branch loop9/glimmer-critic from main 7ef9ee6; commits branch only; no push/merge; no co-author trailers; never git add data/.\u2026",
+  "related_commits": [
+   "7ef9ee6",
+   "457b49d"
+  ]
+ },
+ {
+  "task_id": "rl-loop9-commit-rework",
+  "created_at": "2026-11-01T10:09:24.229Z",
+  "updated_at": "2026-11-01T10:10:31.430Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "task_action_request": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "Small commit rework on SAME branch loop9/glimmer-critic over 457b49d (main stays 7ef9ee6, no push/merge). The Loop 9 worker left UNCOMMITTED changes in the working tree: profiles/hylogger/profile.json (+adapter meta_cli\u2026",
+  "related_commits": [
+   "457b49d",
+   "7ef9ee6",
+   "8463df8"
+  ]
+ },
+ {
+  "task_id": "rl-loop9-review",
+  "created_at": "2026-11-01T10:14:57.206Z",
+  "updated_at": "2026-11-01T10:17:06.739Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "task_action_request": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review Loop 9 on branch loop9/glimmer-critic at commit 8463df8 (457b49d Glimmer critic + 8463df8 adapter defaults/test, over main 7ef9ee6). Read AGENTS.md; scripts/force_pass.py is the enforcer. Score EVERY force-pass r\u2026",
+  "related_commits": [
+   "8463df8",
+   "457b49d",
+   "7ef9ee6"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-z7tc7pvk",
+  "created_at": "2026-11-01T10:21:34.264Z",
+  "updated_at": "2026-11-01T10:34:48.429Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "RULOOM LOOP 10 \u2014 gap-closure for 08-engine-design.md sections 5 and 6 (the audited remainders). Repo ~/workspace/ruloom, branch loop10/model-config-gaps from main 345d05c; commits branch only; no push/merge; no co-autho\u2026",
+  "related_commits": [
+   "345d05c",
+   "2dc434f"
+  ]
+ },
+ {
+  "task_id": "rl-loop10-review",
+  "created_at": "2026-11-01T10:36:43.151Z",
+  "updated_at": "2026-11-01T10:38:50.855Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "task_action_request": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review Loop 10 on branch loop10/model-config-gaps at commit 2dc434f over main 345d05c. Read AGENTS.md; scripts/force_pass.py is the enforcer (now 12 rules). Score EVERY rule FP-DOC-1, FP-DOC-2, FP-DOC-4, FP-CODE-2..10 P\u2026",
+  "related_commits": [
+   "2dc434f",
+   "345d05c"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-s7x3qjz8",
+  "created_at": "2026-11-01T10:43:33.651Z",
+  "updated_at": "2026-11-01T11:37:38.737Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 2,
+   "task_update": 1,
+   "task_complete": 2
+  },
+  "summary": "RULOOM LOOP 11 (Step 14) \u2014 held-out evaluation + naive baseline, measured results only. Repo ~/workspace/ruloom, branch loop11/evaluation from main 861a920; commits branch only; no push/merge; no co-author trailers; nev\u2026",
+  "related_commits": [
+   "861a920",
+   "b25c96d",
+   "fb85df7"
+  ]
+ },
+ {
+  "task_id": "rl-loop11-review",
+  "created_at": "2026-11-01T11:41:03.456Z",
+  "updated_at": "2026-11-01T11:42:53.707Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "task_action_request": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review Loop 11 (Step 14) on branch loop11/evaluation at commit fb85df7 (b25c96d harness + fb85df7 results, over main 861a920). Read AGENTS.md; scripts/force_pass.py is the enforcer (12 rules). Score EVERY rule PASS/FAIL\u2026",
+  "related_commits": [
+   "fb85df7",
+   "b25c96d",
+   "861a920"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-vc3p63lf",
+  "created_at": "2026-11-01T13:44:08.198Z",
+  "updated_at": "2026-11-01T13:58:03.334Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "RULOOM RP-00 (from 12-ruloom-quality-implementation-plan.md section 8; audit = Codex ruloom-audit 2026-11-01, findings R01-R12). Repo ~/workspace/ruloom, branch rp00/audit-registry from main f329c64; commits branch only\u2026",
+  "related_commits": [
+   "f329c64",
+   "d4e7e15"
+  ]
+ },
+ {
+  "task_id": "rl-rp00-review",
+  "created_at": "2026-11-01T13:59:38.613Z",
+  "updated_at": "2026-11-01T14:01:19.274Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "task_action_request": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review RP-00 on branch rp00/audit-registry at commit d4e7e15 over main f329c64. Context: Codex audit (findings R01-R12) + plan 12-ruloom-quality-implementation-plan.md section 8 RP-00. Read AGENTS.md and docs/quality/RE\u2026",
+  "related_commits": [
+   "d4e7e15",
+   "f329c64"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-a974hcn2",
+  "created_at": "2026-11-01T14:05:34.746Z",
+  "updated_at": "2026-11-01T14:31:46.398Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "close",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 2,
+   "task_complete": 2
+  },
+  "summary": "RULOOM RP-01 (plan 12 section 8; depends RP-00 merged at main d4e7e15). Addresses audit R07 + R09 engine side. Repo ~/workspace/ruloom, branch rp01/engine-authority from main d4e7e15; commits branch only; no push/merge;\u2026",
+  "related_commits": [
+   "d4e7e15",
+   "1c4d155"
+  ]
+ },
+ {
+  "task_id": "rl-rp01-review",
+  "created_at": "2026-11-01T14:34:58.369Z",
+  "updated_at": "2026-11-01T14:37:49.070Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "task_action_request": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review RP-01 on branch rp01/engine-authority at commit 1c4d155 over main d4e7e15. Context: plan 12 section 8 RP-01, audit R07/R09. Read AGENTS.md + docs/quality/rules.json (registry: Q-ENGINE-R07 and Q-EVAL-R09-ENGINE n\u2026",
+  "related_commits": [
+   "1c4d155",
+   "d4e7e15"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-eq2z0i93",
+  "created_at": "2026-11-01T14:41:50.172Z",
+  "updated_at": "2026-11-01T15:18:23.868Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 3,
+   "coordination_dispatch_requested": 3,
+   "coordination_dispatched": 3,
+   "task_complete": 3,
+   "task_update": 1,
+   "coordination_failed": 1
+  },
+  "summary": "RULOOM RP-02 (plan 12 section 8; governance doc 13 sections 4/6/10). Depends RP-01 merged at main 1c4d155. Addresses audit R05, R10, R11. Repo ~/workspace/ruloom, branch rp02/persistent-runs from main 1c4d155; commits b\u2026",
+  "related_commits": [
+   "1c4d155",
+   "6ce0635"
+  ]
+ },
+ {
+  "task_id": "rl-rp02-review",
+  "created_at": "2026-11-01T15:17:03.666Z",
+  "updated_at": "2026-11-01T15:21:50.540Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "task_action_request": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review RP-02 on branch rp02/persistent-runs at commit 6ce0635 over main 1c4d155. Context: plan 12 section 8 RP-02 + governance doc 13 sections 4/6/10; audit R05/R10/R11. Read AGENTS.md, docs/quality/rules.json, docs/eng\u2026",
+  "related_commits": [
+   "6ce0635",
+   "1c4d155"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-8azmn7wj",
+  "created_at": "2026-11-01T15:23:14.620Z",
+  "updated_at": "2026-11-01T15:46:39.547Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 2,
+   "task_complete": 2
+  },
+  "summary": "RULOOM RP-03 (plan 12 section 8; governance doc 13 sections 4/5/6). Depends RP-01 + RP-02 merged at main 6ce0635. Addresses audit R06; protects accepted image evidence (R04 membership side only \u2014 rights/claims stay RP-0\u2026",
+  "related_commits": [
+   "6ce0635",
+   "432f95c"
+  ]
+ },
+ {
+  "task_id": "rl-rp03-review",
+  "created_at": "2026-11-01T15:44:52.076Z",
+  "updated_at": "2026-11-01T15:48:10.696Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of RP-03 frozen reviewed release (R06 + R04 membership) on branch rp03/frozen-release commit 432f95c",
+  "related_commits": [
+   "432f95c",
+   "6ce0635"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-rp04",
+  "created_at": "2026-11-01T15:51:32.836Z",
+  "updated_at": "2026-11-01T16:12:04.945Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 2,
+   "task_complete": 2
+  },
+  "summary": "RP-04: verified source/rights registry and sanitised model views (R08)",
+  "related_commits": [
+   "a044776",
+   "432f95c"
+  ]
+ },
+ {
+  "task_id": "rl-rp04-review",
+  "created_at": "2026-11-01T16:12:00.279Z",
+  "updated_at": "2026-11-01T16:14:38.736Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of RP-04 source/rights + sanitised model views (R08) at a044776",
+  "related_commits": [
+   "a044776",
+   "432f95c"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-rp04-rework",
+  "created_at": "2026-11-01T16:17:11.792Z",
+  "updated_at": "2026-11-01T16:21:58.733Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "rework",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "RP-04 rework: CC0 only on explicit recorded output-terms grant",
+  "related_commits": [
+   "316caa6",
+   "a044776"
+  ]
+ },
+ {
+  "task_id": "rl-rp04-rereview",
+  "created_at": "2026-11-01T16:22:44.573Z",
+  "updated_at": "2026-11-01T16:25:31.360Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Focused re-review of RP-04 rework 316caa6 (explicit output-terms grant)",
+  "related_commits": [
+   "316caa6",
+   "a044776",
+   "432f95c"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-rp05",
+  "created_at": "2026-11-01T16:27:37.901Z",
+  "updated_at": "2026-11-01T16:49:46.517Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 2,
+   "task_complete": 2
+  },
+  "summary": "RP-05: HyLogger depth/missingness/label/joint-sequence quality (R01+R02)",
+  "related_commits": [
+   "99b23b2",
+   "316caa6"
+  ]
+ },
+ {
+  "task_id": "rl-rp05-review",
+  "created_at": "2026-11-01T16:48:18.707Z",
+  "updated_at": "2026-11-01T16:53:42.412Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of RP-05 HyLogger quality (R01+R02) at 99b23b2",
+  "related_commits": [
+   "99b23b2",
+   "316caa6"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-rp06",
+  "created_at": "2026-11-01T17:00:27.149Z",
+  "updated_at": "2026-11-01T17:10:07.940Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "RP-06: shared scene/image registration, schematic only (R03)",
+  "related_commits": [
+   "fe9efbf",
+   "99b23b2"
+  ]
+ },
+ {
+  "task_id": "rl-rp06-review",
+  "created_at": "2026-11-01T17:11:10.821Z",
+  "updated_at": "2026-11-01T17:13:16.512Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of RP-06 schematic registration (R03) at fe9efbf",
+  "related_commits": [
+   "fe9efbf",
+   "99b23b2"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-rp07",
+  "created_at": "2026-11-01T17:17:53.075Z",
+  "updated_at": "2026-11-01T17:50:19.827Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 2,
+   "task_update": 7,
+   "coordination_failed": 1,
+   "task_complete": 1
+  },
+  "summary": "RP-07: GenerationSpec, bounded plan/repair, evidence report",
+  "related_commits": [
+   "fe9efbf",
+   "f1ed40d"
+  ]
+ },
+ {
+  "task_id": "rl-rp07-review",
+  "created_at": "2026-11-01T17:53:14.920Z",
+  "updated_at": "2026-11-01T17:56:54.959Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of RP-07 GenerationSpec at f1ed40d",
+  "related_commits": [
+   "f1ed40d",
+   "fe9efbf"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-rp08",
+  "created_at": "2026-11-01T17:59:50.989Z",
+  "updated_at": "2026-11-01T18:48:13.760Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 2,
+   "task_update": 7,
+   "coordination_failed": 1,
+   "task_complete": 1
+  },
+  "summary": "RP-08: evaluation harness repair + versioned benchmark rerun (R09)",
+  "related_commits": [
+   "f1ed40d",
+   "1fac399"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-rp08-rework",
+  "created_at": "2026-11-01T18:51:05.518Z",
+  "updated_at": "2026-11-01T19:29:40.536Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "close",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 3,
+   "coordination_dispatch_requested": 3,
+   "coordination_dispatched": 3,
+   "task_complete": 2
+  },
+  "summary": "RP-08 rework: fix live planner schema 400, rerun benchmark-v3",
+  "related_commits": [
+   "8f704db",
+   "1fac399",
+   "0be6039"
+  ]
+ },
+ {
+  "task_id": "rl-rp08-review",
+  "created_at": "2026-11-01T19:27:35.005Z",
+  "updated_at": "2026-11-01T19:31:08.999Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of RP-08 harness + benchmark-v3 (1fac399 + 8f704db)",
+  "related_commits": [
+   "1fac399",
+   "8f704db"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-rp09",
+  "created_at": "2026-11-01T19:36:54.583Z",
+  "updated_at": "2026-11-01T21:56:55.677Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "blocked",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 1,
+   "coordination_escalated": 1,
+   "task_block": 1
+  },
+  "summary": "RP-09: durable dispatch, leases/fencing, separate publication",
+  "related_commits": []
+ },
+ {
+  "task_id": "lifecycle-impl-rp09-b",
+  "created_at": "2026-11-01T22:15:43.402Z",
+  "updated_at": "2026-11-01T22:26:34.401Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "rework",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "RP-09: durable dispatch, leases/fencing, separate publication (re-dispatch after launcher outage)",
+  "related_commits": [
+   "fe55241",
+   "0be6039"
+  ]
+ },
+ {
+  "task_id": "rl-rp09-review",
+  "created_at": "2026-11-01T22:30:38.115Z",
+  "updated_at": "2026-11-01T22:33:55.038Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of RP-09 dispatch/publication at fe55241",
+  "related_commits": [
+   "fe55241",
+   "0be6039"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-cifix",
+  "created_at": "2026-11-01T23:05:03.827Z",
+  "updated_at": "2026-11-01T23:08:10.173Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "Fix FP-DOC-1 fresh-clone gate failure (CI red)",
+  "related_commits": [
+   "a0d17c0",
+   "fe55241"
+  ]
+ },
+ {
+  "task_id": "rl-cifix-review",
+  "created_at": "2026-11-01T23:10:53.302Z",
+  "updated_at": "2026-11-01T23:13:05.263Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Review CI gate fix at a0d17c0",
+  "related_commits": [
+   "a0d17c0",
+   "fe55241"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-cp01",
+  "created_at": "2026-11-02T00:59:01.756Z",
+  "updated_at": "2026-11-02T01:10:12.971Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "CP-01: dispatch/publication trust repairs (A01+A02+A03)",
+  "related_commits": [
+   "4195b90",
+   "a0d17c0"
+  ]
+ },
+ {
+  "task_id": "rl-cp01-review",
+  "created_at": "2026-11-02T01:14:01.967Z",
+  "updated_at": "2026-11-02T01:17:18.870Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of CP-01 trust repairs (A01+A02+A03) at 4195b90",
+  "related_commits": [
+   "4195b90"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-cp02",
+  "created_at": "2026-11-02T01:20:14.147Z",
+  "updated_at": "2026-11-02T01:43:00.970Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 2,
+   "task_complete": 2
+  },
+  "summary": "CP-02: depth geometry fidelity + TIR sequence repair (A04)",
+  "related_commits": [
+   "37140c4",
+   "4195b90"
+  ]
+ },
+ {
+  "task_id": "lifecycle-ci-audit-task",
+  "created_at": "2026-11-02T01:37:16.619Z",
+  "updated_at": "2026-11-02T01:37:17.934Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "blocked",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_escalated": 1,
+   "task_block": 1
+  },
+  "summary": "Audit all failing GitHub CI workflows (read-only classification)",
+  "related_commits": []
+ },
+ {
+  "task_id": "lifecycle-ci-audit-worker",
+  "created_at": "2026-11-02T01:37:22.523Z",
+  "updated_at": "2026-11-02T01:40:16.472Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "Audit all failing GitHub CI workflows (read-only classification)",
+  "related_commits": [
+   "d4e7e154",
+   "1c4d155d",
+   "6ce06351",
+   "432f95ce",
+   "316caa6d",
+   "99b23b22",
+   "fe9efbf7",
+   "f1ed40db",
+   "0be6039c",
+   "fe552412",
+   "4195b90",
+   "a0d17c09",
+   "a0d17c0"
+  ]
+ },
+ {
+  "task_id": "rl-cp02-review",
+  "created_at": "2026-11-02T01:43:24.601Z",
+  "updated_at": "2026-11-02T01:48:00.395Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of CP-02 depth/TIR repair (A04) at 37140c4",
+  "related_commits": [
+   "37140c4",
+   "4195b90"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-cp03",
+  "created_at": "2026-11-02T01:50:22.014Z",
+  "updated_at": "2026-11-02T01:58:57.592Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "CP-03: atomic download + expiry retry budget (A05+A06)",
+  "related_commits": [
+   "85d24d6",
+   "37140c4"
+  ]
+ },
+ {
+  "task_id": "rl-cp03-review",
+  "created_at": "2026-11-02T02:00:55.027Z",
+  "updated_at": "2026-11-02T02:04:24.959Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of CP-03 download/retry (A05+A06) at 85d24d6",
+  "related_commits": [
+   "85d24d6",
+   "37140c4"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-cp04",
+  "created_at": "2026-11-02T02:07:17.181Z",
+  "updated_at": "2026-11-02T02:14:03.038Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "CP-04: executable aggregate gate (A07)",
+  "related_commits": [
+   "342151d",
+   "85d24d6"
+  ]
+ },
+ {
+  "task_id": "rl-cp04-review",
+  "created_at": "2026-11-02T02:16:13.302Z",
+  "updated_at": "2026-11-02T02:19:15.656Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of CP-04 aggregate gate (A07) at 342151d",
+  "related_commits": [
+   "342151d"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-cp05",
+  "created_at": "2026-11-02T02:23:28.315Z",
+  "updated_at": "2026-11-02T02:44:27.994Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 2,
+   "task_complete": 2
+  },
+  "summary": "CP-05: governance section-9 + restricted model invocation",
+  "related_commits": [
+   "a405d2d",
+   "342151d"
+  ]
+ },
+ {
+  "task_id": "rl-cp05-review",
+  "created_at": "2026-11-02T02:43:43.930Z",
+  "updated_at": "2026-11-02T02:47:52.598Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of CP-05 governance (section-9) at a405d2d",
+  "related_commits": [
+   "a405d2d",
+   "342151d"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-cp06",
+  "created_at": "2026-11-02T03:28:28.209Z",
+  "updated_at": "2026-11-02T03:35:03.261Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "CP-06 hotfix: scoped-writes test for single-ref CI",
+  "related_commits": [
+   "3bfa5e7",
+   "a405d2d"
+  ]
+ },
+ {
+  "task_id": "rl-cp06-review",
+  "created_at": "2026-11-02T03:39:10.030Z",
+  "updated_at": "2026-11-02T03:43:34.678Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of CP-06 single-ref fix at 3bfa5e7",
+  "related_commits": [
+   "3bfa5e7",
+   "a405d2d"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-dp01",
+  "created_at": "2026-11-02T06:56:09.522Z",
+  "updated_at": "2026-11-02T07:27:28.685Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 2,
+   "task_update": 1,
+   "task_complete": 2
+  },
+  "summary": "DP-01: request-to-run binding + snapshot publish (C01+C02)",
+  "related_commits": [
+   "80c2cba",
+   "3bfa5e7"
+  ]
+ },
+ {
+  "task_id": "lifecycle-g01-verify-task",
+  "created_at": "2026-11-02T07:10:01.344Z",
+  "updated_at": "2026-11-02T07:11:49.690Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "Verify live branch ruleset before G01 resolved (read-only)",
+  "related_commits": []
+ },
+ {
+  "task_id": "rl-dp01-review",
+  "created_at": "2026-11-02T07:25:08.268Z",
+  "updated_at": "2026-11-02T07:29:27.251Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of DP-01 release binding (C01+C02) at 80c2cba",
+  "related_commits": [
+   "80c2cba",
+   "3bfa5e7"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-dp01-ci",
+  "created_at": "2026-11-02T07:32:23.221Z",
+  "updated_at": "2026-11-02T07:34:46.340Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "rework",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "DP-01 CI fix: checkout PR head SHA, not merge ref",
+  "related_commits": [
+   "d4fc4e3",
+   "80c2cba"
+  ]
+ },
+ {
+  "task_id": "rl-dp01-ci-review",
+  "created_at": "2026-11-02T07:37:29.986Z",
+  "updated_at": "2026-11-02T07:39:58.455Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Focused review of DP-01 CI checkout fix at d4fc4e3",
+  "related_commits": [
+   "d4fc4e3"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-dp01b",
+  "created_at": "2026-11-02T07:44:16.142Z",
+  "updated_at": "2026-11-02T07:48:27.678Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "DP-01b: subject-based topology check",
+  "related_commits": [
+   "2d0a276",
+   "6aff905",
+   "80c2cba",
+   "c80475b"
+  ]
+ },
+ {
+  "task_id": "rl-dp01b-review",
+  "created_at": "2026-11-02T07:50:05.656Z",
+  "updated_at": "2026-11-02T07:53:29.327Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of DP-01b topology at 2d0a276",
+  "related_commits": [
+   "2d0a276",
+   "80c2cba",
+   "c80475b",
+   "6aff905"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-dp02",
+  "created_at": "2026-11-02T07:58:44.708Z",
+  "updated_at": "2026-11-02T08:08:14.063Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "DP-02: keyed idempotent retry (C03)",
+  "related_commits": [
+   "446a238",
+   "e510638"
+  ]
+ },
+ {
+  "task_id": "rl-dp02-review",
+  "created_at": "2026-11-02T08:09:25.375Z",
+  "updated_at": "2026-11-02T08:13:26.458Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of DP-02 keyed retry (C03) at 446a238",
+  "related_commits": [
+   "446a238",
+   "e510638"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-dp03",
+  "created_at": "2026-11-02T08:18:02.635Z",
+  "updated_at": "2026-11-02T08:27:20.525Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "DP-03: child capability + docs/registry (C04)",
+  "related_commits": [
+   "93f9a0c",
+   "1389bc6"
+  ]
+ },
+ {
+  "task_id": "rl-dp03-review",
+  "created_at": "2026-11-02T08:28:52.807Z",
+  "updated_at": "2026-11-02T08:32:57.083Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of DP-03 child capability + closeout (C04+G01) at 93f9a0c",
+  "related_commits": [
+   "93f9a0c",
+   "1389bc6"
+  ]
+ },
+ {
+  "task_id": "lifecycle-plan-gap-task",
+  "created_at": "2026-11-02T09:27:06.758Z",
+  "updated_at": "2026-11-02T09:35:21.483Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 2
+  },
+  "summary": "Fresh plan-vs-reality gap review (read-only)",
+  "related_commits": [
+   "8797ff7"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-gp01",
+  "created_at": "2026-11-02T10:24:51.594Z",
+  "updated_at": "2026-11-02T11:03:52.799Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 3,
+   "coordination_dispatch_requested": 3,
+   "coordination_dispatched": 3,
+   "task_update": 1,
+   "task_complete": 3
+  },
+  "summary": "GP-01: live critic runs with receipts (G3)",
+  "related_commits": [
+   "db5aade",
+   "8797ff7"
+  ]
+ },
+ {
+  "task_id": "rl-gp01-review",
+  "created_at": "2026-11-02T10:59:38.860Z",
+  "updated_at": "2026-11-02T11:03:45.006Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of GP-01 live critics (G3) at db5aade",
+  "related_commits": [
+   "db5aade",
+   "8797ff7"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-gp02",
+  "created_at": "2026-11-02T11:08:05.831Z",
+  "updated_at": "2026-11-02T11:16:22.408Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_complete": 1
+  },
+  "summary": "GP-02: docs reconciliation (G2+G12+G9+G8)",
+  "related_commits": [
+   "c35b063",
+   "17a0b72"
+  ]
+ },
+ {
+  "task_id": "rl-gp02-review",
+  "created_at": "2026-11-02T11:18:38.735Z",
+  "updated_at": "2026-11-02T11:22:29.404Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of GP-02 docs (G2+G12+G9+G8) at 17a0b72",
+  "related_commits": [
+   "17a0b72",
+   "c35b063"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-gp03",
+  "created_at": "2026-11-02T11:27:15.362Z",
+  "updated_at": "2026-11-02T11:39:25.208Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "GP-03: code hygiene (G7)",
+  "related_commits": [
+   "0b25f87",
+   "2b9d854"
+  ]
+ },
+ {
+  "task_id": "rl-gp03-review",
+  "created_at": "2026-11-02T11:42:44.983Z",
+  "updated_at": "2026-11-02T11:46:13.841Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of GP-03 hygiene (G7) at 0b25f87",
+  "related_commits": [
+   "0b25f87",
+   "2b9d854"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-hp01",
+  "created_at": "2026-11-02T15:52:33.142Z",
+  "updated_at": "2026-11-02T15:58:46.634Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "HP-01: row-limit binding on retry (A01 P1)",
+  "related_commits": [
+   "9b92685",
+   "9f4460d"
+  ]
+ },
+ {
+  "task_id": "rl-hp01-review",
+  "created_at": "2026-11-02T15:58:41.441Z",
+  "updated_at": "2026-11-02T16:04:49.207Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of HP-01 row-limit binding (A01) at 9b92685",
+  "related_commits": [
+   "9b92685",
+   "9f4460d"
+  ]
+ },
+ {
+  "task_id": "probe-glimmer-grade-b",
+  "created_at": "2026-11-02T16:13:30.508Z",
+  "updated_at": "2026-11-02T16:15:09.958Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "Grade Glimmer-authored version subcommand (read-only)",
+  "related_commits": [
+   "c08fe08",
+   "9f4460d"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-hp02",
+  "created_at": "2026-11-02T16:18:41.498Z",
+  "updated_at": "2026-11-02T16:29:31.672Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "HP-02: safe recovery on republish (A02 P2)",
+  "related_commits": [
+   "35edd60",
+   "afb987f"
+  ]
+ },
+ {
+  "task_id": "rl-hp02-review",
+  "created_at": "2026-11-02T16:31:38.497Z",
+  "updated_at": "2026-11-02T16:34:28.242Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of HP-02 safe recovery (A02) at 35edd60",
+  "related_commits": [
+   "35edd60",
+   "afb987f"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-hp03",
+  "created_at": "2026-11-02T16:38:31.303Z",
+  "updated_at": "2026-11-02T16:51:10.586Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "HP-03: model identity integrity (A04 P2)",
+  "related_commits": [
+   "80f993a",
+   "32292ae"
+  ]
+ },
+ {
+  "task_id": "rl-hp03-review",
+  "created_at": "2026-11-02T16:53:07.952Z",
+  "updated_at": "2026-11-02T16:56:42.711Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of HP-03 model identity (A04) at 80f993a",
+  "related_commits": [
+   "80f993a",
+   "32292ae"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-hp04",
+  "created_at": "2026-11-02T17:00:48.833Z",
+  "updated_at": "2026-11-02T17:04:37.183Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "HP-04: wheel backend build + smoke test",
+  "related_commits": []
+ },
+ {
+  "task_id": "rl-hp04-review",
+  "created_at": "2026-11-02T17:06:56.163Z",
+  "updated_at": "2026-11-02T17:09:51.814Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of HP-04 wheel backend build at 7924078",
+  "related_commits": []
+ },
+ {
+  "task_id": "lifecycle-impl-hp05",
+  "created_at": "2026-11-02T17:13:30.694Z",
+  "updated_at": "2026-11-02T17:28:55.669Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 2,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "HP-05: permission policy + tests (A03 P2)",
+  "related_commits": [
+   "e36ce48",
+   "87f79e9"
+  ]
+ },
+ {
+  "task_id": "rl-hp05-review",
+  "created_at": "2026-11-02T17:30:41.405Z",
+  "updated_at": "2026-11-02T17:32:53.828Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of HP-05 permission policy (A03) at e36ce48",
+  "related_commits": [
+   "e36ce48",
+   "87f79e9"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-ip01",
+  "created_at": "2026-11-02T22:20:52.727Z",
+  "updated_at": "2026-11-02T22:28:41.362Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "IP-01: attempt-bound enforcement (B01 P1)",
+  "related_commits": [
+   "6d8023d",
+   "db248e9"
+  ]
+ },
+ {
+  "task_id": "rl-ip01-review",
+  "created_at": "2026-11-02T22:30:16.177Z",
+  "updated_at": "2026-11-02T22:33:47.522Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_update": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of IP-01 attempt-bound (B01) at 6d8023d",
+  "related_commits": [
+   "6d8023d",
+   "db248e9"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-ip02",
+  "created_at": "2026-11-02T22:37:25.024Z",
+  "updated_at": "2026-11-02T22:43:08.852Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "IP-02: in-progress ownership (B02 P2)",
+  "related_commits": [
+   "bb9b432",
+   "b6cadb9"
+  ]
+ },
+ {
+  "task_id": "rl-ip02-review",
+  "created_at": "2026-11-02T22:45:10.439Z",
+  "updated_at": "2026-11-02T22:48:43.585Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of IP-02 in-progress ownership (B02) at bb9b432",
+  "related_commits": [
+   "bb9b432",
+   "b6cadb9"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-ip03",
+  "created_at": "2026-11-02T22:51:58.434Z",
+  "updated_at": "2026-11-02T23:01:26.109Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "IP-03: durable repair authorisation (B03 P2)",
+  "related_commits": [
+   "fc462d2",
+   "10891fa"
+  ]
+ },
+ {
+  "task_id": "rl-ip03-review",
+  "created_at": "2026-11-02T23:03:11.709Z",
+  "updated_at": "2026-11-02T23:07:34.856Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of IP-03 repair intent (B03) at fc462d2",
+  "related_commits": [
+   "fc462d2",
+   "10891fa"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-ip04",
+  "created_at": "2026-11-02T23:10:51.253Z",
+  "updated_at": "2026-11-02T23:18:48.088Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "IP-04: spawn gate structure (P3)",
+  "related_commits": [
+   "7827a23"
+  ]
+ },
+ {
+  "task_id": "rl-ip04-review",
+  "created_at": "2026-11-02T23:20:28.717Z",
+  "updated_at": "2026-11-02T23:22:56.239Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "rework_requested",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of IP-04 spawn gate (P3) at 0645091",
+  "related_commits": [
+   "7827a23"
+  ]
+ },
+ {
+  "task_id": "lifecycle-rework-ip04",
+  "created_at": "2026-11-02T23:23:38.267Z",
+  "updated_at": "2026-11-02T23:38:39.858Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "blocked",
+  "phase": "rework",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 2,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "coordination_failed": 1,
+   "coordination_escalated": 1,
+   "task_block": 1
+  },
+  "summary": "IP-04 rework: close spawn-gate evasion holes",
+  "related_commits": []
+ },
+ {
+  "task_id": "lifecycle-rework-ip04-b",
+  "created_at": "2026-11-02T23:58:28.097Z",
+  "updated_at": "2026-11-03T00:01:47.894Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "rework",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "IP-04 rework retry: close spawn-gate evasion holes",
+  "related_commits": [
+   "514d2e6"
+  ]
+ },
+ {
+  "task_id": "rl-ip04-rereview",
+  "created_at": "2026-11-03T00:04:09.719Z",
+  "updated_at": "2026-11-03T00:06:45.911Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Re-review IP-04 evasion fixes at 514d2e6",
+  "related_commits": [
+   "514d2e6"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-jp01",
+  "created_at": "2026-11-03T00:25:49.996Z",
+  "updated_at": "2026-11-03T00:32:41.548Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "JP-01: repair new-arrival refusal (C01 P2)",
+  "related_commits": [
+   "fcbb53b",
+   "c6f84b9"
+  ]
+ },
+ {
+  "task_id": "rl-jp01-review",
+  "created_at": "2026-11-03T00:34:41.646Z",
+  "updated_at": "2026-11-03T00:37:29.150Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of JP-01 new-arrival refusal (C01) at fcbb53b",
+  "related_commits": [
+   "fcbb53b",
+   "c6f84b9"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-jp02",
+  "created_at": "2026-11-03T00:40:40.863Z",
+  "updated_at": "2026-11-03T00:47:17.745Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "JP-02: checksum finalisation (C02 P2)",
+  "related_commits": [
+   "78c12c9",
+   "25ceea8"
+  ]
+ },
+ {
+  "task_id": "rl-jp02-review",
+  "created_at": "2026-11-03T00:49:03.130Z",
+  "updated_at": "2026-11-03T00:53:00.485Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of JP-02 checksum finalise (C02) at 78c12c9",
+  "related_commits": [
+   "78c12c9",
+   "25ceea8"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-kp01",
+  "created_at": "2026-11-03T01:12:55.092Z",
+  "updated_at": "2026-11-03T01:20:49.274Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "KP-01: checksum-only recovery (D01 P2)",
+  "related_commits": [
+   "5092c6e",
+   "cc6db57"
+  ]
+ },
+ {
+  "task_id": "rl-kp01-review",
+  "created_at": "2026-11-03T01:22:41.128Z",
+  "updated_at": "2026-11-03T01:27:50.377Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of KP-01 checksum-only recovery (D01) at 5092c6e",
+  "related_commits": [
+   "5092c6e",
+   "cc6db57"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-kp02",
+  "created_at": "2026-11-03T01:31:20.466Z",
+  "updated_at": "2026-11-03T01:37:37.443Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "KP-02: quarantine-refusal negatives",
+  "related_commits": [
+   "d597912",
+   "9e55cca"
+  ]
+ },
+ {
+  "task_id": "rl-kp02-review",
+  "created_at": "2026-11-03T01:39:20.076Z",
+  "updated_at": "2026-11-03T01:43:35.355Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of KP-02 quarantine negatives at d597912",
+  "related_commits": [
+   "d597912",
+   "9e55cca"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-lp01",
+  "created_at": "2026-11-03T06:59:46.952Z",
+  "updated_at": "2026-11-03T07:10:04.914Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "LP-01: csv_schema exactly once (P1)",
+  "related_commits": [
+   "775d440",
+   "cac485b"
+  ]
+ },
+ {
+  "task_id": "rl-lp01-review",
+  "created_at": "2026-11-03T07:12:15.379Z",
+  "updated_at": "2026-11-03T07:16:08.844Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of LP-01 csv_schema-once (P1) at 775d440",
+  "related_commits": [
+   "775d440",
+   "cac485b"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-lp02",
+  "created_at": "2026-11-03T07:19:32.670Z",
+  "updated_at": "2026-11-03T07:31:51.201Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "LP-02: plan replay + demo (P2)",
+  "related_commits": [
+   "b58980e",
+   "ba10368"
+  ]
+ },
+ {
+  "task_id": "rl-lp02-review",
+  "created_at": "2026-11-03T07:33:43.680Z",
+  "updated_at": "2026-11-03T07:37:09.502Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of LP-02 plan replay (P2) at b58980e",
+  "related_commits": [
+   "b58980e",
+   "ba10368"
+  ]
+ },
+ {
+  "task_id": "lifecycle-impl-lp03",
+  "created_at": "2026-11-03T07:40:41.440Z",
+  "updated_at": "2026-11-03T07:44:26.499Z",
+  "assigned_to": "muse-worker@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_complete": 1
+  },
+  "summary": "LP-03: README counts (P3)",
+  "related_commits": [
+   "00f4358",
+   "88e8c6e",
+   "c35b063"
+  ]
+ },
+ {
+  "task_id": "rl-lp03-review",
+  "created_at": "2026-11-03T07:46:02.625Z",
+  "updated_at": "2026-11-03T07:48:45.109Z",
+  "assigned_to": "muse-review@muse-spark-1.3-contributor",
+  "final_status": "completed",
+  "phase": "review",
+  "latest_review_verdict": "approved",
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_dispatch_requested": 1,
+   "coordination_dispatched": 1,
+   "task_review_verdict": 1,
+   "task_complete": 1
+  },
+  "summary": "Independent review of LP-03 README counts at 00f4358",
+  "related_commits": [
+   "00f4358",
+   "88e8c6e",
+   "c35b063"
+  ]
+ },
+ {
+  "task_id": "RULOOM-CREDIT-FREE-01",
+  "created_at": "2026-11-03T13:33:19.560Z",
+  "updated_at": "2026-11-03T14:20:39.808Z",
+  "assigned_to": "codex-front-door",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "task_complete": 1
+  },
+  "summary": "Implement offline/local-only policies, bounded request drafts and readable provenance; automated fixtures only.",
+  "related_commits": [
+   "4ee8f562e289faf1b586aeeeb77df9b38da8aa4d"
+  ]
+ },
+ {
+  "task_id": "RULOOM-AGY-TEST-01",
+  "created_at": "2026-11-03T23:14:28.812Z",
+  "updated_at": "2026-11-03T23:56:17.756Z",
+  "assigned_to": "codex-front-door",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_escalated": 1,
+   "task_block": 1,
+   "task_update": 1,
+   "task_complete": 1
+  },
+  "summary": "Add an explicit AGY configured model adapter, test a frozen synthetic case with Claude Opus 5.5 high, then repeat the identical case with Muse only after Claude passes. Work personally; preserve sources, untracked lockf\u2026",
+  "related_commits": [
+   "6385c9eee337ef81a1322008280b80fe438c6779",
+   "797989e97ef7e229eee94ebb50bcfd0eab4a5c63"
+  ]
+ },
+ {
+  "task_id": "RULOOM-HUMAN-REQUEST-01",
+  "created_at": "2026-11-04T04:48:10.368Z",
+  "updated_at": "2026-11-04T04:48:10.724Z",
+  "assigned_to": "codex-front-door",
+  "final_status": "blocked",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "coordination_claimed": 1,
+   "coordination_escalated": 1,
+   "task_block": 1
+  },
+  "summary": "Improve request-time capability accuracy and readiness for the unchanged natural-language drill-sample training request. Use an explicitly authorised AGY Claude high implementation helper in a source-free clone, persona\u2026",
+  "related_commits": []
+ },
+ {
+  "task_id": "RULOOM-BALANCED-IMPLEMENT-01",
+  "created_at": "2026-11-04T05:25:38.701Z",
+  "updated_at": "2026-11-04T06:30:52.134Z",
+  "assigned_to": "agy@gemini-3.8-flash-high",
+  "final_status": "completed",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "task_update": 2,
+   "task_complete": 1
+  },
+  "summary": "Track the already resumed owner-provided Gemini Flash high session [uuid] executing the bounded balanced-strategy implementation in the canonical repo; no duplicate launch or worker-to-reviewer dispatch.",
+  "related_commits": [
+   "5d4f3472b751cb72a8da7cbc06ce451242b5453c",
+   "5d4f347",
+   "b829f0d"
+  ]
+ },
+ {
+  "task_id": "RULOOM-BALANCED-REVIEW-01",
+  "created_at": "2026-11-04T05:45:01.449Z",
+  "updated_at": "2026-11-04T05:45:01.449Z",
+  "assigned_to": "claude-review@sonnet",
+  "final_status": "in_progress",
+  "phase": "review",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1
+  },
+  "summary": "Independent review of frozen 5d4f347 in owner-provided native Claude Sonnet session; root externally launched it, no Runtime lease or duplicate dispatch.",
+  "related_commits": [
+   "5d4f347",
+   "5d4f3472b751cb72a8da7cbc06ce451242b5453c"
+  ]
+ },
+ {
+  "task_id": "RULOOM-RESEARCH-WORKFLOW-IMPLEMENT-01",
+  "created_at": "2026-11-04T07:23:06.752Z",
+  "updated_at": "2026-11-04T15:46:38.114Z",
+  "assigned_to": "agy@gemini-3.8-flash-high",
+  "final_status": "in_progress",
+  "phase": "implementation",
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1,
+   "task_update": 4
+  },
+  "summary": "Implement the owner-agreed bounded research-led scalar workflow.",
+  "related_commits": [
+   "dbe67dc",
+   "fbf2ef8",
+   "6313e837c9d927a3c084ec2044e1f689c7e58a0f",
+   "b127316",
+   "440e091",
+   "df45ab6"
+  ]
+ },
+ {
+  "task_id": "RULOOM-PARALLEL-PROFILE-WORKFLOW-01",
+  "created_at": "2026-11-04T12:12:42.995Z",
+  "updated_at": "2026-11-04T12:12:42.995Z",
+  "assigned_to": "agy@gemini-3.8-flash-high",
+  "final_status": "in_progress",
+  "phase": null,
+  "latest_review_verdict": null,
+  "event_counts": {
+   "task_start": 1
+  },
+  "summary": "Owner explicitly requested parallel sessions and rapid completion of the full bounded product workflow. Coordinator dispatched a fresh AGY Gemini 3.8 Flash high implementation session for isolated new HyLogger workflow \u2026",
+  "related_commits": []
+ }
+]

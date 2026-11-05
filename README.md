@@ -4,8 +4,8 @@
 
 [The idea and design](docs/idea-and-design.md) — why Ruloom exists, one example and the role of Muse.
 
-**Final user test: pending.** [Read the shared test prompt and evidence status](docs/final-test.md).
-Results will be added after the full workflow and comparison have been tested.
+**Final user test: recorded; independent scoring in progress.** [Read the final test record](docs/final-test-record.md)
+and the [shared test prompt](docs/final-test.md).
 
 ## Who it helps
 
@@ -66,22 +66,22 @@ and [model configuration](docs/model-families.md).
 
 Only these runs are claimed; each is recorded with its date and limits.
 
-- **Muse Glimmer 30B (local)** wrote an advisory text critique of a real PDD446
-  validation report through the product path on 2 November 2026
+- **Building Ruloom (1–4 November 2026).** Datacore records Muse Spark 1.3, in contributor
+  mode, as the worker on 62 development tasks and the reviewer on 53, with 51 approvals and
+  one rework request. These are recorded worker identities, not a per-call audit; see the
+  [development evidence](docs/evidence/development/README.md).
+- **Advisory critics (2 November).** Muse Glimmer 30B, run locally, wrote a text critique of
+  a real PDD446 validation report, and hosted Muse Spark 1.3 reviewed a synthetic PNG
   ([receipt](docs/quality/critic-receipts-gp01.md)).
-- **Muse Spark 1.3 (hosted Muse CLI)** reviewed a synthetic, code-rendered PNG
-  as the advisory vision critic on 2 November 2026 (same receipt).
-- **Muse Spark 1.3 on Azure** returned planning, source-assessment and
-  case-research answers in a bounded 5 November 2026 smoke. The research answer
-  was then rejected by the local prohibited-claim screen, so that run did not
-  complete. A managed **Azure Muse Glimmer** image call in the same smoke failed
-  local validation; no accepted Azure vision review exists yet
-  ([development evidence](docs/evidence/development/README.md)).
+- **The product workflow on Azure (5 November).** In the final user test's second
+  comparison, Muse Spark 1.3 filled the planner, source-assessor, case-researcher and
+  case-reviewer roles. Managed Muse Glimmer returned an accepted structured review of the
+  synthetic picture. Earlier attempts that day failed and stay on record
+  ([final test record](docs/final-test-record.md)).
 
-**Planned use:** Muse roles for researching cited examples, planning, and
-reviewing the generated data and pictures, each with a narrow job while code
-keeps the verdict and a person keeps the decision. A Muse Wonder reporter seat
-is declared but disabled.
+**Planned use.** Muse roles for researching cited examples, planning, and reviewing the
+generated data and pictures. Each role keeps a narrow job; code keeps the verdict and a
+person keeps the decision. A Muse Wonder reporter seat is declared but disabled.
 
 ## Scope, limits and test status
 
@@ -96,12 +96,12 @@ custom tolerances, geological prediction, and any privacy, anonymity or
 licensing guarantee. The image extension renders fictional schematic strips
 from fixture statistics only.
 
-**Test status (5 November 2026, revision `63b35c0`):** local full suite
-1,313 passed and 4 skipped with source data present; `scripts/force_pass.py`
-exit 0; main CI green. The paid live role workflow has not yet completed
-successfully, and the final user comparison is [pending](docs/final-test.md).
-Earlier dated results stay in [`docs/results.md`](docs/results.md) and
-[`docs/quality/`](docs/quality/README.md).
+**Test status (5 November 2026, revision `3216c5c`):** the local full suite gave 1,321
+passed and 4 skipped, with source data present. `scripts/force_pass.py` exited 0 and main CI
+is green. The final user test is recorded in [docs/final-test-record.md](docs/final-test-record.md).
+Ruloom refused the full linked-lesson request. A narrowed, scalar-plus-picture request then
+ran end to end on live Muse models, and both releases verified. Earlier dated results stay
+in [`docs/results.md`](docs/results.md) and [`docs/quality/`](docs/quality/README.md).
 
 ## Quick start
 
@@ -127,7 +127,7 @@ Bind every active role to your provider first (or replay a reviewed plan with
 
 ## Documentation
 
-- [Idea and design](docs/idea-and-design.md) · [Final user test](docs/final-test.md)
+- [Idea and design](docs/idea-and-design.md) · [Final user test](docs/final-test.md) · [Final test record](docs/final-test-record.md)
 - [Request-to-data workflow](docs/product-workflow.md) · [Operator guide](docs/research-workflow-user-guide.md) · [Installed-wheel acceptance](docs/full-workflow-acceptance.md)
 - [Engine and operations reference](docs/engine-and-operations.md) · [Model configuration](docs/model-families.md) · [Synthetic-image review](docs/vision-workflow.md)
 - [HyLogger case workflow](docs/hylogger-case-workflow.md) · [Provenance](docs/provenance.md) · [Decisions](docs/decisions.md)
