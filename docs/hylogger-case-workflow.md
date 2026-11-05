@@ -205,6 +205,11 @@ nearby; it does not echo the rejected sentence.
   catalogue. Identifies purpose requirements outside the case scope (such as image generation
   or geological prediction) and records them in `unsupported_requirements`. Negated requirements
   are distinguished to avoid false refusals.
+- **Scope prompt**: The prompt gives the case purpose and output columns. It states that
+  admitted passages establish the teaching practice and are not the data source, and that
+  source-derived patterns (spacing, inclusion, blank labels, vocabulary) are fitted by code.
+  Only requests outside the case contract belong in `unsupported_requirements`. Code still
+  appends any unsupported domain it detects in the purpose.
 - **Boundaries**: Cannot invent citations, alter thresholds, or admit new sources.
   Screens `research_summary` and `limitations` against prohibited prose patterns. Returns JSON-native payload.
 

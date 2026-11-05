@@ -1983,3 +1983,31 @@ def test_term_touching_a_digest_token_is_still_rejected(
     payload = _research_payload(research_summary=summary)
     with pytest.raises(ValueError, match="prohibited claim"):
         research_case(MockStructuredModel(payload), "teach scalar QC", ctx)
+
+
+def test_research_prompt_states_case_scope_and_source_role(tmp_path: Path) -> None:
+    ctx = _scalar_case_ctx(tmp_path)
+    model = _prompt_capturing_model()
+    with pytest.raises(_StopAfterPrompt):
+        research_case(model, "teach scalar QC", ctx)
+    prompt = model.recorded_prompts[0]
+    assert "Case purpose: " in prompt and "Case purpose: None" not in prompt
+    assert (
+        "Case output columns: ['depth_m', 'valid', 'swir_group', 'tir_group']" in prompt
+    )
+    assert "they are not the data source" in prompt
+    assert "fitted by deterministic code from the pinned source" in prompt
+
+
+def test_research_still_appends_unsupported_domains_from_purpose(
+    tmp_path: Path,
+) -> None:
+    """Scope wording in the prompt does not relax code-side domain detection."""
+    ctx = _scalar_case_ctx(tmp_path)
+    advisory = research_case(
+        MockStructuredModel(_research_payload()),
+        "teach scalar QC and include a core photograph with reflectance curve",
+        ctx,
+    )
+    joined = " ".join(advisory["unsupported_requirements"]).lower()
+    assert "core photograph" in joined and "reflectance curve" in joined
