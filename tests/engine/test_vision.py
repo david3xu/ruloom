@@ -368,3 +368,60 @@ def test_raw_record_cannot_be_relabelled_by_later_nonraw_registration(tmp_path):
     with pytest.raises(ImageSecurityError, match="raw-intake"):
         with staged_image_attachment(path, runner, CAPS):
             pass
+
+
+def test_failed_image_call_logs_whitelisted_reason_without_relaxing_guard(tmp_path):
+    runner, path, _, _ = registered(tmp_path)
+    failure = ModelError(
+        "secret-provider-canary",
+        reason_code="finish_reason_not_stop",
+        diagnostics={
+            "finish_reason": "length",
+            "observed_model": "fixture-model",
+            "reported_usage": {"prompt_tokens": 12, "completion_tokens": 4096},
+            "content": "secret-provider-canary",
+        },
+    )
+    client = Client(failure=failure)
+    guarded = _BudgetedClient(client, runner, "critic")
+    with pytest.raises(ModelError):
+        guarded.complete_with_image("review", {}, path)
+    details = runner.events[-1]["details"]
+    assert details["reason_code"] == "finish_reason_not_stop"
+    assert details["diagnostics"] == {
+        "finish_reason": "length",
+        "observed_model": "fixture-model",
+        "reported_usage": {"prompt_tokens": 12, "completion_tokens": 4096},
+    }
+    # Diagnostics never become accounted usage or lift the unknown-usage guard.
+    assert details["usage"] is None
+    assert runner.model_tokens == 0
+    assert "secret-provider-canary" not in json.dumps(runner.events)
+    with pytest.raises(BudgetExceeded, match="unknown usage"):
+        guarded.complete_with_image("review", {}, path)
+    assert client.calls == 1
+
+
+def test_forged_diagnostics_on_model_error_are_reduced_again(tmp_path):
+    runner, path, _, _ = registered(tmp_path)
+    failure = ModelError("x")
+    failure.reason_code = "secret-provider-canary"
+    failure.diagnostics = {"body": "secret-provider-canary", "finish_reason": "stop"}
+    guarded = _BudgetedClient(Client(failure=failure), runner, "critic")
+    with pytest.raises(ModelError):
+        guarded.complete_with_image("review", {}, path)
+    details = runner.events[-1]["details"]
+    assert "reason_code" not in details
+    assert details["diagnostics"] == {"finish_reason": "stop"}
+    assert "secret-provider-canary" not in json.dumps(runner.events)
+
+
+def test_non_model_error_contributes_no_diagnostics(tmp_path):
+    runner, path, _, _ = registered(tmp_path)
+    failure = RuntimeError("secret-provider-canary")
+    failure.reason_code = "refusal"
+    guarded = _BudgetedClient(Client(failure=failure), runner, "critic")
+    with pytest.raises(RuntimeError):
+        guarded.complete_with_image("review", {}, path)
+    details = runner.events[-1]["details"]
+    assert "reason_code" not in details and "diagnostics" not in details

@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,9 +19,184 @@ from typing import Any, Protocol
 
 import jsonschema
 
+#: Closed vocabulary of failure reasons an adapter may attach to a
+#: :class:`ModelError`. A code names which local check refused the call;
+#: it never carries provider text. Unknown codes are dropped to ``None``.
+MODEL_ERROR_REASON_CODES: frozenset[str] = frozenset(
+    {
+        "http_error",
+        "network_error",
+        "response_too_large",
+        "invalid_response_json",
+        "response_not_object",
+        "missing_model_identity",
+        "unknown_model_identity",
+        "model_identity_mismatch",
+        "choice_count",
+        "choice_not_object",
+        "finish_reason_not_stop",
+        "message_not_object",
+        "unsupported_message_fields",
+        "refusal",
+        "function_call",
+        "tool_calls",
+        "content_not_string",
+        "content_not_json",
+        "content_not_object",
+        "schema_nonconformance",
+        "schema_unresolvable",
+        "usage_missing",
+        "usage_invalid",
+    }
+)
+
+#: Finish reasons recorded verbatim; any other provider value is recorded
+#: as ``"unrecognized"`` so free text never reaches the run log.
+KNOWN_FINISH_REASONS: frozenset[str] = frozenset(
+    {"stop", "length", "content_filter", "tool_calls", "function_call"}
+)
+
+#: JSON Schema keywords recorded verbatim for a local validation failure.
+KNOWN_SCHEMA_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "type",
+        "required",
+        "additionalProperties",
+        "properties",
+        "enum",
+        "const",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "items",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "minProperties",
+        "maxProperties",
+        "propertyNames",
+        "contains",
+        "anyOf",
+        "allOf",
+        "oneOf",
+        "not",
+        "format",
+        "dependentRequired",
+    }
+)
+
+_SAFE_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$")
+_SAFE_FIELD_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+_SAFE_SCHEMA_PATH_RE = re.compile(r"^[A-Za-z0-9_\[\]/.-]{1,200}$")
+_USAGE_COUNTER_KEYS: tuple[str, ...] = (
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "cached_tokens",
+    "reasoning_tokens",
+)
+_MAX_REPORTED_FIELDS = 8
+
+
+def _non_negative_int(value: Any) -> bool:
+    return type(value) is int and value >= 0
+
+
+def safe_failure_diagnostics(raw: Any) -> dict[str, Any]:
+    """Reduce adapter failure facts to a whitelisted, provider-text-free mapping.
+
+    Only these keys survive, each with a type and charset check:
+    ``finish_reason`` (closed vocabulary, else ``"unrecognized"``),
+    ``observed_model`` (identifier charset, else ``"unrecognized"``),
+    ``model_matches_request`` (bool), ``unsupported_message_fields``
+    (identifier names, at most eight), ``schema_path`` (already
+    redacted by the adapter), ``schema_keyword`` (closed vocabulary, else
+    ``"other"``), ``content_chars`` / ``choice_count`` / ``http_status``
+    (non-negative integers) and ``reported_usage`` (non-negative integer
+    token counters as the provider reported them, not validated against
+    each other). Anything else, including message content, reasoning text
+    and response bodies, is dropped.
+    """
+    if not isinstance(raw, Mapping):
+        return {}
+    out: dict[str, Any] = {}
+    finish = raw.get("finish_reason")
+    if isinstance(finish, str):
+        out["finish_reason"] = (
+            finish if finish in KNOWN_FINISH_REASONS else "unrecognized"
+        )
+    observed = raw.get("observed_model")
+    if isinstance(observed, str):
+        stripped = observed.strip()
+        out["observed_model"] = (
+            stripped if _SAFE_MODEL_ID_RE.fullmatch(stripped) else "unrecognized"
+        )
+    matches = raw.get("model_matches_request")
+    if type(matches) is bool:
+        out["model_matches_request"] = matches
+    fields = raw.get("unsupported_message_fields")
+    if isinstance(fields, (list, tuple, set, frozenset)):
+        names = sorted(
+            {
+                name
+                if isinstance(name, str) and _SAFE_FIELD_NAME_RE.fullmatch(name)
+                # Provider-chosen key names outside the identifier charset
+                # are collapsed rather than echoed.
+                else "[unrecognized]"
+                for name in fields
+            }
+        )
+        out["unsupported_message_fields"] = names[:_MAX_REPORTED_FIELDS]
+    path = raw.get("schema_path")
+    if isinstance(path, str) and _SAFE_SCHEMA_PATH_RE.fullmatch(path):
+        out["schema_path"] = path
+    keyword = raw.get("schema_keyword")
+    if isinstance(keyword, str):
+        out["schema_keyword"] = keyword if keyword in KNOWN_SCHEMA_KEYWORDS else "other"
+    for key in ("content_chars", "choice_count"):
+        if _non_negative_int(raw.get(key)):
+            out[key] = raw[key]
+    status = raw.get("http_status")
+    if type(status) is int and 100 <= status <= 599:
+        out["http_status"] = status
+    usage = raw.get("reported_usage")
+    if isinstance(usage, Mapping):
+        counters = {
+            key: usage[key]
+            for key in _USAGE_COUNTER_KEYS
+            if _non_negative_int(usage.get(key))
+        }
+        if counters:
+            out["reported_usage"] = counters
+    return out
+
 
 class ModelError(Exception):
-    """A model call failed: refusal, nonzero exit, or malformed answer."""
+    """A model call failed: refusal, nonzero exit, or malformed answer.
+
+    Adapters may attach ``reason_code`` (one of
+    :data:`MODEL_ERROR_REASON_CODES`) and ``diagnostics`` (reduced through
+    :func:`safe_failure_diagnostics`). Both are safe to log: neither can
+    carry provider message content, reasoning text or credentials. The
+    exception message stays a fixed adapter-authored string.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        reason_code: str | None = None,
+        diagnostics: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(*args)
+        self.reason_code: str | None = (
+            reason_code if reason_code in MODEL_ERROR_REASON_CODES else None
+        )
+        self.diagnostics: dict[str, Any] = safe_failure_diagnostics(diagnostics)
 
 
 def structured_image_schema(schema: Mapping[str, Any]) -> dict[str, Any]:

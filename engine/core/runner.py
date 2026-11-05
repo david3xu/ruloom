@@ -151,6 +151,32 @@ def usage_tokens(usage: Any, adapter: str | None = None) -> int:
     return total
 
 
+def _safe_failure_facts(exc: BaseException) -> dict[str, Any]:
+    """Whitelisted failure facts an adapter attached to a model error.
+
+    Only a :class:`models.base.ModelError` contributes, and its fields are
+    reduced again here, so a forged or subclassed exception cannot smuggle
+    provider text into the run log. The facts are diagnostic only: they
+    never change usage accounting, the unknown-usage guard or any verdict.
+    """
+    from models.base import (
+        MODEL_ERROR_REASON_CODES,
+        ModelError,
+        safe_failure_diagnostics,
+    )
+
+    if not isinstance(exc, ModelError):
+        return {}
+    facts: dict[str, Any] = {}
+    reason = getattr(exc, "reason_code", None)
+    if isinstance(reason, str) and reason in MODEL_ERROR_REASON_CODES:
+        facts["reason_code"] = reason
+    diagnostics = safe_failure_diagnostics(getattr(exc, "diagnostics", None))
+    if diagnostics:
+        facts["diagnostics"] = diagnostics
+    return facts
+
+
 class _BudgetedClient:
     """A model client wrapper that enforces the run token budget.
 
@@ -234,6 +260,7 @@ class _BudgetedClient:
                 "error": f"{type(exc).__name__}: {exc}",
                 "returned_model": "unknown",
             }
+            failure.update(_safe_failure_facts(exc))
             if attached_info is not None:
                 self._runner._vision_usage_uncertain = True
                 failure.update(

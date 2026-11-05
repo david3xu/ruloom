@@ -20,12 +20,14 @@ from profiles.hylogger.validation.cases import (
 from profiles.hylogger.validation.workflow import (
     CASE_CHECK_IDS,
     CASE_MEASUREMENT_KEYS,
+    PROHIBITED_PROSE_PATTERNS,
     _canonical_bytes,
     assess_case_source,
     build_case_members,
     case_check_results,
     evaluate_case_context,
     prepare_case_context,
+    prohibited_prose_contract,
     repair_case_plan,
     research_case,
     review_case_candidate,
@@ -1803,3 +1805,163 @@ def test_research_case_paraphrase_and_negation_in_supported_reqs(
     assert "mineral grade" in unsupported_text
     assert "predict mineral" in unsupported_text
     assert "guarantee anonymity" in unsupported_text
+
+
+# =====================================================================
+# Prose screen output contract and diagnosability
+# =====================================================================
+
+
+class _StopAfterPrompt(Exception):
+    pass
+
+
+def _prompt_capturing_model() -> MockStructuredModel:
+    def responder(prompt: str, schema: Mapping[str, Any]) -> Any:
+        raise _StopAfterPrompt
+
+    return MockStructuredModel(responder)
+
+
+def _scalar_case_ctx(tmp_path: Path) -> dict[str, Any]:
+    src = _make_source_csv(tmp_path, n_rows=120)
+    spec = {
+        "case": {"id": "hylogger_scalar_teaching_v1", "version": 1},
+        "target_rows": 200,
+        "source": {"sha256": hashlib.sha256(src.read_bytes()).hexdigest()},
+        "outputs": ["scalar"],
+    }
+    return prepare_case_context(src, spec)
+
+
+def _research_payload(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "case_id": "hylogger_scalar_teaching_v1",
+        "case_version": 1,
+        "cited_evidence_ids": ["auscope_nvcl"],
+        "supported_requirements": ["scalar table"],
+        "unsupported_requirements": [],
+        "research_summary": "Admitted evidence supports scalar quality checking.",
+        "limitations": ["Does not establish industry standard tolerances."],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_prose_contract_lists_every_screened_term() -> None:
+    clause = prohibited_prose_contract(("research_summary", "limitations"))
+    for term in PROHIBITED_PROSE_PATTERNS:
+        assert repr(term) in clause
+    assert "even in a negated sentence" in clause
+    assert "research_summary, limitations" in clause
+
+
+def test_all_three_screened_roles_publish_the_contract(tmp_path: Path) -> None:
+    ctx = _scalar_case_ctx(tmp_path)
+    research_model = _prompt_capturing_model()
+    with pytest.raises(_StopAfterPrompt):
+        research_case(research_model, "teach scalar QC", ctx)
+    assert (
+        prohibited_prose_contract(("research_summary", "limitations"))
+        in research_model.recorded_prompts[0]
+    )
+
+    assess_model = _prompt_capturing_model()
+    with pytest.raises(_StopAfterPrompt):
+        assess_case_source(assess_model, ctx)
+    assert (
+        prohibited_prose_contract(
+            ("fit_assessment", "teaching_suitability", "source_limitations")
+        )
+        in assess_model.recorded_prompts[0]
+    )
+
+    cand_bytes = _make_candidate_csv(tmp_path, n_rows=200)
+    report = evaluate_case_context(cand_bytes, ctx)
+    review_model = _prompt_capturing_model()
+    with pytest.raises(_StopAfterPrompt):
+        review_case_candidate(review_model, cand_bytes, ctx, report)
+    assert (
+        prohibited_prose_contract(("evaluator_opinion", "strengths", "concerns"))
+        in review_model.recorded_prompts[0]
+    )
+
+
+def test_negated_disclaimer_is_still_rejected_and_diagnosable(
+    tmp_path: Path,
+) -> None:
+    """Positive control: the screen is not weakened for negated text."""
+    ctx = _scalar_case_ctx(tmp_path)
+    payload = _research_payload(
+        limitations=[
+            "Does not establish industry standard tolerances.",
+            "No privacy or anonymity guarantee is made.",
+        ]
+    )
+    with pytest.raises(ValueError) as info:
+        research_case(MockStructuredModel(payload), "teach scalar QC", ctx)
+    message = str(info.value)
+    assert message.startswith(
+        "limitations[1] contains unverified or prohibited claim: 'anonymity'"
+    )
+    assert "negation marker nearby: yes" in message
+    # The rejected sentence itself is not echoed.
+    assert "guarantee is made" not in message
+
+
+def test_affirmative_claim_rejected_with_no_negation(tmp_path: Path) -> None:
+    ctx = _scalar_case_ctx(tmp_path)
+    payload = _research_payload(research_summary="The output preserves anonymity.")
+    with pytest.raises(ValueError, match="negation marker nearby: no"):
+        research_case(MockStructuredModel(payload), "teach scalar QC", ctx)
+
+
+@pytest.mark.parametrize("term", PROHIBITED_PROSE_PATTERNS)
+def test_every_screened_term_still_rejects(tmp_path: Path, term: str) -> None:
+    ctx = _scalar_case_ctx(tmp_path)
+    payload = _research_payload(limitations=[f"Note: {term.upper()} here."])
+    with pytest.raises(ValueError, match="prohibited claim"):
+        research_case(MockStructuredModel(payload), "teach scalar QC", ctx)
+
+
+def test_admitted_passage_digest_in_prose_is_not_a_claim(tmp_path: Path) -> None:
+    """Negative control: an admitted SHA-256 whose hex contains 'cc0'."""
+    ctx = _scalar_case_ctx(tmp_path)
+    digest = get_evidence_pack()["gswa_hackathon_2026"]["passage_sha256"]
+    assert "cc0" in digest
+    payload = _research_payload(
+        research_summary=f"Passage sha256:{digest} is cited for context."
+    )
+    advisory = research_case(MockStructuredModel(payload), "teach scalar QC", ctx)
+    assert digest in advisory["research_summary"]
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "cc0",
+        "CC0 licensed",
+        "a" * 63 + "cc0",  # 66 hex chars: not a digest token
+        "g" + "0" * 61 + "cc0",  # non-hex neighbour
+        "x" + "0" * 61 + "cc0x",  # embedded in a word
+    ],
+)
+def test_non_digest_cc0_still_rejected(tmp_path: Path, token: str) -> None:
+    ctx = _scalar_case_ctx(tmp_path)
+    payload = _research_payload(research_summary=f"Data is {token}.")
+    with pytest.raises(ValueError, match="'cc0'"):
+        research_case(MockStructuredModel(payload), "teach scalar QC", ctx)
+
+
+def test_review_and_assess_errors_name_item_index(tmp_path: Path) -> None:
+    ctx = _scalar_case_ctx(tmp_path)
+    assess_payload = {
+        "case_id": "hylogger_scalar_teaching_v1",
+        "source_sha256": ctx["binding"]["source_sha256"],
+        "cited_evidence_ids": ["auscope_nvcl"],
+        "fit_assessment": "Aggregates fit the teaching table.",
+        "source_limitations": ["One constant spacing.", "Not safe to publish."],
+        "teaching_suitability": "ok",
+    }
+    with pytest.raises(ValueError, match=r"^source_limitations\[1\] contains"):
+        assess_case_source(MockStructuredModel(assess_payload), ctx)
