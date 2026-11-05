@@ -1,0 +1,102 @@
+{
+ "decisions": [
+  {
+   "timestamp": "2026-11-01T08:32:48.233Z",
+   "event_id": null,
+   "source": "muse-front-door",
+   "summary": "[owner] directed checking the previous Assayer design files and confirmed Ruloom is broader than the current HyLogger-only implementation. Decisions settled 2026-11-01: (1) Scope: generic engine core plus a common tabular profile now; HyLogger remains a specialized profile; extension contracts for \u2026"
+  },
+  {
+   "timestamp": "2026-11-01T07:40:31.234Z",
+   "event_id": null,
+   "source": "muse-front-door",
+   "summary": "Decision: Ruloom Loop 6 (steps 10+12+13, first-stage product): engine/hashing.py + engine/runlog.py (append-only hash-chained JSONL) and engine/cli.py (pyproject script ruloom = engine.cli:main) running intake hash+provenance, statistics profile, Spark contributor plan, generate/validate/repair wit\u2026"
+  },
+  {
+   "timestamp": "2026-11-01T07:22:31.084Z",
+   "event_id": null,
+   "source": "muse-front-door",
+   "summary": "Decision: Ruloom Loop 4 (Step 8): models/meta_cli.py adapter calling muse exec with --output-schema, --json, --contributor-mode on, effort max, parsing structured output plus usage; profiles/hylogger/plan.py strict PLAN_SCHEMA (seed, n_rows), statistics-only prompt, jsonschema validation. One real \u2026"
+  },
+  {
+   "timestamp": "2026-11-01T07:10:38.346Z",
+   "event_id": null,
+   "source": "muse-front-door",
+   "summary": "Decision: Ruloom Loop 3 (Step 6 generator) proceeds under Datacore project ruloom in ~/workspace/ruloom (repo david3xu/ruloom, main 5a6c69f after rebrand). muse-worker@muse-spark-1.3-contributor implements profiles/hylogger/generate.py on branch loop3/generator: seeded code only from the statistics\u2026"
+  },
+  {
+   "timestamp": "2026-11-04T23:02:18.856Z",
+   "event_id": null,
+   "source": "codex-front-door",
+   "summary": "Owner explicitly changed the implementation-worker choice: use native Claude Code directly for remaining Ruloom implementation and fixes; do not use AGY now because it is too slow. Codex CLI remains manager and performs independent audit, final tests and protectedPR integration. Handoff revised to \u2026"
+  },
+  {
+   "timestamp": "2026-11-04T04:47:14.133Z",
+   "event_id": null,
+   "source": "codex-front-door",
+   "summary": "Owner authorised improving Ruloom toward product readiness after the human-style request failure and explicitly permits AGY CLI to help implementation. Use AGY Claude Opus5.5high in an isolated source-free checkout for a bounded capability-description and request-workflow correction; Codex personal\u2026"
+  },
+  {
+   "timestamp": "2026-11-03T23:13:20.410Z",
+   "event_id": null,
+   "source": "codex-front-door",
+   "summary": "Owner authorised a live controlled Ruloom product test using AGY with Claude Opus 5.5 at high reasoning effort; only after it passes, repeat the same frozen case through Muse. Codex will work personally, keep provider results and runtime identities separate, preserve source files and uv.lock, and r\u2026"
+  },
+  {
+   "timestamp": "2026-11-03T13:32:10.988Z",
+   "event_id": null,
+   "source": "codex-front-door",
+   "summary": "Owner authorised building Ruloom as a product now and deferred real model comparisons. Design: offline policy refuses all model calls including repair; local-only policy explicitly routes text planner to loopback Glimmer and never falls back to hosted. Add a separate draft-request preparation comma\u2026"
+  },
+  {
+   "timestamp": "2026-11-02T17:00:41.767Z",
+   "event_id": null,
+   "source": "muse-front-door",
+   "summary": "Decision: implement HP-04 (wheel backend build + installed console-script smoke) on branch hp04/wheel-build from main 5724918. Replace the hand-rolled stdlib wheel in tests/test_wheel_cli.py with a real hatchling backend build, installed + exercised via the real ruloom console entrypoint outside th\u2026"
+  },
+  {
+   "timestamp": "2026-11-01T13:43:58.350Z",
+   "event_id": null,
+   "source": "muse-front-door",
+   "summary": "[owner] supplied Codex's Ruloom audit (12 findings R01-R12, personally reproduced against f329c64) and the corrective plan 12-ruloom-quality-implementation-plan.md, ordering implementation in order starting RP-00 then RP-01, with executable gates, meaningful rejection tests, independent review, and\u2026"
+  },
+  {
+   "timestamp": "2026-11-01T09:10:45.069Z",
+   "event_id": null,
+   "source": "muse-front-door",
+   "summary": "Loop 7 closed. Generic engine per 08: declarative JSON manifests for hylogger and tabular profiles declaring capabilities with permissions (reads_raw_source, calls_model, advisory, writes_verdict) and step/loop/gate graphs; engine/core records.py holds Run/Attempt/Artifact/EngineCheckResult/Decisio\u2026"
+  },
+  {
+   "timestamp": "2026-11-01T08:14:48.372Z",
+   "event_id": null,
+   "source": "muse-front-door",
+   "summary": "Loop 6 closed. Review rl-loop6-review by muse-review@muse-spark-1.3-contributor returned APPROVED: all 7 force-pass rules PASS with independent evidence (gate exit 0, pytest 134 passed, artifact be9e26d7 hash equals directory, release.zip 46c7c071 7 members, runlog chain verifies, verdict pass). Re\u2026"
+  },
+  {
+   "timestamp": "2026-11-01T07:43:06.215Z",
+   "event_id": null,
+   "source": "muse-front-door",
+   "summary": "Decision by [owner]: every pass must consider documentation and coding rules as FORCED PASS rules, not simple instructions. Front door will land an AGENTS.md force-pass gate in the ruloom repo root at the Loop 6 merge point (not mid-run, to avoid moving the working tree under the worker): numbered \u2026"
+  },
+  {
+   "timestamp": "2026-11-01T07:41:59.563Z",
+   "event_id": null,
+   "source": "muse-front-door",
+   "summary": "Standing implementation rule from [owner] for Ruloom: directory structure, folder and file naming must show the project clearly; each code file reflects one feature; shared features are reused, never re-implemented; feature boundaries stay clear and concise with clear interactions; documentation fo\u2026"
+  },
+  {
+   "timestamp": "2026-11-01T07:32:02.444Z",
+   "event_id": null,
+   "source": "muse-front-door",
+   "summary": "Decision: Ruloom Loop 5 (Step 9 repair loop): profiles/hylogger/repair.py bounded by required max_attempts with no default, repair prompt carries failed check JSON + current plan + Profile statistics only, revised plans validated against PLAN_SCHEMA, exhaustion returns failing verdict. Fake-model t\u2026"
+  }
+ ],
+ "lessons": [
+  {
+   "timestamp": "2026-11-03T23:50:39.728Z",
+   "event_id": null,
+   "source": "codex-front-door",
+   "summary": "Live AGY request interpretation showed a false refusal when Ruloom's prompt conflated stated intended use with an implicit quality guarantee. Clarify that a demo purpose is context unless the user explicitly demands fitness/privacy/licensing guarantees, and clarify that the tool supplies and locall\u2026"
+  }
+ ]
+}

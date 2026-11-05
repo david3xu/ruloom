@@ -1,0 +1,61 @@
+{
+ "tasks": 122,
+ "events": 774,
+ "decisions": 15,
+ "lessons": 1,
+ "ledgers": 56,
+ "task_created_range": [
+  "2026-11-01T07:10:43.947Z",
+  "2026-11-04T12:12:42.995Z"
+ ],
+ "event_range": [
+  "2026-11-01T07:10:43.947Z",
+  "2026-11-04T15:46:38.114Z"
+ ],
+ "final_status": {
+  "completed": 115,
+  "blocked": 4,
+  "in_progress": 3
+ },
+ "review_verdicts": {
+  "None": 70,
+  "approved": 51,
+  "rework_requested": 1
+ },
+ "event_types": {
+  "task_start": 122,
+  "coordination_claimed": 138,
+  "coordination_dispatch_requested": 133,
+  "coordination_dispatched": 131,
+  "task_complete": 130,
+  "task_review_verdict": 52,
+  "task_update": 43,
+  "task_action_request": 11,
+  "coordination_failed": 4,
+  "coordination_escalated": 5,
+  "task_block": 5
+ },
+ "assignees": {
+  "muse-worker@muse-spark-1.3-contributor": 62,
+  "muse-review@muse-spark-1.3-contributor": 53,
+  "codex-front-door": 3,
+  "agy@gemini-3.8-flash-high": 3,
+  "claude-review@sonnet": 1
+ },
+ "event_sources": {
+  "muse-front-door": 126,
+  "coordinator-main": 144,
+  "muse-worker@muse-spark-1.3-contributor": 179,
+  "host-worker-bridge": 135,
+  "muse-review@muse-spark-1.3-contributor": 173,
+  "codex-front-door": 17
+ },
+ "tasks_with_verified_commits": 114,
+ "distinct_verified_commits": 112,
+ "per_day_tasks": {
+  "2026-11-01": 47,
+  "2026-11-02": 53,
+  "2026-11-03": 17,
+  "2026-11-04": 5
+ }
+}
