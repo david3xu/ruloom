@@ -160,18 +160,21 @@ def _safe_failure_facts(exc: BaseException) -> dict[str, Any]:
     never change usage accounting, the unknown-usage guard or any verdict.
     """
     from models.base import (
-        MODEL_ERROR_REASON_CODES,
         ModelError,
+        canonical_reason_code,
         safe_failure_diagnostics,
     )
 
     if not isinstance(exc, ModelError):
         return {}
     facts: dict[str, Any] = {}
-    reason = getattr(exc, "reason_code", None)
-    if isinstance(reason, str) and reason in MODEL_ERROR_REASON_CODES:
+    try:
+        reason = canonical_reason_code(getattr(exc, "reason_code", None))
+        diagnostics = safe_failure_diagnostics(getattr(exc, "diagnostics", None))
+    except Exception:
+        return {}
+    if reason is not None:
         facts["reason_code"] = reason
-    diagnostics = safe_failure_diagnostics(getattr(exc, "diagnostics", None))
     if diagnostics:
         facts["diagnostics"] = diagnostics
     return facts
@@ -255,6 +258,10 @@ class _BudgetedClient:
                 ):
                     raise RunnerError("image response has no observed model identity")
         except Exception as exc:
+            if attached_info is not None:
+                # Set before any failure bookkeeping so the guard never
+                # depends on diagnostics reduction succeeding.
+                self._runner._vision_usage_uncertain = True
             failure = {
                 "role": self._role,
                 "error": f"{type(exc).__name__}: {exc}",

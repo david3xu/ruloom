@@ -425,3 +425,22 @@ def test_non_model_error_contributes_no_diagnostics(tmp_path):
         guarded.complete_with_image("review", {}, path)
     details = runner.events[-1]["details"]
     assert "reason_code" not in details and "diagnostics" not in details
+
+
+def test_subclassed_reason_code_on_model_error_is_not_logged(tmp_path):
+    class Sneaky(str):
+        def __eq__(self, other):
+            return True
+
+        def __hash__(self):
+            return hash("refusal")
+
+    runner, path, _, _ = registered(tmp_path)
+    failure = ModelError("x")
+    failure.reason_code = Sneaky("secret-provider-canary")
+    guarded = _BudgetedClient(Client(failure=failure), runner, "critic")
+    with pytest.raises(ModelError):
+        guarded.complete_with_image("review", {}, path)
+    assert "reason_code" not in runner.events[-1]["details"]
+    assert runner._vision_usage_uncertain is True
+    assert "secret-provider-canary" not in json.dumps(runner.events)

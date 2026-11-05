@@ -1965,3 +1965,21 @@ def test_review_and_assess_errors_name_item_index(tmp_path: Path) -> None:
     }
     with pytest.raises(ValueError, match=r"^source_limitations\[1\] contains"):
         assess_case_source(MockStructuredModel(assess_payload), ctx)
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "Released as CC-0" + "a" * 63 + " now.",
+        "Licensed " + "0" * 62 + "cc-0 waiver.",
+        "Digest " + "0" * 61 + "cc0 is CC0.",
+    ],
+)
+def test_term_touching_a_digest_token_is_still_rejected(
+    tmp_path: Path, summary: str
+) -> None:
+    """Regression: only a match wholly inside a digest token is exempt."""
+    ctx = _scalar_case_ctx(tmp_path)
+    payload = _research_payload(research_summary=summary)
+    with pytest.raises(ValueError, match="prohibited claim"):
+        research_case(MockStructuredModel(payload), "teach scalar QC", ctx)

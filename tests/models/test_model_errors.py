@@ -74,3 +74,56 @@ def test_field_names_bounded_and_sorted() -> None:
 def test_non_mapping_input_yields_empty() -> None:
     assert safe_failure_diagnostics(CANARY) == {}
     assert safe_failure_diagnostics(None) == {}
+
+
+class _SneakyStr(str):
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    def __hash__(self) -> int:
+        return hash("refusal")
+
+
+def test_str_subclass_reason_code_cannot_pass() -> None:
+    assert ModelError("x", reason_code=_SneakyStr(CANARY)).reason_code is None
+
+
+def test_unhashable_reason_code_does_not_raise() -> None:
+    assert ModelError("x", reason_code=["refusal"]).reason_code is None  # type: ignore[arg-type]
+
+
+def test_canonical_member_is_stored() -> None:
+    code = "".join(["ref", "usal"])
+    err = ModelError("x", reason_code=code)
+    assert err.reason_code in MODEL_ERROR_REASON_CODES
+    assert type(err.reason_code) is str
+
+
+class _TwoFacedDict(dict):
+    def get(self, key: Any, default: Any = None) -> Any:
+        return 5 if key == "content_chars" else super().get(key, default)
+
+
+def test_mapping_get_and_getitem_disagreement_cannot_leak() -> None:
+    diag = safe_failure_diagnostics(_TwoFacedDict(content_chars=CANARY))
+    assert diag == {"content_chars": 5}
+    assert CANARY not in str(diag)
+
+
+def test_str_subclass_values_are_not_echoed() -> None:
+    diag = safe_failure_diagnostics(
+        {
+            "observed_model": _SneakyStr("ok-model"),
+            "finish_reason": _SneakyStr("stop"),
+            "unsupported_message_fields": [_SneakyStr("annotations")],
+        }
+    )
+    assert diag == {"unsupported_message_fields": ["[unrecognized]"]}
+
+
+def test_raising_mapping_yields_empty() -> None:
+    class Boom(dict):
+        def get(self, key: Any, default: Any = None) -> Any:
+            raise RuntimeError(CANARY)
+
+    assert safe_failure_diagnostics(Boom()) == {}

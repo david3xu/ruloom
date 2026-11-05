@@ -192,9 +192,10 @@ The screen is lexical and rejects a listed term in any context, including a nega
 sentence or a disclaimer that echoes the user request. Each screened role's prompt
 therefore ends with `prohibited_prose_contract(...)`, which names the screened fields
 and every term in `PROHIBITED_PROSE_PATTERNS`, and points to the installed case's fixed
-limitations for the privacy, licensing and scientific-validity non-claims. Only
-64-character hexadecimal digest tokens are removed before screening, because an admitted
-passage SHA-256 contains a screened substring as hex. A rejection names the field and item
+limitations for the privacy, licensing and scientific-validity non-claims. The only
+exemption is a term occurrence lying wholly inside a 64-character hexadecimal digest token,
+because an admitted passage SHA-256 contains a screened substring as hex; an occurrence that
+touches or straddles a digest is still rejected. A rejection names the field and item
 index (for example `limitations[1]`), the matched term and whether a negation marker sat
 nearby; it does not echo the rejected sentence.
 
