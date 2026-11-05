@@ -185,11 +185,13 @@ PROHIBITED_PROSE_PATTERNS: tuple[str, ...] = (
 
 HEX64_LOWERCASE_RE = re.compile(r"^[0-9a-f]{64}$")
 
-#: A SHA-256 digest token inside prose (bounded by non-alphanumerics).
-#: Digests are identifiers, never claims, and an admitted passage digest
-#: already contains a screened substring as hex, so digest tokens are
-#: removed before the prose screen runs. Nothing else is exempted.
-_PROSE_DIGEST_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])[0-9a-fA-F]{64}(?![0-9A-Za-z])")
+#: A SHA-256 digest token inside lowercased prose (bounded by characters
+#: that are not ASCII letters or digits). Digests are identifiers, never
+#: claims, and an admitted passage digest contains a screened substring as
+#: hex. A pattern occurrence is exempt only when its whole span lies inside
+#: one such token; an occurrence that merely touches or straddles a digest
+#: (for example ``cc-0`` split by the hyphen) is still rejected.
+_PROSE_DIGEST_TOKEN_RE = re.compile(r"(?<![0-9a-z])[0-9a-f]{64}(?![0-9a-z])")
 
 
 def prohibited_prose_contract(fields: Sequence[str]) -> str:
@@ -615,9 +617,16 @@ def _check_prohibited_prose(text: str, context_label: str) -> None:
     index), the matched pattern and whether a negation marker preceded it,
     so a rejected answer is diagnosable without echoing the model's prose.
     """
-    t_lower = _PROSE_DIGEST_TOKEN_RE.sub(" ", text).lower()
+    t_lower = text.lower()
+    digest_spans = [m.span() for m in _PROSE_DIGEST_TOKEN_RE.finditer(t_lower)]
     for pattern in PROHIBITED_PROSE_PATTERNS:
-        if pattern in t_lower:
+        start = t_lower.find(pattern)
+        while start != -1:
+            end = start + len(pattern)
+            if not any(lo <= start and end <= hi for lo, hi in digest_spans):
+                break
+            start = t_lower.find(pattern, start + 1)
+        if start != -1:
             negated = not _is_affirmatively_requested(t_lower, pattern)
             raise ValueError(
                 f"{context_label} contains unverified or prohibited claim: {pattern!r} "

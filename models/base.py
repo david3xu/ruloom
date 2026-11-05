@@ -101,10 +101,41 @@ _USAGE_COUNTER_KEYS: tuple[str, ...] = (
     "reasoning_tokens",
 )
 _MAX_REPORTED_FIELDS = 8
+_DIAGNOSTIC_KEYS: tuple[str, ...] = (
+    "finish_reason",
+    "observed_model",
+    "model_matches_request",
+    "unsupported_message_fields",
+    "schema_path",
+    "schema_keyword",
+    "content_chars",
+    "choice_count",
+    "http_status",
+    "reported_usage",
+)
 
 
 def _non_negative_int(value: Any) -> bool:
     return type(value) is int and value >= 0
+
+
+def canonical_reason_code(value: Any) -> str | None:
+    """Return the vocabulary's own constant for ``value``, else ``None``.
+
+    Only an exact ``str`` is compared, and the stored object is the
+    vocabulary member, so a ``str`` subclass with custom equality or an
+    unhashable value can neither pass through nor raise.
+    """
+    if type(value) is not str:
+        return None
+    for code in MODEL_ERROR_REASON_CODES:
+        if code == value:
+            return code
+    return None
+
+
+def _exact_str(value: Any) -> str | None:
+    return str.__str__(value) if type(value) is str else None
 
 
 def safe_failure_diagnostics(raw: Any) -> dict[str, Any]:
@@ -124,55 +155,66 @@ def safe_failure_diagnostics(raw: Any) -> dict[str, Any]:
     """
     if not isinstance(raw, Mapping):
         return {}
+    try:
+        # One read per key into a plain dict: later checks and stores use
+        # the same value, so a Mapping whose get and [] disagree cannot
+        # pass one value through the check and store another.
+        values = {key: raw.get(key) for key in _DIAGNOSTIC_KEYS}
+    except Exception:
+        return {}
     out: dict[str, Any] = {}
-    finish = raw.get("finish_reason")
-    if isinstance(finish, str):
+    finish = _exact_str(values["finish_reason"])
+    if finish is not None:
         out["finish_reason"] = (
             finish if finish in KNOWN_FINISH_REASONS else "unrecognized"
         )
-    observed = raw.get("observed_model")
-    if isinstance(observed, str):
+    observed = _exact_str(values["observed_model"])
+    if observed is not None:
         stripped = observed.strip()
         out["observed_model"] = (
             stripped if _SAFE_MODEL_ID_RE.fullmatch(stripped) else "unrecognized"
         )
-    matches = raw.get("model_matches_request")
+    matches = values["model_matches_request"]
     if type(matches) is bool:
-        out["model_matches_request"] = matches
-    fields = raw.get("unsupported_message_fields")
-    if isinstance(fields, (list, tuple, set, frozenset)):
-        names = sorted(
-            {
-                name
-                if isinstance(name, str) and _SAFE_FIELD_NAME_RE.fullmatch(name)
-                # Provider-chosen key names outside the identifier charset
-                # are collapsed rather than echoed.
+        out["model_matches_request"] = bool(matches)
+    fields = values["unsupported_message_fields"]
+    if type(fields) in (list, tuple, set, frozenset):
+        names: set[str] = set()
+        for name in list(fields)[:256]:
+            exact = _exact_str(name)
+            # Provider-chosen key names outside the identifier charset
+            # are collapsed rather than echoed.
+            names.add(
+                exact
+                if exact is not None and _SAFE_FIELD_NAME_RE.fullmatch(exact)
                 else "[unrecognized]"
-                for name in fields
-            }
-        )
-        out["unsupported_message_fields"] = names[:_MAX_REPORTED_FIELDS]
-    path = raw.get("schema_path")
-    if isinstance(path, str) and _SAFE_SCHEMA_PATH_RE.fullmatch(path):
+            )
+        out["unsupported_message_fields"] = sorted(names)[:_MAX_REPORTED_FIELDS]
+    path = _exact_str(values["schema_path"])
+    if path is not None and _SAFE_SCHEMA_PATH_RE.fullmatch(path):
         out["schema_path"] = path
-    keyword = raw.get("schema_keyword")
-    if isinstance(keyword, str):
+    keyword = _exact_str(values["schema_keyword"])
+    if keyword is not None:
         out["schema_keyword"] = keyword if keyword in KNOWN_SCHEMA_KEYWORDS else "other"
     for key in ("content_chars", "choice_count"):
-        if _non_negative_int(raw.get(key)):
-            out[key] = raw[key]
-    status = raw.get("http_status")
+        if _non_negative_int(values[key]):
+            out[key] = int(values[key])
+    status = values["http_status"]
     if type(status) is int and 100 <= status <= 599:
-        out["http_status"] = status
-    usage = raw.get("reported_usage")
+        out["http_status"] = int(status)
+    usage = values["reported_usage"]
     if isinstance(usage, Mapping):
-        counters = {
-            key: usage[key]
-            for key in _USAGE_COUNTER_KEYS
-            if _non_negative_int(usage.get(key))
+        try:
+            counters = {key: usage.get(key) for key in _USAGE_COUNTER_KEYS}
+        except Exception:
+            counters = {}
+        kept = {
+            key: int(value)
+            for key, value in counters.items()
+            if _non_negative_int(value)
         }
-        if counters:
-            out["reported_usage"] = counters
+        if kept:
+            out["reported_usage"] = kept
     return out
 
 
@@ -193,9 +235,7 @@ class ModelError(Exception):
         diagnostics: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(*args)
-        self.reason_code: str | None = (
-            reason_code if reason_code in MODEL_ERROR_REASON_CODES else None
-        )
+        self.reason_code: str | None = canonical_reason_code(reason_code)
         self.diagnostics: dict[str, Any] = safe_failure_diagnostics(diagnostics)
 
 
