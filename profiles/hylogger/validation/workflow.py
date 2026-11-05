@@ -185,6 +185,33 @@ PROHIBITED_PROSE_PATTERNS: tuple[str, ...] = (
 
 HEX64_LOWERCASE_RE = re.compile(r"^[0-9a-f]{64}$")
 
+#: A SHA-256 digest token inside prose (bounded by non-alphanumerics).
+#: Digests are identifiers, never claims, and an admitted passage digest
+#: already contains a screened substring as hex, so digest tokens are
+#: removed before the prose screen runs. Nothing else is exempted.
+_PROSE_DIGEST_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])[0-9a-fA-F]{64}(?![0-9A-Za-z])")
+
+
+def prohibited_prose_contract(fields: Sequence[str]) -> str:
+    """Prompt clause publishing the exact prose screen a role's answer must meet.
+
+    The screen itself is unchanged and lexical: any listed term in a
+    screened field rejects the whole answer, including inside a negated
+    sentence or a disclaimer. Telling the role this up front is an output
+    contract, not a relaxation; code still applies every pattern.
+    """
+    names = ", ".join(fields)
+    terms = "; ".join(repr(t) for t in PROHIBITED_PROSE_PATTERNS)
+    return (
+        f"\nOutput prose contract: code screens {names} case-insensitively "
+        "and rejects the entire answer if any of these terms appears anywhere, "
+        "even in a negated sentence, a disclaimer or a quotation of the user "
+        f"request: {terms}. Do not use those terms in those fields. "
+        "The installed case's fixed limitations, which code records in the "
+        "release, already state the privacy, licensing and scientific-validity "
+        "non-claims, so do not restate them."
+    )
+
 
 @runtime_checkable
 class StructuredModel(Protocol):
@@ -581,12 +608,21 @@ def _is_affirmatively_requested(purpose: str, domain: str) -> bool:
 
 
 def _check_prohibited_prose(text: str, context_label: str) -> None:
-    """Screen text fields against prohibited prose patterns across AI advisory roles."""
-    t_lower = text.lower()
+    """Screen text fields against prohibited prose patterns across AI advisory roles.
+
+    Lexical and fail-closed: a pattern anywhere in the text rejects it,
+    whether or not it is negated. The error names the field (with item
+    index), the matched pattern and whether a negation marker preceded it,
+    so a rejected answer is diagnosable without echoing the model's prose.
+    """
+    t_lower = _PROSE_DIGEST_TOKEN_RE.sub(" ", text).lower()
     for pattern in PROHIBITED_PROSE_PATTERNS:
         if pattern in t_lower:
+            negated = not _is_affirmatively_requested(t_lower, pattern)
             raise ValueError(
-                f"{context_label} contains unverified or prohibited claim: {pattern!r}"
+                f"{context_label} contains unverified or prohibited claim: {pattern!r} "
+                f"(rejected in any context; negation marker nearby: "
+                f"{'yes' if negated else 'no'})"
             )
 
 
@@ -2025,6 +2061,7 @@ def research_case(
         "Do NOT invent citations or references. Do NOT approve data or alter thresholds. "
         "Any requests for geological predictions, core photographs, reflectance curves, "
         "privacy guarantees, or live web search must be reported in unsupported_requirements."
+        + prohibited_prose_contract(("research_summary", "limitations"))
     )
 
     resp = _invoke_structured_model(model, prompt, RESEARCH_CASE_SCHEMA)
@@ -2090,8 +2127,8 @@ def research_case(
     # Reject fraudulent free-form claims in research_summary and limitations
     summary_text = str(resp.get("research_summary", ""))
     _check_prohibited_prose(summary_text, "research_summary")
-    for lim in resp.get("limitations", []):
-        _check_prohibited_prose(lim, "limitations")
+    for index, lim in enumerate(resp.get("limitations", [])):
+        _check_prohibited_prose(lim, f"limitations[{index}]")
 
     return {
         "advisory_kind": "case_research",
@@ -2181,6 +2218,9 @@ def assess_case_source(model: Any, context: Mapping[str, Any]) -> dict[str, Any]
         f"Admitted evidence IDs: {admitted_ids}\n"
         "Explain source fit and limitations for the teaching lesson. "
         "You have no authority to approve sources or waive code checks."
+        + prohibited_prose_contract(
+            ("fit_assessment", "teaching_suitability", "source_limitations")
+        )
     )
 
     resp = _invoke_structured_model(model, prompt, ASSESS_SOURCE_SCHEMA)
@@ -2203,8 +2243,8 @@ def assess_case_source(model: Any, context: Mapping[str, Any]) -> dict[str, Any]
     _check_prohibited_prose(
         str(resp.get("teaching_suitability", "")), "teaching_suitability"
     )
-    for lim in resp.get("source_limitations", []):
-        _check_prohibited_prose(lim, "source_limitations")
+    for index, lim in enumerate(resp.get("source_limitations", [])):
+        _check_prohibited_prose(lim, f"source_limitations[{index}]")
 
     return {
         "advisory_kind": "source_assessment",
@@ -2373,6 +2413,7 @@ def review_case_candidate(
         '{"measurement": "<path>", "value": <exact numeric value>} '
         "referencing only verified measurement paths from the map above. "
         "Evaluator opinion is unverified advisory text and carries no authority to accept data or alter checks."
+        + prohibited_prose_contract(("evaluator_opinion", "strengths", "concerns"))
     )
 
     resp = _invoke_structured_model(model, prompt, REVIEW_CANDIDATE_SCHEMA)
@@ -2406,10 +2447,10 @@ def review_case_candidate(
 
     opinion_text = str(resp.get("evaluator_opinion", ""))
     _check_prohibited_prose(opinion_text, "evaluator_opinion")
-    for s in resp.get("strengths", []):
-        _check_prohibited_prose(s, "strengths")
-    for c in resp.get("concerns", []):
-        _check_prohibited_prose(c, "concerns")
+    for index, s in enumerate(resp.get("strengths", [])):
+        _check_prohibited_prose(s, f"strengths[{index}]")
+    for index, c in enumerate(resp.get("concerns", [])):
+        _check_prohibited_prose(c, f"concerns[{index}]")
 
     return {
         "advisory_kind": "candidate_review",

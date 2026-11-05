@@ -1601,3 +1601,148 @@ def test_azure_required_projection_preserves_nested_constraints_and_annotations(
     ):
         with pytest.raises(ModelError, match="schema"):
             model.complete("bounded", schema)
+
+
+# --- Safe failure diagnostics (reason codes, no provider text) ---
+
+DIAG_CANARY = "CANARY-PROVIDER-TEXT-7f3a"
+
+
+def _refusal_from(body: bytes, *, model: AzureFoundryModel | None = None) -> ModelError:
+    client = model or AzureFoundryModel(
+        base_url=VALID_URL, subscription_id=VALID_SUB, token_provider=lambda s: "tok"
+    )
+    with patch.object(
+        urllib.request.OpenerDirector, "open", return_value=MockHTTPResponse(body)
+    ):
+        with pytest.raises(ModelError) as info:
+            client.complete("prompt", TEST_SCHEMA)
+    return info.value
+
+
+def _assert_no_canary(err: ModelError) -> None:
+    rendered = json.dumps({"r": err.reason_code, "d": err.diagnostics}) + str(err)
+    assert DIAG_CANARY not in rendered
+    assert "encrypted-opaque-reasoning-blob" not in rendered
+
+
+def test_length_finish_records_reason_finish_and_reported_usage() -> None:
+    err = _refusal_from(
+        _make_azure_response(
+            finish_reason="length",
+            content='{"seed": 1, "n_rows": "' + DIAG_CANARY + "...",
+            completion_tokens=4096,
+            reasoning_tokens=0,
+            total_tokens=227 + 4096,
+        )
+    )
+    assert err.reason_code == "finish_reason_not_stop"
+    assert err.diagnostics["finish_reason"] == "length"
+    assert err.diagnostics["observed_model"] == "muse-spark-1.3"
+    assert err.diagnostics["model_matches_request"] is True
+    assert err.diagnostics["reported_usage"] == {
+        "prompt_tokens": 227,
+        "completion_tokens": 4096,
+        "total_tokens": 4323,
+        "cached_tokens": 0,
+        "reasoning_tokens": 0,
+    }
+    assert err.diagnostics["content_chars"] > 0
+    _assert_no_canary(err)
+
+
+def test_free_text_finish_reason_is_collapsed() -> None:
+    err = _refusal_from(_make_azure_response(finish_reason=DIAG_CANARY))
+    assert err.reason_code == "finish_reason_not_stop"
+    assert err.diagnostics["finish_reason"] == "unrecognized"
+    _assert_no_canary(err)
+
+
+def test_model_mismatch_records_observed_identity_only_when_safe() -> None:
+    err = _refusal_from(_make_azure_response(model="tgi"))
+    assert err.reason_code == "model_identity_mismatch"
+    assert err.diagnostics["observed_model"] == "tgi"
+    assert err.diagnostics["model_matches_request"] is False
+
+    err = _refusal_from(_make_azure_response(model=DIAG_CANARY + " <script>"))
+    assert err.reason_code == "model_identity_mismatch"
+    assert err.diagnostics["observed_model"] == "unrecognized"
+    _assert_no_canary(err)
+
+
+def test_unsupported_message_fields_named_without_values() -> None:
+    err = _refusal_from(
+        _make_azure_response(
+            extra_msg_fields={
+                "annotations": [DIAG_CANARY],
+                "audio": None,
+                "Bad Key!" + DIAG_CANARY: 1,
+            }
+        )
+    )
+    assert err.reason_code == "unsupported_message_fields"
+    assert err.diagnostics["unsupported_message_fields"] == [
+        "[unrecognized]",
+        "annotations",
+        "audio",
+    ]
+    _assert_no_canary(err)
+
+
+def test_schema_nonconformance_records_keyword_and_path() -> None:
+    err = _refusal_from(
+        _make_azure_response(content=json.dumps({"seed": DIAG_CANARY, "n_rows": 1}))
+    )
+    assert err.reason_code == "schema_nonconformance"
+    assert err.diagnostics["schema_path"] == "seed"
+    assert err.diagnostics["schema_keyword"] == "type"
+    _assert_no_canary(err)
+
+
+def test_http_error_records_status_only() -> None:
+    client = AzureFoundryModel(
+        base_url=VALID_URL, subscription_id=VALID_SUB, token_provider=lambda s: "tok"
+    )
+    exc = urllib.error.HTTPError(
+        VALID_URL, 400, DIAG_CANARY, {}, io.BytesIO(DIAG_CANARY.encode())
+    )
+    with patch.object(urllib.request.OpenerDirector, "open", side_effect=exc):
+        with pytest.raises(ModelError) as info:
+            client.complete("prompt", TEST_SCHEMA)
+    assert info.value.reason_code == "http_error"
+    assert info.value.diagnostics == {"http_status": 400}
+    _assert_no_canary(info.value)
+
+
+def test_managed_image_failure_carries_reason_code(tmp_path: Path) -> None:
+    img_path = tmp_path / "valid.png"
+    img_path.write_bytes(_make_test_png(width=2, height=2))
+    body = _make_azure_response(
+        model=MANAGED_MODEL,
+        finish_reason="length",
+        content="{" + DIAG_CANARY,
+        reasoning_tokens=0,
+    )
+    with patch.object(
+        urllib.request.OpenerDirector, "open", return_value=MockHTTPResponse(body)
+    ):
+        with pytest.raises(ModelError) as info:
+            _managed_model().complete_with_image("critique", TEST_SCHEMA, img_path)
+    assert info.value.reason_code == "finish_reason_not_stop"
+    assert info.value.diagnostics["finish_reason"] == "length"
+    assert info.value.diagnostics["observed_model"] == MANAGED_MODEL
+    _assert_no_canary(info.value)
+
+
+def test_success_path_unchanged_by_diagnostics() -> None:
+    client = AzureFoundryModel(
+        base_url=VALID_URL, subscription_id=VALID_SUB, token_provider=lambda s: "tok"
+    )
+    with patch.object(
+        urllib.request.OpenerDirector,
+        "open",
+        return_value=MockHTTPResponse(_make_azure_response()),
+    ):
+        completion = client.complete("prompt", TEST_SCHEMA)
+    assert completion.data == {"seed": 42, "n_rows": 100}
+    assert completion.usage.model == "muse-spark-1.3"

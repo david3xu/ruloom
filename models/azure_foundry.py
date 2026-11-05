@@ -403,6 +403,52 @@ def _normalize_strict_wire_schema(
     return wire
 
 
+def _response_diagnostics(
+    resp_dict: Mapping[str, Any], requested_model: str
+) -> dict[str, Any]:
+    """Best-effort whitelisted facts from a parsed response; never raises.
+
+    The result is reduced again by :func:`safe_failure_diagnostics` inside
+    :class:`ModelError`. Message content, reasoning text and any other
+    provider string except the model identifier and finish reason are
+    never read into it; content contributes only its character count.
+    """
+    diag: dict[str, Any] = {}
+    observed = resp_dict.get("model")
+    if isinstance(observed, str):
+        diag["observed_model"] = observed
+        diag["model_matches_request"] = observed.strip() == requested_model
+    choices = resp_dict.get("choices")
+    if isinstance(choices, list):
+        diag["choice_count"] = len(choices)
+        first = choices[0] if choices else None
+        if isinstance(first, Mapping):
+            diag["finish_reason"] = first.get("finish_reason")
+            message = first.get("message")
+            if isinstance(message, Mapping):
+                extra = set(message.keys()) - SUPPORTED_MESSAGE_KEYS
+                if extra:
+                    diag["unsupported_message_fields"] = sorted(map(str, extra))
+                content = message.get("content")
+                if isinstance(content, str):
+                    diag["content_chars"] = len(content)
+    usage = resp_dict.get("usage")
+    if isinstance(usage, Mapping):
+        reported: dict[str, Any] = {
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+        }
+        details = usage.get("completion_tokens_details")
+        if isinstance(details, Mapping):
+            reported["reasoning_tokens"] = details.get("reasoning_tokens")
+        prompt_details = usage.get("prompt_tokens_details")
+        if isinstance(prompt_details, Mapping):
+            reported["cached_tokens"] = prompt_details.get("cached_tokens")
+        diag["reported_usage"] = reported
+    return diag
+
+
 class AzureFoundryModel(StructuredModel):
     """Structured model adapter for Meta Muse models on Azure AI Foundry."""
 
@@ -525,13 +571,18 @@ class AzureFoundryModel(StructuredModel):
                 raw_bytes = resp.read(MAX_RESPONSE_BYTES + 1)
                 if len(raw_bytes) > MAX_RESPONSE_BYTES:
                     raise ModelError(
-                        f"Azure Foundry response exceeded maximum allowed size ({MAX_RESPONSE_BYTES} bytes)"
+                        f"Azure Foundry response exceeded maximum allowed size ({MAX_RESPONSE_BYTES} bytes)",
+                        reason_code="response_too_large",
                     ) from None
         except ModelError:
             raise
         except urllib.error.HTTPError as exc:
             # Do NOT dump raw response body or stderr to avoid echoing secrets
-            raise ModelError(f"Azure Foundry HTTP {exc.code} for endpoint") from None
+            raise ModelError(
+                f"Azure Foundry HTTP {exc.code} for endpoint",
+                reason_code="http_error",
+                diagnostics={"http_status": exc.code},
+            ) from None
         except (
             urllib.error.URLError,
             TimeoutError,
@@ -539,7 +590,9 @@ class AzureFoundryModel(StructuredModel):
             http.client.HTTPException,
             ValueError,
         ):
-            raise ModelError("Azure Foundry network connection error") from None
+            raise ModelError(
+                "Azure Foundry network connection error", reason_code="network_error"
+            ) from None
 
         elapsed = time.monotonic() - t0
 
@@ -556,66 +609,96 @@ class AzureFoundryModel(StructuredModel):
                 ),
             )
         except Exception:
-            raise ModelError("Azure Foundry returned invalid JSON response") from None
+            raise ModelError(
+                "Azure Foundry returned invalid JSON response",
+                reason_code="invalid_response_json",
+            ) from None
 
         if not isinstance(resp_dict, dict):
-            raise ModelError("Azure Foundry response is not a JSON object") from None
+            raise ModelError(
+                "Azure Foundry response is not a JSON object",
+                reason_code="response_not_object",
+            ) from None
+
+        # Whitelisted, provider-text-free facts attached to every later refusal.
+        diag = _response_diagnostics(resp_dict, self.model)
+
+        def _refuse(message: str, reason_code: str, **extra: Any) -> ModelError:
+            return ModelError(
+                message, reason_code=reason_code, diagnostics={**diag, **extra}
+            )
 
         # Observed model verification
         observed_model = resp_dict.get("model")
         if not isinstance(observed_model, str) or not observed_model.strip():
-            raise ModelError(
-                "Azure Foundry response missing model identifier"
+            raise _refuse(
+                "Azure Foundry response missing model identifier",
+                "missing_model_identity",
             ) from None
         observed_model = observed_model.strip()
         if observed_model.lower() == "unknown":
-            raise ModelError("Azure Foundry response reported unknown model") from None
+            raise _refuse(
+                "Azure Foundry response reported unknown model",
+                "unknown_model_identity",
+            ) from None
         if observed_model != self.model:
-            raise ModelError(
-                f"Azure Foundry model mismatch: requested {self.model!r}"
+            raise _refuse(
+                f"Azure Foundry model mismatch: requested {self.model!r}",
+                "model_identity_mismatch",
             ) from None
 
         # Choice verification
         choices = resp_dict.get("choices")
         if not isinstance(choices, list) or len(choices) != 1:
-            raise ModelError(
-                "Azure Foundry response choices must be a list containing exactly one choice"
+            raise _refuse(
+                "Azure Foundry response choices must be a list containing exactly one choice",
+                "choice_count",
             ) from None
         choice = choices[0]
         if not isinstance(choice, dict):
-            raise ModelError("Azure Foundry choice must be an object") from None
+            raise _refuse(
+                "Azure Foundry choice must be an object", "choice_not_object"
+            ) from None
 
         finish_reason = choice.get("finish_reason")
         if finish_reason != "stop":
-            raise ModelError(
-                "Azure Foundry response finish_reason is not 'stop'"
+            raise _refuse(
+                "Azure Foundry response finish_reason is not 'stop'",
+                "finish_reason_not_stop",
             ) from None
 
         message = choice.get("message")
         if not isinstance(message, dict):
-            raise ModelError("Azure Foundry choice message must be an object") from None
+            raise _refuse(
+                "Azure Foundry choice message must be an object", "message_not_object"
+            ) from None
 
         if set(message.keys()) - SUPPORTED_MESSAGE_KEYS:
-            raise ModelError(
-                "Azure Foundry message contains unsupported fields"
+            raise _refuse(
+                "Azure Foundry message contains unsupported fields",
+                "unsupported_message_fields",
             ) from None
 
         if message.get("refusal"):
-            raise ModelError("Azure Foundry returned model refusal") from None
+            raise _refuse("Azure Foundry returned model refusal", "refusal") from None
 
         if message.get("function_call"):
-            raise ModelError(
-                "Azure Foundry returned unexpected function call; function calls are forbidden"
+            raise _refuse(
+                "Azure Foundry returned unexpected function call; function calls are forbidden",
+                "function_call",
             ) from None
 
         if bool(message.get("tool_calls")):
-            raise ModelError(
-                "Azure Foundry returned unexpected tool calls; tool calls are forbidden"
+            raise _refuse(
+                "Azure Foundry returned unexpected tool calls; tool calls are forbidden",
+                "tool_calls",
             ) from None
 
         content_str = message.get("content")
         if not isinstance(content_str, str):
-            raise ModelError("Azure Foundry message content must be a string") from None
+            raise _refuse(
+                "Azure Foundry message content must be a string", "content_not_string"
+            ) from None
 
         # Content JSON parsing (strict: rejects non-finite numbers and duplicate keys)
         try:
@@ -625,13 +708,14 @@ class AzureFoundryModel(StructuredModel):
                 object_pairs_hook=_reject_duplicates,
             )
         except Exception:
-            raise ModelError(
-                "Azure Foundry message content is not valid JSON"
+            raise _refuse(
+                "Azure Foundry message content is not valid JSON", "content_not_json"
             ) from None
 
         if not isinstance(data, dict):
-            raise ModelError(
-                "Azure Foundry structured data must be a JSON object"
+            raise _refuse(
+                "Azure Foundry structured data must be a JSON object",
+                "content_not_object",
             ) from None
 
         # Local jsonschema validation
@@ -639,20 +723,26 @@ class AzureFoundryModel(StructuredModel):
             jsonschema.validate(instance=data, schema=schema)
         except jsonschema.ValidationError as exc:
             path_str = _format_schema_path(exc.path, schema)
-            raise ModelError(
-                f"Azure Foundry output does not conform to requested schema at {path_str}"
+            raise _refuse(
+                f"Azure Foundry output does not conform to requested schema at {path_str}",
+                "schema_nonconformance",
+                schema_path=path_str,
+                schema_keyword=exc.validator,
             ) from None
         except Exception:
             if vision:
-                raise ModelError(
-                    "Azure Foundry vision response schema could not be resolved"
+                raise _refuse(
+                    "Azure Foundry vision response schema could not be resolved",
+                    "schema_unresolvable",
                 ) from None
             raise
 
         # Token usage validation
         usage_raw = resp_dict.get("usage")
         if not isinstance(usage_raw, dict):
-            raise ModelError("Azure Foundry response missing usage block") from None
+            raise _refuse(
+                "Azure Foundry response missing usage block", "usage_missing"
+            ) from None
 
         prompt_tokens = usage_raw.get("prompt_tokens")
         completion_tokens = usage_raw.get("completion_tokens")
@@ -661,16 +751,18 @@ class AzureFoundryModel(StructuredModel):
             or isinstance(prompt_tokens, bool)
             or prompt_tokens < 0
         ):
-            raise ModelError(
-                "Azure Foundry prompt_tokens must be non-negative integer"
+            raise _refuse(
+                "Azure Foundry prompt_tokens must be non-negative integer",
+                "usage_invalid",
             ) from None
         if (
             type(completion_tokens) is not int
             or isinstance(completion_tokens, bool)
             or completion_tokens < 0
         ):
-            raise ModelError(
-                "Azure Foundry completion_tokens must be non-negative integer"
+            raise _refuse(
+                "Azure Foundry completion_tokens must be non-negative integer",
+                "usage_invalid",
             ) from None
 
         prompt_details = usage_raw.get("prompt_tokens_details") or {}
@@ -685,8 +777,9 @@ class AzureFoundryModel(StructuredModel):
             or cached_tokens < 0
             or cached_tokens > prompt_tokens
         ):
-            raise ModelError(
-                "Azure Foundry cached_tokens must be non-negative integer <= prompt_tokens"
+            raise _refuse(
+                "Azure Foundry cached_tokens must be non-negative integer <= prompt_tokens",
+                "usage_invalid",
             ) from None
 
         completion_details = usage_raw.get("completion_tokens_details") or {}
@@ -701,8 +794,9 @@ class AzureFoundryModel(StructuredModel):
             or reasoning_tokens < 0
             or reasoning_tokens > completion_tokens
         ):
-            raise ModelError(
-                "Azure Foundry reasoning_tokens must be non-negative integer <= completion_tokens"
+            raise _refuse(
+                "Azure Foundry reasoning_tokens must be non-negative integer <= completion_tokens",
+                "usage_invalid",
             ) from None
 
         total_tokens = usage_raw.get("total_tokens")
@@ -712,8 +806,9 @@ class AzureFoundryModel(StructuredModel):
                 or isinstance(total_tokens, bool)
                 or total_tokens != prompt_tokens + completion_tokens
             ):
-                raise ModelError(
-                    "Azure Foundry total_tokens does not match prompt_tokens + completion_tokens"
+                raise _refuse(
+                    "Azure Foundry total_tokens does not match prompt_tokens + completion_tokens",
+                    "usage_invalid",
                 ) from None
 
         usage = Usage(

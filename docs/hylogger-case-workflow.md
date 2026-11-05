@@ -188,6 +188,16 @@ Free-form prose outputs are screened against `PROHIBITED_PROSE_PATTERNS`, and ca
 Phrase screening is a heuristic boundary and does not guarantee formal semantic completeness;
 model advisories remain non-authoritative operator recommendations without release or waiver authority.
 
+The screen is lexical and rejects a listed term in any context, including a negated
+sentence or a disclaimer that echoes the user request. Each screened role's prompt
+therefore ends with `prohibited_prose_contract(...)`, which names the screened fields
+and every term in `PROHIBITED_PROSE_PATTERNS`, and points to the installed case's fixed
+limitations for the privacy, licensing and scientific-validity non-claims. Only
+64-character hexadecimal digest tokens are removed before screening, because an admitted
+passage SHA-256 contains a screened substring as hex. A rejection names the field and item
+index (for example `limitations[1]`), the matched term and whether a negation marker sat
+nearby; it does not echo the rejected sentence.
+
 ### 7. `research_case(model, purpose, context) -> dict`
 - **Role**: Case Research Advisor.
 - **Scope**: Explains and cites only admitted primary evidence IDs from the installed

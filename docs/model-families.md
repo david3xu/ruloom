@@ -160,6 +160,21 @@ by Azure Foundry already include reasoning tokens; the runner charges
 reasoning tokens. The adapter discards reasoning content blobs, bounds and sanitizes
 request IDs, and redacts raw HTTP error bodies and bearer tokens from receipts.
 
+A refused Azure response raises `ModelError` with a fixed message plus two
+log-safe fields defined in `models/base.py`: `reason_code`, drawn from the closed
+`MODEL_ERROR_REASON_CODES` vocabulary (for example `finish_reason_not_stop`,
+`model_identity_mismatch`, `unsupported_message_fields`, `schema_nonconformance`),
+and `diagnostics`, reduced by `safe_failure_diagnostics`. Diagnostics keep only
+a finish reason from a closed list, the returned model identifier when it fits
+an identifier charset, the names of unexpected message fields, the redacted
+schema path and keyword, content length, HTTP status and the provider-reported
+token counters. Message content, reasoning text and response bodies are never
+copied; anything outside the whitelist becomes `unrecognized` or is dropped.
+The runner reduces these facts again and adds them to the `model_call_failed`
+run-log event, including for image calls whose message stays withheld. They are
+diagnostic only: reported counters on a failed call are not charged as usage,
+and the unknown-usage guard still refuses further calls after a failed image call.
+
 `models/meta_cli.py` enforces restricted child invocation, allowlisted environment
 keys with credential stripping, pinned working directory, and spawn policy checks.
 For vision calls, validated CLI-reported costs are preserved in `meta["cost"]`;
