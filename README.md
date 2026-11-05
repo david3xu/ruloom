@@ -2,346 +2,139 @@
 
 **Synthetic data, woven from reality. Backed by evidence.**
 
-A supported source profile becomes reproducible synthetic data,
-calibrated against real data, proven by executed checks, and delivered
-with its evidence under the terms recorded in each release.
+[The idea and design](docs/idea-and-design.md) — why Ruloom exists, one example and the role of Muse.
 
-Synthetic data is easy to generate and hard to trust. Ruloom's answer is
-calibration: quality thresholds are derived from how real datasets differ from
-each other, the generator is fitted to statistics of the real source, and
-every quality claim is a deterministic check result bound to the SHA-256 of
-the artifact it was computed over.
+**Final user test: pending.** [Read the shared test prompt and evidence status](docs/final-test.md).
+Results will be added after the full workflow and comparison have been tested.
 
-## The four rules
+## Who it helps
 
-Every design decision in this repository traces to one of these.
+Ruloom is for people who need a small, trustworthy practice dataset for one
+specific task: a teacher preparing a lesson, a freelancer building a demo, a
+developer testing a pipeline. Real records are often large, awkward to clean
+or not shareable. A small synthetic set that keeps the patterns that matter
+for the task, and says plainly what is invented, can be ready in minutes and
+shared without handing over the original records.
 
-1. **The model plans; it never writes data rows.** The plan is a JSON object
-   constrained by a schema. Not a single value in the delivered dataset comes
-   out of a model.
-2. **Seeded code generates.** Same plan + same seed ⇒ same bytes. A run is
-   replayable by anyone.
-3. **Deterministic checks prove.** Every quality claim is a check result bound
-   to an artifact hash. A claim with no check behind it does not appear.
-4. **A human accepts.** No model approves its own output. The critic is
-   advisory and cannot change a pass/fail verdict.
+## A teaching example
 
-Two consequences that are easy to violate by accident:
+A geology teacher wants students to practise reading drill-hole logs. Ruloom
+takes a real NVCL HyLogger scalar export for hole HD012 (CC BY 4.0), checks
+that it suits the lesson, and generates, say, 200 synthetic depth records. The
+records follow the source's depth spacing, its included/excluded flags and its
+pattern of blank mineral-group labels. The release states which checks passed
+and what the data cannot be used for.
 
-- **No raw source rows ever reach a model.** The profile stage passes summary
-  statistics only — a scoping control, not an anonymity guarantee (see
-  Supported scope below).
-- **If repair attempts are exhausted, the run stops and reports the failing
-  checks.** It never ships as passing.
+The richer version of this lesson — following one sample from its map
+location and depth to its picture and infrared curve — is the target of the
+[pending final test](docs/final-test.md). It is not yet a supported result.
 
-## Engine authority
+## How it works
 
-The engine privately owns verdicts, chosen artifacts, and state
-transitions. Each capability receives a frozen view — its declared
-inputs, statistics views, prior attempt records — and returns declared
-outputs through validated engine methods. Capabilities get no reference
-to the runner, no mutable shared state, and no path to
-verdict/artifact/decision state. Advisory outputs land in a separate
-store that verdict computation never reads, so a critic can never flip
-a deterministic result. Raw source bytes, source paths, and parsed
-source frames are materialised only for capabilities declaring
-`reads_raw_source`; every other capability works from statistics views.
+1. **Request and evidence.** A plain-language request is matched to an
+   installed teaching case that cites real, admitted sources.
+2. **Source suitability.** Code checks the source format and whether the
+   requested size is feasible, before any model is called.
+3. **Plan.** A model proposes a small, schema-bound plan (seed, row count,
+   strategy). It never writes data rows and never sees raw source rows.
+4. **Generate and check.** Seeded code generates the rows; deterministic checks,
+   each bound to the artifact's SHA-256, decide pass or fail. Same plan and seed
+   give the same bytes.
+5. **Review and release.** Advisory model reviews are recorded separately and
+   cannot change a verdict. A person accepts or rejects; only an accepted run
+   is packaged as a verifiable release ZIP.
 
-Acceptance is a contract, not a counter. Each manifest declares its
-check set with per-check `required` status (HyLogger image checks
-additionally declare `applicable_when: images_present`). The verdict
-comes only from results that belong to the current attempt, name the
-exact `artifact_sha256` they measured, and carry a recognised status
-(`pass`, `fail`, `error`, `unsupported`, `skipped`) — only `pass`
-satisfies a required check. Missing, duplicated, unknown-required,
-error, unsupported, or skipped required checks block acceptance, and an
-empty check set cannot pass. One declared exception:
-HyLogger `swir_answer_rate` is `required: false` with a manifest note
-because its calibrated band is vacuous; the skip is shown in the report
-but never gates, until RP-05 delivers informative bands.
+Details: [request-to-data workflow](docs/product-workflow.md) and the
+[operator guide](docs/research-workflow-user-guide.md).
 
-Trust assumption: this boundary is in-process typing against
-accidental misuse, not a sandbox. Running untrusted third-party
-capabilities would need isolated processes with restricted input mounts
-and mediated model/network access.
+## The three parts
 
-## Data
+- **Engine** (`engine/`): domain-free. It runs a profile's step/loop/gate graph,
+  enforces each step's permissions and token budget, owns verdicts and releases,
+  and keeps a hash-chained run log.
+- **Domain profiles** (`profiles/`): the rules for one kind of data — intake,
+  statistics, generation and checks. `hylogger` covers drill-hole scalars (plus
+  an optional synthetic-picture extension); `tabular` covers generic CSV.
+- **Model adapters** (`models/`): the only code that talks to a model. Roles bind
+  explicitly to Muse via the hosted CLI, Azure AI Foundry or a local Glimmer
+  server, or to other families through AGY. There is no silent provider fallback.
 
-HyLogger source data is **not committed to this repository**, following GSWA
-hackathon guidance and the data licence. Fetch it from the National Virtual
-Core Library (NVCL) WA node, via AuScope — scalar downloads from
-`http://geossdi.dmp.wa.gov.au/NVCLDataServices/downloadscalars.html` — and
-place it under `data/` (git-ignored):
+Design rules and operating details: [engine and operations reference](docs/engine-and-operations.md)
+and [model configuration](docs/model-families.md).
 
-- `data/sources/` — the five continuous holes used as generation sources:
-  `20LCDD003`, `DDG007`, `HD012`, `NCB0003`, `PDD446`.
-- `data/calibration/` — the 38-hole calibration set used to derive the
-  quality thresholds in `profiles/hylogger/thresholds.json`; each hole's
-  file hash is recorded inside that JSON.
+## What Muse has contributed so far
 
-Each hole is a `*-scalars.csv` with a sibling `*-source.json` manifest
-recording licence `CC-BY-4.0` and the attribution (Geological Survey of
-Western Australia, National Virtual Core Library (NVCL) WA node, via
-AuScope). Only summary statistics and check results derived from the data
-are committed, plus the synthetic outputs the run releases. Full provenance
-statement: `docs/provenance.md`.
+Only these runs are claimed; each is recorded with its date and limits.
 
-Core imagery is a separate, optional source. Real HyLogger core images
-live in the TSG packages behind the same NVCL node (scalar service above
-serves values only; imagery downloads come from the NVCL imagery service,
-and the `pytsg` package reads TSG files). No image files are committed
-here and none were available locally when the machinery was built, so the
-image extension is proven on deterministic fixture PNGs only — no claim
-about real images is made. To run with real imagery, export the tray
-images to PNG and point `ruloom run --profile hylogger SOURCE --images DIR`
-at the directory (one `*-source.json` sibling manifest per image for
-licence/attribution, same pattern as the scalars). JPEG files are
-inventoried at intake but carry no statistics (no stdlib JPEG decoder);
-only PNG is decoded, statistics are computed by code, the synthetic
-render is seeded code fitted to those statistics, and a vision model may
-look at the synthetic render as an advisory critic only.
-The structured vision extension and its separate scope are documented in
-[`docs/vision-workflow.md`](docs/vision-workflow.md). Vision opinions remain
-advisory; unavailable calls are recorded explicitly.
+- **Muse Glimmer 30B (local)** wrote an advisory text critique of a real PDD446
+  validation report through the product path on 2 November 2026
+  ([receipt](docs/quality/critic-receipts-gp01.md)).
+- **Muse Spark 1.3 (hosted Muse CLI)** reviewed a synthetic, code-rendered PNG
+  as the advisory vision critic on 2 November 2026 (same receipt).
+- **Muse Spark 1.3 on Azure** returned planning, source-assessment and
+  case-research answers in a bounded 5 November 2026 smoke. The research answer
+  was then rejected by the local prohibited-claim screen, so that run did not
+  complete. A managed **Azure Muse Glimmer** image call in the same smoke failed
+  local validation; no accepted Azure vision review exists yet
+  ([development evidence](docs/evidence/development/README.md)).
 
-A second, text-only critic seat is bound to a local Muse Glimmer model
-served over an OpenAI-compatible endpoint. It reads the run's validation
-report plus the profile statistics summary only — never raw rows, never
-images — and writes an advisory `critic-note.json`
-(`{critique, concerns}`) to the run directory alongside the run-log
-advisory event. It runs after validate and before the human gate, and
-like every advisory it cannot change a pass/fail verdict. It is opt-in:
-pass `ruloom run --profile hylogger SOURCE --local-critic
---max-attempts N`; without the flag the step is a silent no-op and the
-run is byte-identical to a run without it. With the flag on and the
-server unreachable, the run fails loudly with the adapter error instead
-of skipping the critique. To serve the model locally:
+**Planned use:** Muse roles for researching cited examples, planning, and
+reviewing the generated data and pictures, each with a narrow job while code
+keeps the verdict and a person keeps the decision. A Muse Wonder reporter seat
+is declared but disabled.
 
-```bash
-llama-server -m ~/models/muse-glimmer/Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf --port 8080 -c 32768
-```
+## Scope, limits and test status
 
-The `-c 32768` context is required, not optional: the live-measured
-critique prompt on PDD446 is ~8.4k tokens, and the server must also fit
-the completion plus reasoning budget (`models/glimmer.py`
-`RECOMMENDED_CONTEXT_TOKENS`). A smaller context fails loudly with an
-actionable error instead of skipping the critique.
+**Supported:** the bounded HyLogger scalar teaching case
+(`hylogger_scalar_teaching_v1@1`; four columns `depth_m`, `valid`,
+`swir_group`, `tir_group`), the generic tabular profile, offline replay of a
+reviewed plan, and release verification.
 
-then run with the default adapter base URL `http://127.0.0.1:8080`
-(override per role with the `base_url` binding, or per client with
-`GlimmerLocalModel(base_url=...)`). The image weights (`mmproj`) for
-Glimmer are not present, so Glimmer serves the text critique only; the
-Spark multimodal adapter stays the vision critic for synthetic renders.
+**Not supported:** hole or sample identifiers, coordinates, linked
+picture-and-curve packages, real core photographs or reflectance spectra,
+custom tolerances, geological prediction, and any privacy, anonymity or
+licensing guarantee. The image extension renders fictional schematic strips
+from fixture statistics only.
 
-Live runs (2026-11-02): one Glimmer text-critic run through
-`ruloom run --local-critic` on PDD446 (verdict pass, advisory note
-recorded) and live vision-critic calls on a synthetic-only PNG. No
-claim beyond these runs; see `docs/quality/critic-receipts-gp01.md`
-for both receipts with usage.
+**Test status (5 November 2026, revision `63b35c0`):** local full suite
+1,313 passed and 4 skipped with source data present; `scripts/force_pass.py`
+exit 0; main CI green. The paid live role workflow has not yet completed
+successfully, and the final user comparison is [pending](docs/final-test.md).
+Earlier dated results stay in [`docs/results.md`](docs/results.md) and
+[`docs/quality/`](docs/quality/README.md).
 
-## Model roles, budget, and overrides
+## Quick start
 
-Each profile manifest binds named roles to models under `models.roles`
-(`planner`, `critic`, `local_critic` for HyLogger; `planner` for the
-tabular profile). A role binding names its `adapter` (`meta_cli` for
-the hosted `muse exec` adapter, `agy_cli` for AGY model families,
-`glimmer_local` for the local OpenAI-compatible server) plus the model id, reasoning effort, and —
-for local roles — the base URL.
-
-AGY family selection is explicit and never falls back to Muse:
+Python 3.12. Fetch source data as described in the
+[data notes](docs/engine-and-operations.md#data) (it is not committed), then:
 
 ```sh
-ruloom run SOURCE.csv --profile tabular --max-attempts 2 \
-  --role-adapter planner=agy_cli --role-family planner=claude \
-  --role-model planner=claude-opus-5-5-high --role-effort planner=high
+.venv/bin/ruloom prepare data/sources/HD012-scalars.csv --profile hylogger \
+  --case hylogger_scalar_teaching_v1@1 --max-attempts 2 \
+  --request "Create 200 synthetic depth records for a lesson on inclusion flags and blank labels." \
+  --model-policy azure-only --out draft
+.venv/bin/ruloom run data/sources/HD012-scalars.csv --profile hylogger \
+  --spec draft/spec.json --plan draft/plan.json --max-attempts 2 \
+  --model-policy azure-only --out work
+.venv/bin/ruloom verify work/runs/<run-id>/release.zip \
+  --require-case hylogger_scalar_teaching_v1@1
 ```
 
-The same role settings work on `prepare` with `--model-policy hosted`.
-Family defaults cover Claude, Gemini and GPT aliases; check `agy models`
-for availability on your account. `meta_cli` selects the Meta family via
-Muse. See [model workflow](docs/model-families.md) for configuration,
-identity evidence and the limits of AGY tool permissions.
+Bind every active role to your provider first (or replay a reviewed plan with
+`--model-policy offline`); see the
+[operator guide](docs/research-workflow-user-guide.md). Checks:
+`.venv/bin/python -m pytest -q` and `.venv/bin/python scripts/force_pass.py`.
 
-Three guardrails from the engine design are enforced as behaviour, not
-prose:
+## Documentation
 
-- **Fail-closed requirements.** A binding may declare
-  `requires: {open_weight: true}` (HyLogger's `local_critic` does).
-  Loading a manifest — or composing a client — that puts such a role on
-  the hosted adapter is refused loudly with no run and no model call.
-- **Token budget.** Each manifest declares
-  `models.budget.max_tokens_per_run` (HyLogger `500000`, tabular
-  `250000`). These are declared limits, not measured results — they sit
-  several times above the largest observed full runs. The engine counts
-  every model call's `input + output + reasoning` tokens as the adapters
-  report them and refuses the next call *before* making it once the
-  ceiling is reached, failing the run with the budget error. Local
-  Glimmer calls count exactly the same way: cost is zero, but the budget
-  is denominated in tokens, not money.
-- **Disabled roles never resolve.** HyLogger declares a `reporter` seat
-  (`muse-wonder-1.0`, `enabled: false`). No capability is wired to it,
-  and binding any capability to it is refused at composition. The seat
-  documents where a future Wonder-based reporter would attach; refusal
-  is the feature.
-- **Band position.** Every band check (HyLogger fidelity/invariant bands
-  plus the tabular fidelity band) reports `band_position` alongside
-  pass/fail: the measured value's fractional position across `[lo, hi]`
-  (`lo` → `0.0`, midpoint → `0.5`, `hi` → `1.0`; outside, the signed
-  distance in band-widths, negative below `lo`, above `1.0` past `hi`).
-  It rides in each check result and into `validation-report.json`. No
-  existing field changed meaning and pass/fail semantics are untouched.
+- [Idea and design](docs/idea-and-design.md) · [Final user test](docs/final-test.md)
+- [Request-to-data workflow](docs/product-workflow.md) · [Operator guide](docs/research-workflow-user-guide.md) · [Installed-wheel acceptance](docs/full-workflow-acceptance.md)
+- [Engine and operations reference](docs/engine-and-operations.md) · [Model configuration](docs/model-families.md) · [Synthetic-image review](docs/vision-workflow.md)
+- [HyLogger case workflow](docs/hylogger-case-workflow.md) · [Provenance](docs/provenance.md) · [Decisions](docs/decisions.md)
+- [Results](docs/results.md) · [Quality records](docs/quality/README.md) · [Development evidence](docs/evidence/development/README.md)
 
-Role fields resolve **CLI > env > profile > engine default**: repeatable
-`--role-model ROLE=MODEL` (plus `--role-adapter`, `--role-effort` and `--role-base-url`)
-beat `RULOOM_ROLE_<ROLE>_MODEL` / `_ADAPTER` / `_EFFORT` / `_BASE_URL` (role
-uppercased, e.g. `RULOOM_ROLE_PLANNER_MODEL`), which beat the manifest
-binding, which beats the adapter default (`muse-spark-1.3` /
-`muse-glimmer-30B`, effort `max`, local base URL
-`http://127.0.0.1:8080`). The composition root applies this precedence
-and records the effective binding — value plus source
-(`cli`/`env`/`profile`/`default`) — as a `model_bindings` event in the
-run log. Example:
-
-```bash
-RULOOM_ROLE_PLANNER_EFFORT=low .venv/bin/ruloom run --profile hylogger \
-  data/sources/PDD446-scalars.csv --max-attempts 3 \
-  --role-model planner=muse-spark-1.3
-```
-
-Every run executes under one versioned GenerationSpec (spec id and
-version, profile, source pin, requested outputs, plan strategy,
-row/attempt limits, rights intent), recorded with its digest in the
-run record and every attempt receipt. The flags above already imply
-the default spec; `--spec spec.json` overlays a spec file on those
-defaults, and unsupported requests are refused before any model call
-with a durable terminal record. A saved `plan.json` replays with
-`--plan plan.json` (no planner call): the same plan plus the same seed
-yields identical `data.csv` bytes. Compare data digests across replays,
-never release ZIPs (per-run identity, so they differ by design).
-The run also ships a user-facing
-`evidence-report.md` rendered from stored records only.
-
-## Work without hosted credits
-
-Replay a reviewed plan with **all model calls disabled**, including repair:
-
-```bash
-ruloom run --profile tabular SOURCE.csv --max-attempts 2 \
-  --plan saved/plan.json --model-policy offline --out replay
-```
-
-Checks and the human gate still apply. A failing check cannot trigger paid
-repair or become a pass. Optional critics blocked by the policy are recorded
-as unavailable; a required model stage fails. Plain `--plan` alone still
-permits later model calls under the default `hosted` policy.
-
-For local text planning, start your trusted Glimmer server separately, then:
-
-```bash
-ruloom run --profile tabular SOURCE.csv --max-attempts 2 \
-  --model-policy local-only --role-adapter planner=glimmer_local --out local-run
-```
-
-This uses a literal loopback endpoint and has no hosted fallback. Proxy
-settings and redirects are refused by this transport. The policy controls
-Ruloom's adapters, not what a separately operated server does internally.
-The local adapter is text only; it does not replace the vision critic.
-
-To draft settings from a short request before generation:
-
-```bash
-ruloom prepare --profile tabular SOURCE.csv --max-attempts 2 \
-  --request "Create 100 synthetic rows using the supported source-fitted strategy." \
-  --role-adapter planner=glimmer_local --out request-draft
-```
-
-`prepare` defaults to `local-only`. It sends the request and supported settings
-to the model, and hashes source bytes locally to pin the draft. Source rows
-are never sent by the preparation command. Review `request-draft/request.json`,
-`spec.json` and `plan.json` for a faithful interpretation, then run the reviewed
-spec and plan with `run --spec ... --plan ... --model-policy offline`. Draft
-success is not data-quality approval. Unsupported requirements refuse the
-draft. This first request interface supports scalar output; existing image
-workflows remain available through `run` with explicit source inputs.
-
-The evidence report shows the exact row target when supplied, planned rows,
-stored check results, initial plan origin, actual successful model calls and
-unavailable reviews. It does not manufacture a measured row count from the
-plan. Development attribution and deferred real evaluation are documented in
-[the product workflow](docs/credit-free-product.md).
-
-For the complete user journey, model roles, supported scope and later
-comparison design, read [Request-to-data workflow](docs/product-workflow.md).
-For the implemented bounded scalar teaching case, use the
-[operator guide](docs/research-workflow-user-guide.md) and
-[installed-wheel acceptance instructions](docs/full-workflow-acceptance.md).
-The [combined scalar validation record](docs/quality/scalar-workflow-2026-11-05.md)
-describes the reviewed revision, engineering controls and remaining limits.
-
-```bash
-.venv/bin/ruloom run --profile tabular <source>.csv --max-attempts 2 \
-  --spec docs/spec-example.json
-```
-
-## Status
-
-New work, written fresh for the Meta Global AI Developer Hackathon
-(Oct 26 – Nov 4, 2026). Nothing here is imported from any prior project;
-source data is public NVCL WA data under CC BY 4.0, used as fetched data
-only — see `docs/provenance.md`.
-
-First-stage product is complete: one command runs the full lifecycle
-(intake, profile, plan, generate, validate, bounded repair, human-gated
-release). Verified on a real PDD446 run: plan `{seed 42, n_rows 39300}`,
-validation verdict pass, artifact `55eb1c22e212…`, release ZIP
-`016edff18b3e…` with a hash-chained run log that verifies end to end.
-(CP-02 repaired TIR sequence generation and versioned the golden bytes
-deliberately; pre-repair values were artifact `be9e26d7e664…`, release
-`46c7c07110c5…` — see `docs/quality/scorecard-cp02-addendum.md`.)
-Local scalar workflow checks observed 4 November 2026 at `b829f0d`:
-810 tests passed with the local source cache; independent source-free review
-ran 796 passed with 14 source-dependent skips. Actual Gemini request,
-source-fitted generation, offline replay and consumer verification passed;
-failed earlier attempts remain visible in the
-[readiness report](docs/quality/product-ready-2026-11-04.md).
-Reproduce with `.venv/bin/python -m pytest -q`.
-Force-pass gate (`scripts/force_pass.py`): exit 0, 43 enforced checks passed
-(12 FP + 31 Q), with 4 planned stubs reported but not executed.
-Reproduce with `.venv/bin/python scripts/force_pass.py`. The engine is generic: profiles declare their
-step/loop/gate graphs and permissions, and the same engine code runs
-the HyLogger profile and the common tabular profile
-(`ruloom run --profile tabular ...`). Run it with:
-
-```bash
-.venv/bin/ruloom run data/sources/PDD446-scalars.csv --max-attempts 3
-# Generic profile path (the default profile is hylogger):
-.venv/bin/ruloom run --profile tabular <source>.csv --max-attempts 3
-```
-
-## Supported scope
-
-The supported product is the categorical scalar profile (HyLogger
-scalars and the common tabular profile): seeded generation from
-statistics, deterministic checks, and a human-gated release. Image
-support is fixture-proven machinery that renders procedural schematics
-from statistics; it is not registered core photography and proves no
-sample-to-image alignment. The engine has local durable dispatch and
-separate publication contracts; no hosted job or publication service is
-provided. The CLI runs one local lifecycle. `prepare` interprets a
-plain-language request into a bounded draft for review; it supports scalar
-CSV only and has no requirement-clarification dialogue. Statistics-only prompts limit
-what a model sees; they are not an anonymity guarantee. Output terms
-are recorded per release (`provenance.md` plus the release manifest);
-no blanket licence promise is made here. Historical results in
-`docs/results.md` stay tied to the revisions and runs that produced
-them.
-
-Benchmark and scorecard evidence is machine-local: the numbers in
-`docs/results.md` trace to runs under git-ignored `runs/` plus
-git-ignored `data/` sources (re-fetchable from NVCL per the Data
-section above), so a fresh clone cannot regenerate them — receipts
-live on the machine that ran them. Implicitly settled product
-decisions are recorded in `docs/decisions.md`.
+Built for the Meta Global AI Developer Hackathon (26 October – 4 November 2026).
+Source data is public NVCL WA data under CC BY 4.0, used as fetched data only.
 
 ## Layout
 
@@ -356,7 +149,7 @@ decisions are recorded in `docs/decisions.md`.
 | `profiles/hylogger/` | The first domain profile: `profile.json` (manifest: capabilities, permissions, checks, graph), `thresholds.json`, `capabilities.py` (manifest step implementations); features in `intake/` (`reader.py`), `analysis/` (`statistics.py`, `calibration.py`), `generation/` (`generate.py`, `plan.py`, `repair.py`), `validation/` (`checks.py`, `dataset.py`, `critique.py` — advisory text critique over the validation report plus profile statistics, bound to the `local_critic` role) |
 | `profiles/hylogger/imaging/` | The HyLogger image extension (optional `--images DIR` branch after validate, before the human gate): `codec.py` (stdlib PNG encode/decode), `intake.py` (image hashing/attribution), `statistics.py` (code-only histograms/texture/strips), `generate.py` (seeded synthetic PNGs), `scene.py` (schematic-only shared scene record driving table + image views, R03), `checks.py` (deterministic image checks incl. ordered strip and scene alignment, R03), `critic.py` (advisory vision note over synthetic renders only) |
 | `profiles/tabular/` | The second profile (common CSV proof): same root wiring (`profile.json`, `thresholds.json`, `capabilities.py`); features in `intake/` (`reader.py`), `analysis/` (`statistics.py`, `calibration.py`), `generation/` (`generate.py`, `plan.py`), `validation/` (`checks.py`, `dataset.py`) |
-| `models/` | Model adapters — the only code that talks to a model (`base.py`, `meta_cli.py`, `agy_cli.py`, `selection.py`, `glimmer.py` — local OpenAI-compatible text adapter; role bindings select it with `"adapter": "glimmer_local"`) |
+| `models/` | Model adapters — the only code that talks to a model: shared contract and failure reasons (`base.py`), hosted Muse CLI (`meta_cli.py`), AGY families (`agy_cli.py`, `selection.py`), local Glimmer over loopback (`glimmer.py`, `local_transport.py`), Azure AI Foundry (`azure_foundry.py`) and image validation (`image_input.py`) |
 | `catalogue/features/engine/` | Feature records for the persistence and reviewed-release slice: one JSON file per feature (stable id, owner, code/doc/test paths, required rules, status) |
 | `docs/engine/core/` | Engine-core contracts (`README.md` states the run/attempt persistence contract) |
 | `docs/engine/artifacts/` | Engine-artifacts contracts (`README.md` states the freeze/manifest/atomic/consumer release contract) |
